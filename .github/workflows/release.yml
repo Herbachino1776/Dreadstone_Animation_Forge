@@ -32,16 +32,39 @@ jobs:
       - name: Build deterministic release ZIP
         run: python scripts/build_release.py
 
+      - name: Locate generated release ZIP
+        id: release_zip
+        shell: bash
+        run: |
+          shopt -s nullglob
+          files=(dist/Dreadstone_Animation_Forge_v*.zip)
+          if (( ${#files[@]} != 1 )); then
+            echo "Expected exactly one dist/Dreadstone_Animation_Forge_v*.zip file; found ${#files[@]}." >&2
+            if (( ${#files[@]} > 0 )); then
+              printf 'Matched: %s\n' "${files[@]}" >&2
+            fi
+            exit 1
+          fi
+          path="${files[0]}"
+          filename="$(basename "$path")"
+          name="${filename%.zip}"
+          printf 'path=%s\n' "$path" >> "$GITHUB_OUTPUT"
+          printf 'name=%s\n' "$name" >> "$GITHUB_OUTPUT"
+          echo "Discovered release ZIP: $path"
+
       - name: Test ZIP integrity
-        run: python -c "import sys, zipfile; p='dist/Dreadstone_Animation_Forge_v3_9_1.zip'; z=zipfile.ZipFile(p); bad=z.testzip(); z.close(); sys.exit(1 if bad else 0)"
+        env:
+          ZIP_PATH: ${{ steps.release_zip.outputs.path }}
+        run: >-
+          python -c "import sys, zipfile; z=zipfile.ZipFile(sys.argv[1]); bad=z.testzip(); z.close(); raise SystemExit('ZIP integrity failure: ' + bad if bad else 0)" "$ZIP_PATH"
 
       - name: Create or update GitHub Release
         env:
           GH_TOKEN: ${{ github.token }}
+          ASSET_PATH: ${{ steps.release_zip.outputs.path }}
         run: |
-          asset="dist/Dreadstone_Animation_Forge_v3_9_1.zip"
           if gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1; then
-            gh release upload "$GITHUB_REF_NAME" "$asset" --clobber
+            gh release upload "$GITHUB_REF_NAME" "$ASSET_PATH" --clobber
           else
-            gh release create "$GITHUB_REF_NAME" "$asset" --title "$GITHUB_REF_NAME" --generate-notes
+            gh release create "$GITHUB_REF_NAME" "$ASSET_PATH" --title "$GITHUB_REF_NAME" --generate-notes
           fi

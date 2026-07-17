@@ -131,6 +131,17 @@ class StaticContractTests(unittest.TestCase):
         identifiers = contracts.executable_identifiers(self.trees["deformation_authoring.py"])
         self.assertFalse(contracts.FORBIDDEN_TRANSFER_IDENTIFIERS & identifiers)
 
+    def test_workflows_do_not_hardcode_versioned_dreadstone_zip_names(self) -> None:
+        hardcoded_zip = r"Dreadstone_Animation_Forge_v\d+(?:[_.]\d+){2}(?:\.zip)?"
+        workflows = (
+            ROOT / ".github" / "workflows" / "validate.yml",
+            ROOT / ".github" / "workflows" / "release.yml",
+        )
+        for workflow in workflows:
+            with self.subTest(workflow=workflow.name):
+                source = workflow.read_text(encoding="utf-8")
+                self.assertNotRegex(source, hardcoded_zip)
+
 
 if __name__ == "__main__":
     unittest.main()
