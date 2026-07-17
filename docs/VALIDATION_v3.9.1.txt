@@ -1,0 +1,57 @@
+DREADSTONE ANIMATION FORGE v3.9.1 VALIDATION
+============================================
+
+Package target:
+  Dreadstone_Animation_Forge_v3_9_1.zip
+
+Static validation performed in container:
+
+PASS - Python syntax compilation
+  dreadstone_animation_forge/__init__.py
+  dreadstone_animation_forge/damage_readiness.py
+  dreadstone_animation_forge/damage_authoring.py
+  dreadstone_animation_forge/deformation_authoring.py
+
+PASS - Version contract
+  bl_info version: 3.9.1
+  deformation authoring version: 3.9.1
+  build id: 2026-07-16.deformation-workbench.2
+
+PASS - v3.9.1 hotfix contracts
+  seed radius/depth evaluated in world-space meters
+  attached/deformed delta transfer converted through object world transforms
+  paired validation compares world-space deltas
+  maximum displacement measured in world-space meters
+  attached authoring view hides overlapping detached head
+  detached inspection view available
+  paired overlay inspection view available
+  managed standard keys initialized at zero weight
+  preview automatically solos the temporary seed
+  BUILD ACTIVE PRESET operator present
+  localized dent preset includes subtle raised rim
+  broad cave and directional displacement preset families present
+  sculpting remains optional
+
+PASS - Preserved v3.8/v3.9 foundations
+  Damage Readiness Analyzer retained
+  protected segment/stump authoring retained
+  attached/detached topology fingerprint validation retained
+  seed center capture from selected face retained
+  3D cursor center capture retained
+  manual sculpt and sync retained
+  mirrored key creation retained
+  deformation validation retained
+  deformation manifest export retained
+  GLB morph export hooks retained
+  clean reimport intact-preview workflow retained
+
+Runtime acceptance still required inside Blender 5.1.2:
+  install/reload addon
+  open existing protected Damage Asset blend
+  choose Attached authoring view
+  capture one face on DSB_ATTACHED_HEAD
+  click BUILD ACTIVE PRESET
+  verify visible world-scale deformation
+  switch to Detached view and verify matching world-scale deformation
+  validate morph targets
+  export GLB and clean reimport

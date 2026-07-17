@@ -1,0 +1,12 @@
+[project]
+name = "dreadstone-animation-forge-repository-tools"
+version = "3.9.1"
+description = "Repository tooling metadata for the Dreadstone Animation Forge Blender add-on"
+readme = "README.md"
+requires-python = ">=3.10"
+license = { text = "Proprietary" }
+authors = [{ name = "Herbachino1776" }]
+dependencies = []
+
+[project.urls]
+Repository = "https://github.com/Herbachino1776/Dreadstone_Animation_Forge"

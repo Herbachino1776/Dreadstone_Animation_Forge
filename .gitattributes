@@ -1,0 +1,7 @@
+# Keep repository text and deterministic release inputs stable across platforms.
+* text=auto eol=lf
+*.zip binary
+
+# Preserve the authoritative v3.9.1 source byte-for-byte, including its one
+# pre-existing trailing space, without making git diff --check fail.
+dreadstone_animation_forge/damage_readiness.py -whitespace

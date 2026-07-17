@@ -1,0 +1,47 @@
+name: Publish release
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v7
+
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.14"
+
+      - name: Show Python version
+        run: python --version
+
+      - name: Validate add-on source contracts
+        run: python scripts/validate_addon.py
+
+      - name: Run static contract tests
+        run: python -m unittest discover -s tests -p "test_*.py"
+
+      - name: Build deterministic release ZIP
+        run: python scripts/build_release.py
+
+      - name: Test ZIP integrity
+        run: python -c "import sys, zipfile; p='dist/Dreadstone_Animation_Forge_v3_9_1.zip'; z=zipfile.ZipFile(p); bad=z.testzip(); z.close(); sys.exit(1 if bad else 0)"
+
+      - name: Create or update GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          asset="dist/Dreadstone_Animation_Forge_v3_9_1.zip"
+          if gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1; then
+            gh release upload "$GITHUB_REF_NAME" "$asset" --clobber
+          else
+            gh release create "$GITHUB_REF_NAME" "$asset" --title "$GITHUB_REF_NAME" --generate-notes
+          fi
