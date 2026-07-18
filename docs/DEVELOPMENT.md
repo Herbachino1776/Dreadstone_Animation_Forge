@@ -25,14 +25,14 @@ Static success means the accepted source contracts remain present. It does not p
 Run `python scripts/build_release.py`. The command validates first and writes `dist/Dreadstone_Animation_Forge_v3_10_0.zip`. The archive has deterministic timestamps and ordering and contains only:
 
 ```text
+blender_manifest.toml
+__init__.py
+damage_readiness.py
+damage_authoring.py
+deformation_authoring.py
+trauma_field.py
 README.txt
 VALIDATION.txt
-dreadstone_animation_forge/
-dreadstone_animation_forge/__init__.py
-dreadstone_animation_forge/damage_readiness.py
-dreadstone_animation_forge/damage_authoring.py
-dreadstone_animation_forge/deformation_authoring.py
-dreadstone_animation_forge/trauma_field.py
 ```
 
 `dist/` is generated and must not be committed.

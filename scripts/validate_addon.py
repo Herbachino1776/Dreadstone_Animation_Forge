@@ -18,6 +18,7 @@ from typing import Callable, Iterable
 
 ROOT = Path(__file__).resolve().parents[1]
 PACKAGE = ROOT / "dreadstone_animation_forge"
+MANIFEST_PATH = PACKAGE / "blender_manifest.toml"
 MODULE_NAMES = (
     "__init__.py",
     "damage_readiness.py",
@@ -252,7 +253,26 @@ def require_markers(source: str, markers: Iterable[str], contract: str) -> None:
 
 def check_module_files() -> None:
     missing = [path.relative_to(ROOT).as_posix() for path in MODULE_PATHS if not path.is_file()]
+    if not MANIFEST_PATH.is_file():
+        missing.append(MANIFEST_PATH.relative_to(ROOT).as_posix())
     require(not missing, f"missing modules: {', '.join(missing)}")
+
+
+def check_extension_manifest() -> None:
+    source = MANIFEST_PATH.read_text(encoding="utf-8")
+    require_markers(
+        source,
+        (
+            'schema_version = "1.0.0"',
+            'id = "dreadstone_animation_forge"',
+            'version = "3.10.0"',
+            'name = "Dreadstone Animation Forge"',
+            'type = "add-on"',
+            'blender_version_min = "4.2.0"',
+            '"SPDX:LicenseRef-Proprietary"',
+        ),
+        "Blender extension manifest",
+    )
 
 
 def check_parse(sources: dict[str, str]) -> None:
@@ -473,6 +493,7 @@ def main() -> int:
     trees: dict[str, ast.Module] = {}
     checks: list[tuple[str, Callable[[], None]]] = [
         ("all five package modules exist", check_module_files),
+        ("Blender extension manifest exists and matches v3.10.0", check_extension_manifest),
         ("all Python modules parse with ast.parse", lambda: check_parse(sources)),
         ("all Python modules compile with py_compile", check_compile),
         ("add-on/deformation version and build contracts", lambda: check_versions(trees)),

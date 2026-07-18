@@ -24,14 +24,14 @@ MODULES = (
     "trauma_field.py",
 )
 ARCHIVE_ENTRIES = (
+    "blender_manifest.toml",
+    "__init__.py",
+    "damage_readiness.py",
+    "damage_authoring.py",
+    "deformation_authoring.py",
+    "trauma_field.py",
     "README.txt",
     "VALIDATION.txt",
-    "dreadstone_animation_forge/",
-    "dreadstone_animation_forge/__init__.py",
-    "dreadstone_animation_forge/damage_readiness.py",
-    "dreadstone_animation_forge/damage_authoring.py",
-    "dreadstone_animation_forge/deformation_authoring.py",
-    "dreadstone_animation_forge/trauma_field.py",
 )
 ZIP_TIMESTAMP = (1980, 1, 1, 0, 0, 0)
 
@@ -100,10 +100,11 @@ def zip_info(name: str, *, directory: bool = False) -> zipfile.ZipInfo:
 
 def build_zip(target: Path, readme: bytes, validation: bytes) -> None:
     payloads: dict[str, bytes] = {
+        "blender_manifest.toml": (PACKAGE / "blender_manifest.toml").read_bytes(),
         "README.txt": readme,
         "VALIDATION.txt": validation,
         **{
-            f"dreadstone_animation_forge/{name}": (PACKAGE / name).read_bytes()
+            name: (PACKAGE / name).read_bytes()
             for name in MODULES
         },
     }

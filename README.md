@@ -22,7 +22,7 @@ Preserved source contracts:
 3. Choose **Install from Disk**, select the ZIP without extracting it, and enable **Dreadstone Animation Forge**.
 4. Open the **Dreadstone** panel in the 3D View sidebar.
 
-The release ZIP deliberately contains `README.txt`, `VALIDATION.txt`, and the top-level `dreadstone_animation_forge/` package. Repository tests, scripts, workflows, and other development files are excluded.
+The release ZIP is a Blender extension package: `blender_manifest.toml` and `__init__.py` are together at the archive root, followed by the add-on modules, `README.txt`, and `VALIDATION.txt`. Repository tests, scripts, workflows, and other development files are excluded.
 
 ## Damage Readiness Analyzer
 

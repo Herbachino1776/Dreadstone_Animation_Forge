@@ -49,6 +49,16 @@ class StaticContractTests(unittest.TestCase):
     def test_required_package_modules_exist(self) -> None:
         self.assertEqual(set(self.sources), set(contracts.MODULE_NAMES))
         self.assertIn("trauma_field.py", self.sources)
+        self.assertTrue(contracts.MANIFEST_PATH.is_file())
+
+    def test_blender_extension_manifest_and_zip_root_layout(self) -> None:
+        manifest = contracts.MANIFEST_PATH.read_text(encoding="utf-8")
+        self.assertIn('schema_version = "1.0.0"', manifest)
+        self.assertIn('id = "dreadstone_animation_forge"', manifest)
+        self.assertIn('version = "3.10.0"', manifest)
+        builder = (ROOT / "scripts" / "build_release.py").read_text(encoding="utf-8")
+        self.assertIn('"blender_manifest.toml",\n    "__init__.py",', builder)
+        self.assertNotIn('"dreadstone_animation_forge/__init__.py"', builder)
 
     def test_manifest_schemas(self) -> None:
         self.assertTrue(contracts.REQUIRED_SCHEMAS <= self.literals)

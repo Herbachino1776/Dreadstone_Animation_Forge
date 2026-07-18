@@ -2,6 +2,7 @@
 
 ## 3.10.0
 
+- Package the add-on as a Blender extension with `blender_manifest.toml` and `__init__.py` at the ZIP root for Blender 5.1.2 **Install from Disk** compatibility.
 - Add explicit registered attached/detached deformation regions with active-region selection and safe legacy `head` migration.
 - Add connected face-patch, selected-vertex, single-face, and cursor capture with stale-capture detection.
 - Add world-edge geodesic distance with radius-limited Dijkstra traversal and topology-aware caching.
