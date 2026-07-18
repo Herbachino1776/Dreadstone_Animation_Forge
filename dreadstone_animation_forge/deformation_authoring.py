@@ -1,4 +1,4 @@
-"""Dreadstone Animation Forge v3.10 trauma-field authoring.
+"""Dreadstone Animation Forge v3.10.1 trauma-field authoring.
 
 The workbench edits only registered attached/detached regions on the generated
 protected Damage Asset. Paired morph targets remain exact-index synchronized in
@@ -18,8 +18,8 @@ from bpy.types import Operator
 from . import trauma_field
 
 DEFORMATION_SCHEMA = "dreadstone.damage_deformation.v1"
-DEFORMATION_VERSION = (3, 10, 0)
-DEFORMATION_BUILD_ID = "2026-07-17.trauma-field.1"
+DEFORMATION_VERSION = (3, 10, 1)
+DEFORMATION_BUILD_ID = "2026-07-18.trauma-hotfix.1"
 ATTACHED_HEAD_NAME = "DSB_ATTACHED_HEAD"
 DETACHED_HEAD_NAME = "DSB_SEGMENT_HEAD"
 PREVIEW_KEY_NAME = "__DSB_DEFORMATION_SEED_PREVIEW"
@@ -207,6 +207,12 @@ def _load_registry(migrate_legacy=True):
                 payload["regions"] = [record]
                 payload["activeRegionId"] = "head"
                 _store_registry(payload)
+                repair_legacy_pair_sync(
+                    region_id="head",
+                    candidate_names=existing,
+                    automatic=True,
+                )
+                payload = _load_registry(migrate_legacy=False)
     if payload.get("activeRegionId") not in {region.get("regionId") for region in payload["regions"]}:
         payload["activeRegionId"] = payload["regions"][0].get("regionId", "") if payload["regions"] else ""
     return payload
@@ -562,19 +568,116 @@ def _seed_direction_world(settings, obj):
     return result.normalized()
 
 
-def _set_authoring_view(attached, detached, mode='ATTACHED'):
-    # hide_set is viewport-only and does not alter export visibility. It prevents
-    # the intact detached segment from sitting directly on top of the skinned head
-    # and masking the seed preview.
-    if mode == 'ATTACHED':
-        attached.hide_set(False)
-        detached.hide_set(True)
-    elif mode == 'DETACHED':
-        attached.hide_set(True)
-        detached.hide_set(False)
-    else:
-        attached.hide_set(False)
-        detached.hide_set(False)
+def _is_dsb_authoring_collection(collection):
+    return bool(collection.get("dsb_damage_generated_collection", False)) or collection.name.startswith("DSB_")
+
+
+def _collection_paths(root, target):
+    paths = []
+
+    def visit(collection, path):
+        current = path + [collection]
+        if collection == target:
+            paths.append(current)
+        for child in collection.children:
+            visit(child, current)
+
+    visit(root, [])
+    return paths
+
+
+def _layer_collection_paths(root, target):
+    paths = []
+
+    def visit(layer_collection, path):
+        current = path + [layer_collection]
+        if layer_collection.collection == target:
+            paths.append(current)
+        for child in layer_collection.children:
+            visit(child, current)
+
+    visit(root, [])
+    return paths
+
+
+def _visibility_blocker(context, obj):
+    if obj.hide_viewport:
+        return f"Object {obj.name} is blocked by object.hide_viewport."
+    try:
+        if obj.hide_get(view_layer=context.view_layer):
+            return f"Object {obj.name} is blocked by its current-view-layer hide state."
+    except TypeError:
+        if obj.hide_get():
+            return f"Object {obj.name} is blocked by its viewport hide state."
+    reasons = []
+    for collection in obj.users_collection:
+        if collection.hide_viewport:
+            reasons.append(f"collection {collection.name} has hide_viewport enabled")
+        layer_paths = _layer_collection_paths(context.view_layer.layer_collection, collection)
+        if not layer_paths:
+            reasons.append(f"collection {collection.name} is absent from view layer {context.view_layer.name}")
+        for path in layer_paths:
+            for layer_collection in path:
+                if layer_collection.exclude:
+                    reasons.append(f"layer collection {layer_collection.name} is excluded")
+                if layer_collection.hide_viewport:
+                    reasons.append(f"layer collection {layer_collection.name} has viewport hiding enabled")
+    if reasons:
+        return f"Object {obj.name} remains blocked: " + "; ".join(dict.fromkeys(reasons)) + "."
+    return f"Object {obj.name} remains blocked by the current viewport or local-view state."
+
+
+def _object_visible_in_view_layer(obj, view_layer):
+    try:
+        return bool(obj.visible_get(view_layer=view_layer))
+    except TypeError:
+        return bool(obj.visible_get())
+
+
+def _set_authoring_view(attached, detached, mode='ATTACHED', context=None):
+    """Normalize viewport-only visibility for exactly one registered region pair."""
+
+    if mode not in {'ATTACHED', 'DETACHED', 'BOTH'}:
+        raise RuntimeError(f"Unsupported Trauma Field authoring view {mode!r}.")
+    context = context or bpy.context
+    if getattr(context, "view_layer", None) is None or getattr(context, "scene", None) is None:
+        raise RuntimeError("Trauma Field visibility requires an active scene and view layer.")
+    pair = (attached, detached)
+    relevant_collections = {
+        collection
+        for obj in pair
+        for collection in obj.users_collection
+        if _is_dsb_authoring_collection(collection)
+    }
+
+    # Damage Authoring may set object and DSB collection viewport flags. Restore
+    # only the active pair and its generated collection paths; render/export
+    # visibility and unrelated user collections remain untouched.
+    for obj in pair:
+        obj.hide_viewport = False
+    for collection in relevant_collections:
+        collection.hide_viewport = False
+        for path in _collection_paths(context.scene.collection, collection):
+            for parent in path:
+                if _is_dsb_authoring_collection(parent):
+                    parent.hide_viewport = False
+        for path in _layer_collection_paths(context.view_layer.layer_collection, collection):
+            for layer_collection in path:
+                if _is_dsb_authoring_collection(layer_collection.collection):
+                    layer_collection.exclude = False
+                    layer_collection.hide_viewport = False
+
+    for obj in pair:
+        if obj.name not in context.view_layer.objects:
+            raise RuntimeError(_visibility_blocker(context, obj))
+
+    show_attached = mode in {'ATTACHED', 'BOTH'}
+    show_detached = mode in {'DETACHED', 'BOTH'}
+    attached.hide_set(not show_attached)
+    detached.hide_set(not show_detached)
+    for obj, should_show in ((attached, show_attached), (detached, show_detached)):
+        if should_show and not _object_visible_in_view_layer(obj, context.view_layer):
+            raise RuntimeError(_visibility_blocker(context, obj))
 
 
 def _zero_managed_weights(attached, include_preview=False):
@@ -664,23 +767,233 @@ def _set_key_coordinates(key_block, coordinates):
         point.co = coordinate
 
 
-def sync_key_to_detached(name, region_id=None):
-    attached, detached = _resolve_pair(region_id=region_id)
-    contract = validate_topology_pair(attached, detached)
-    if contract["status"] != "PASS":
-        raise RuntimeError(" ".join(contract["errors"]))
+def _sync_exact_index_key_pair(attached, detached, name):
     attached_key = _key(attached, name)
     detached_key = _key(detached, name)
     if attached_key is None or detached_key is None:
         raise RuntimeError(f"The paired key {name} is incomplete.")
     attached_basis = attached.data.shape_keys.reference_key
     detached_basis = detached.data.shape_keys.reference_key
+    if attached_basis is None or detached_basis is None:
+        raise RuntimeError(f"The paired key {name} has no Basis key.")
+    if not (
+        len(attached_key.data) == len(detached_key.data)
+        == len(attached_basis.data) == len(detached_basis.data)
+    ):
+        raise RuntimeError(f"The paired key {name} has mismatched point counts.")
     for index in range(len(attached_key.data)):
         delta_attached_local = attached_key.data[index].co - attached_basis.data[index].co
         delta_world = _local_delta_to_world(attached, delta_attached_local)
         delta_detached_local = _world_delta_to_local(detached, delta_world)
         detached_key.data[index].co = detached_basis.data[index].co + delta_detached_local
     _link_detached_value(attached, detached, name)
+
+
+def sync_key_to_detached(name, region_id=None):
+    attached, detached = _resolve_pair(region_id=region_id)
+    contract = validate_topology_pair(attached, detached)
+    if contract["status"] != "PASS":
+        raise RuntimeError(" ".join(contract["errors"]))
+    _sync_exact_index_key_pair(attached, detached, name)
+
+
+def _pair_delta_error(attached, detached, name):
+    attached_key = _key(attached, name)
+    detached_key = _key(detached, name)
+    attached_basis = attached.data.shape_keys.reference_key if attached.data.shape_keys else None
+    detached_basis = detached.data.shape_keys.reference_key if detached.data.shape_keys else None
+    if attached_key is None or detached_key is None or attached_basis is None or detached_basis is None:
+        return math.inf
+    if not (
+        len(attached_key.data) == len(detached_key.data)
+        == len(attached_basis.data) == len(detached_basis.data)
+    ):
+        return math.inf
+    maximum = 0.0
+    for index in range(len(attached_key.data)):
+        delta_a = _local_delta_to_world(attached, attached_key.data[index].co - attached_basis.data[index].co)
+        delta_d = _local_delta_to_world(detached, detached_key.data[index].co - detached_basis.data[index].co)
+        values = (*attached_key.data[index].co, *detached_key.data[index].co, *delta_a, *delta_d)
+        if not all(math.isfinite(value) for value in values):
+            return math.inf
+        maximum = max(maximum, (delta_a - delta_d).length)
+    return maximum
+
+
+def _attached_key_repair_safety(attached, detached, name, declared_maximum, topology_contract):
+    if topology_contract.get("status") != "PASS":
+        return False, "Registered topology pair failed: " + " ".join(topology_contract.get("errors", []))
+    attached_key = _key(attached, name)
+    detached_key = _key(detached, name)
+    attached_basis = attached.data.shape_keys.reference_key if attached.data.shape_keys else None
+    detached_basis = detached.data.shape_keys.reference_key if detached.data.shape_keys else None
+    if attached_key is None or detached_key is None:
+        return False, "The exact legacy key is missing from one side."
+    if attached_basis is None or detached_basis is None:
+        return False, "The exact legacy key has no Basis key."
+    if not (
+        len(attached_key.data) == len(detached_key.data)
+        == len(attached_basis.data) == len(detached_basis.data)
+    ):
+        return False, "The exact legacy key has unequal point counts."
+    try:
+        maximum = float(declared_maximum)
+    except (TypeError, ValueError):
+        maximum = math.nan
+    if not math.isfinite(maximum) or maximum <= 0.0:
+        return False, "The attached key has no valid declared maximum displacement."
+    measured = 0.0
+    for index in range(len(attached_key.data)):
+        attached_coordinate = attached_key.data[index].co
+        attached_basis_coordinate = attached_basis.data[index].co
+        delta_world = _local_delta_to_world(attached, attached_coordinate - attached_basis_coordinate)
+        if not all(math.isfinite(value) for value in (*attached_coordinate, *attached_basis_coordinate, *delta_world)):
+            return False, "The attached key contains non-finite coordinates or deltas."
+        measured = max(measured, delta_world.length)
+    if measured > maximum + PAIR_TOLERANCE:
+        return False, f"The attached key exceeds its declared maximum displacement: {measured:.6f} m > {maximum:.6f} m."
+    return True, ""
+
+
+def _finite_error_or_none(value):
+    return float(value) if math.isfinite(value) else None
+
+
+def repair_legacy_pair_sync(context=None, region_id=None, candidate_names=None, automatic=False):
+    """Repair safe Forge-managed legacy pairs from attached to detached by index."""
+
+    registry, region, attached, detached = _resolve_active_region(context, region_id)
+    if automatic and not (
+        region.get("regionId") == "head"
+        and attached.name == ATTACHED_HEAD_NAME
+        and detached.name == DETACHED_HEAD_NAME
+    ):
+        raise RuntimeError("Automatic legacy repair is restricted to the exact Testman head pair.")
+    payload = _metadata(attached)
+    metadata_keys = payload.setdefault("keys", {})
+    if candidate_names is None:
+        names = sorted(metadata_keys)
+    else:
+        names = sorted({str(name) for name in candidate_names})
+    if automatic:
+        names = [name for name in names if name in STANDARD_HEAD_KEYS]
+        for name in names:
+            if not isinstance(metadata_keys.get(name), dict):
+                metadata_keys[name] = {
+                    "name": name,
+                    "region": "head",
+                    "regionId": "head",
+                    "status": "MIGRATED",
+                    "recipeStatus": "LEGACY_MANUAL",
+                    "legacy": True,
+                    "stamps": [],
+                    **STANDARD_HEAD_KEYS[name],
+                }
+
+    result = {
+        "inspected": 0,
+        "healthy": 0,
+        "repaired": 0,
+        "skipped": 0,
+        "unrepairable": 0,
+        "details": [],
+    }
+    topology_contract = validate_topology_pair(attached, detached)
+    for name in names:
+        result["inspected"] += 1
+        entry = metadata_keys.get(name)
+        if not isinstance(entry, dict) or name == PREVIEW_KEY_NAME:
+            result["skipped"] += 1
+            result["details"].append({"name": name, "status": "SKIPPED", "reason": "Not a Forge-managed legacy key."})
+            continue
+        if entry.get("stamps") or entry.get("recipeStatus") == "PROCEDURAL_STACK":
+            result["skipped"] += 1
+            result["details"].append({"name": name, "status": "SKIPPED", "reason": "Procedural stamp-stack key."})
+            continue
+        attached_key = _key(attached, name)
+        detached_key = _key(detached, name)
+        if attached_key is None or detached_key is None:
+            result["skipped"] += 1
+            result["details"].append({"name": name, "status": "SKIPPED", "reason": "Missing key left unchanged."})
+            continue
+
+        before = _pair_delta_error(attached, detached, name)
+        safe, reason = _attached_key_repair_safety(
+            attached,
+            detached,
+            name,
+            entry.get("maximumDisplacement"),
+            topology_contract,
+        )
+        entry["legacySyncErrorBefore"] = _finite_error_or_none(before)
+        entry["legacySyncRepairApplied"] = False
+        if not safe:
+            entry["legacySyncStatus"] = "UNREPAIRABLE"
+            entry["legacySyncErrorAfter"] = _finite_error_or_none(before)
+            entry["legacySyncReason"] = reason
+            result["unrepairable"] += 1
+            result["details"].append({"name": name, "status": "UNREPAIRABLE", "reason": reason})
+            continue
+        if before <= SYNC_TOLERANCE:
+            try:
+                _link_detached_value(attached, detached, name)
+            except Exception as exc:
+                entry["legacySyncStatus"] = "UNREPAIRABLE"
+                entry["legacySyncErrorAfter"] = float(before)
+                entry["legacySyncReason"] = "Could not restore the detached value driver: " + str(exc)
+                result["unrepairable"] += 1
+                result["details"].append({"name": name, "status": "UNREPAIRABLE", "reason": entry["legacySyncReason"]})
+                continue
+            entry["legacySyncStatus"] = "PASS"
+            entry["legacySyncErrorAfter"] = float(before)
+            entry.pop("legacySyncReason", None)
+            result["healthy"] += 1
+            result["details"].append({"name": name, "status": "PASS", "error": float(before)})
+            continue
+
+        original_detached = [point.co.copy() for point in detached_key.data]
+        try:
+            _sync_exact_index_key_pair(attached, detached, name)
+            after = _pair_delta_error(attached, detached, name)
+            if not math.isfinite(after) or after > SYNC_TOLERANCE:
+                raise RuntimeError(f"Exact-index repair still differs by {after:.8f} m.")
+        except Exception as exc:
+            for point, coordinate in zip(detached_key.data, original_detached):
+                point.co = coordinate
+            entry["legacySyncStatus"] = "UNREPAIRABLE"
+            entry["legacySyncErrorAfter"] = _finite_error_or_none(_pair_delta_error(attached, detached, name))
+            entry["legacySyncReason"] = str(exc)
+            result["unrepairable"] += 1
+            result["details"].append({"name": name, "status": "UNREPAIRABLE", "reason": str(exc)})
+            continue
+        entry["legacySyncStatus"] = "REPAIRED"
+        entry["legacySyncErrorAfter"] = float(after)
+        entry["legacySyncRepairApplied"] = True
+        entry.pop("legacySyncReason", None)
+        result["repaired"] += 1
+        result["details"].append({"name": name, "status": "REPAIRED", "before": float(before), "after": float(after)})
+
+    result["summary"] = (
+        f"LEGACY PAIR REPAIR — {result['healthy']} healthy / "
+        f"{result['repaired']} repaired / {result['unrepairable']} unrepairable"
+    )
+    payload["legacyPairRepair"] = {
+        "regionId": region.get("regionId"),
+        "inspected": result["inspected"],
+        "healthy": result["healthy"],
+        "repaired": result["repaired"],
+        "skipped": result["skipped"],
+        "unrepairable": result["unrepairable"],
+        "summary": result["summary"],
+        "automatic": bool(automatic),
+    }
+    _store_metadata(attached, detached, payload)
+    registry = _load_registry(migrate_legacy=False)
+    stored_region = _region_record(registry, region.get("regionId"))
+    if stored_region is not None:
+        stored_region["legacyPairRepair"] = payload["legacyPairRepair"]
+        _store_registry(registry)
+    return result
 
 
 def preview_seed(context, quiet=False):
@@ -784,29 +1097,15 @@ def _capture_payload(settings):
         return {}
 
 
-def _captured_face_component_count(attached, face_indices):
-    selected = {int(index) for index in face_indices}
+def _captured_face_component_count(attached, face_indices, virtual_weld=None):
+    selected = sorted({int(index) for index in face_indices})
     if not selected:
         return 0
-    edge_faces = {}
-    for index in selected:
-        for edge_key in attached.data.polygons[index].edge_keys:
-            edge_faces.setdefault(tuple(sorted(edge_key)), []).append(index)
-    neighbors = {index: set() for index in selected}
-    for linked_faces in edge_faces.values():
-        for left in linked_faces:
-            neighbors[left].update(right for right in linked_faces if right != left)
-    components = 0
-    remaining = set(selected)
-    while remaining:
-        components += 1
-        stack = [remaining.pop()]
-        while stack:
-            current = stack.pop()
-            linked = neighbors[current] & remaining
-            remaining.difference_update(linked)
-            stack.extend(linked)
-    return components
+    if virtual_weld is None:
+        _positions, virtual_weld = _virtual_weld_context(attached)
+    faces = [tuple(attached.data.polygons[index].vertices) for index in selected]
+    components = trauma_field.virtual_face_components(faces, virtual_weld["raw_vertex_to_virtual"])
+    return len(components)
 
 
 def _capture_errors(capture, region, attached):
@@ -833,10 +1132,38 @@ def _capture_errors(capture, region, attached):
         errors.append("Captured surface has no geodesic seed vertices.")
     if any(not isinstance(index, int) or index < 0 or index >= len(attached.data.vertices) for index in vertex_indices):
         errors.append("Captured vertex indices are invalid for the active attached mesh; recapture them.")
-    if any(not isinstance(index, int) or index < 0 or index >= len(attached.data.polygons) for index in face_indices):
+    invalid_faces = any(not isinstance(index, int) or index < 0 or index >= len(attached.data.polygons) for index in face_indices)
+    if invalid_faces:
         errors.append("Captured face indices are invalid for the active attached mesh; recapture them.")
-    elif placement in {"SINGLE_FACE", "SELECTED_FACE_PATCH"} and _captured_face_component_count(attached, face_indices) != 1:
-        errors.append("Captured face patch contains disconnected islands; select one connected patch and recapture it.")
+    elif placement in {"SINGLE_FACE", "SELECTED_FACE_PATCH"}:
+        _positions, virtual_weld = _virtual_weld_context(attached)
+        component_count = _captured_face_component_count(attached, face_indices, virtual_weld)
+        if component_count != 1:
+            errors.append("Captured face patch contains disconnected islands; select one connected patch and recapture it.")
+        stored_digest = capture.get("virtualWeldDigest")
+        if stored_digest and stored_digest != virtual_weld["digest"]:
+            errors.append("Captured virtual weld state is stale; recapture the surface on the current world-space mesh.")
+        stored_tolerance = capture.get("virtualWeldTolerance")
+        if stored_tolerance is not None:
+            try:
+                tolerance_matches = math.isclose(
+                    float(stored_tolerance),
+                    float(virtual_weld["tolerance"]),
+                    rel_tol=1e-12,
+                    abs_tol=1e-15,
+                )
+            except (TypeError, ValueError):
+                tolerance_matches = False
+            if not tolerance_matches:
+                errors.append("Captured virtual weld tolerance is stale or invalid; recapture the surface.")
+        stored_components = capture.get("virtualConnectedComponentCount")
+        if stored_components is not None:
+            try:
+                components_match = int(stored_components) == component_count
+            except (TypeError, ValueError):
+                components_match = False
+            if not components_match:
+                errors.append("Captured virtual face connectivity is stale; recapture the surface.")
     selection_kind = capture.get("selectionKind", "VERTEX")
     hash_indices = face_indices if selection_kind == "FACE" else vertex_indices
     if hash_indices:
@@ -948,6 +1275,15 @@ def _basis_world_positions(attached):
     return [tuple(attached.matrix_world @ point.co) for point in basis.data]
 
 
+def _world_vertex_positions(attached):
+    return [tuple(attached.matrix_world @ vertex.co) for vertex in attached.data.vertices]
+
+
+def _virtual_weld_context(attached):
+    positions = _world_vertex_positions(attached)
+    return positions, trauma_field.build_virtual_weld_map(positions)
+
+
 def _stamp_weights(attached, region, stamp):
     capture = stamp.get("capture", {})
     errors = _capture_errors(capture, region, attached)
@@ -971,17 +1307,24 @@ def _stamp_weights(attached, region, stamp):
         }
     else:
         topology = _topology_fingerprint(attached)
+        positions, virtual_weld = _virtual_weld_context(attached)
         cache_key = trauma_field.geodesic_cache_key(
             topology,
             f"{attached.name}:{attached.data.name}",
             capture.get("selectionHash", ""),
             distance_mode,
             maximum_traversal,
+            virtual_weld["digest"],
+            virtual_weld["tolerance"],
         )
         if cache_key not in _GEODESIC_CACHE:
-            positions = [tuple(attached.matrix_world @ vertex.co) for vertex in attached.data.vertices]
             edges = [tuple(edge.vertices) for edge in attached.data.edges]
-            adjacency = trauma_field.build_weighted_adjacency(vertex_count, edges, positions)
+            adjacency = trauma_field.build_weighted_adjacency(
+                vertex_count,
+                edges,
+                positions,
+                virtual_members=virtual_weld["virtual_members"],
+            )
             _GEODESIC_CACHE[cache_key] = trauma_field.geodesic_distances(adjacency, selected, maximum_traversal)
             _GEODESIC_CACHE_CONTEXT[cache_key] = {
                 "topologyFingerprint": topology,
@@ -991,6 +1334,8 @@ def _stamp_weights(attached, region, stamp):
                 "selectionHash": capture.get("selectionHash", ""),
                 "distanceMode": distance_mode,
                 "maximumDistance": maximum_traversal,
+                "virtualWeldDigest": virtual_weld["digest"],
+                "virtualWeldTolerance": virtual_weld["tolerance"],
             }
         distances = _GEODESIC_CACHE[cache_key]
     weights = list(trauma_field.surface_mask_weights(
@@ -1106,6 +1451,10 @@ def _manifest_stamp(stamp):
             "vertexCount": len(capture.get("vertexIndices", [])),
             "boundsWorld": capture.get("boundsWorld"),
             "estimatedRadius": capture.get("estimatedRadius"),
+            "virtualWeldTolerance": capture.get("virtualWeldTolerance"),
+            "virtualWeldDigest": capture.get("virtualWeldDigest"),
+            "virtualWeldMemberCount": capture.get("virtualWeldMemberCount"),
+            "virtualConnectedComponentCount": capture.get("virtualConnectedComponentCount"),
         },
     }
 
@@ -1233,6 +1582,7 @@ def validate_deformations(require_keys=False):
             expected = trauma_field.geodesic_cache_key(
                 cache_context["topologyFingerprint"], cache_context["objectIdentity"],
                 cache_context["selectionHash"], cache_context["distanceMode"], cache_context["maximumDistance"],
+                cache_context["virtualWeldDigest"], cache_context["virtualWeldTolerance"],
             )
             cached_object = _object(cache_context.get("objectName", ""))
             current_identity = (
@@ -1240,11 +1590,22 @@ def validate_deformations(require_keys=False):
                 if cached_object is not None and cached_object.type == 'MESH' else ""
             )
             current_topology = _topology_fingerprint(cached_object) if current_identity else ""
+            if current_identity:
+                _current_positions, current_virtual_weld = _virtual_weld_context(cached_object)
+            else:
+                current_virtual_weld = {"digest": "", "tolerance": 0.0}
             if (
                 expected != cache_key
                 or cache_key not in _GEODESIC_CACHE
                 or current_identity != cache_context["objectIdentity"]
                 or current_topology != cache_context["topologyFingerprint"]
+                or current_virtual_weld["digest"] != cache_context["virtualWeldDigest"]
+                or not math.isclose(
+                    float(current_virtual_weld["tolerance"]),
+                    float(cache_context["virtualWeldTolerance"]),
+                    rel_tol=1e-12,
+                    abs_tol=1e-15,
+                )
                 or (cached_object is not None and cached_object.data.name != cache_context.get("meshDataName"))
             ):
                 errors.append("A stale geodesic cache key was detected; recapture or rebuild the active stamp.")
@@ -1312,6 +1673,10 @@ def get_deformation_manifest():
                 "measuredMaximumDisplacement": key_validation.get("measuredMaximumDisplacement", _max_displacement(attached, name)),
                 "maximumPairDeltaError": key_validation.get("maximumPairDeltaError"),
                 "validationStatus": validation_record.get("status", "UNKNOWN"),
+                "legacySyncStatus": source_entry.get("legacySyncStatus"),
+                "legacySyncErrorBefore": source_entry.get("legacySyncErrorBefore"),
+                "legacySyncErrorAfter": source_entry.get("legacySyncErrorAfter"),
+                "legacySyncRepairApplied": bool(source_entry.get("legacySyncRepairApplied", False)),
                 "orderedStamps": [_manifest_stamp(stamp) for stamp in source_entry.get("stamps", [])],
                 "recipeDigest": source_entry.get("recipeDigest"),
             }
@@ -1504,17 +1869,13 @@ def _capture_face_selection(context, require_single=False):
         raise RuntimeError("Select exactly one face for SINGLE_FACE capture.")
     if not selected:
         raise RuntimeError("Select at least one face on the active attached mesh.")
-    selected_set = set(selected)
-    visited = {selected[0]}
-    stack = [selected[0]]
-    while stack:
-        face = stack.pop()
-        for edge in face.edges:
-            for linked in edge.link_faces:
-                if linked in selected_set and linked not in visited:
-                    visited.add(linked)
-                    stack.append(linked)
-    if len(visited) != len(selected_set):
+    _positions, virtual_weld = _virtual_weld_context(attached)
+    selected_faces = [tuple(vertex.index for vertex in face.verts) for face in selected]
+    virtual_components = trauma_field.virtual_face_components(
+        selected_faces,
+        virtual_weld["raw_vertex_to_virtual"],
+    )
+    if len(virtual_components) != 1:
         raise RuntimeError("The selected faces contain disconnected islands. Select exactly one connected face patch.")
     areas = [max(face.calc_area(), 1e-12) for face in selected]
     total_area = sum(areas)
@@ -1544,6 +1905,12 @@ def _capture_face_selection(context, require_single=False):
         "boundsWorld": bounds,
         "estimatedRadius": radius,
         "connectedComponentCount": 1,
+        "virtualWeldTolerance": virtual_weld["tolerance"],
+        "virtualWeldDigest": virtual_weld["digest"],
+        "virtualWeldMemberCount": sum(
+            len(group) for group in virtual_weld["virtual_members"] if len(group) > 1
+        ),
+        "virtualConnectedComponentCount": len(virtual_components),
     }
     bpy.ops.object.mode_set(mode='OBJECT')
     _store_capture(context, capture)
@@ -2246,11 +2613,15 @@ class DAF_OT_show_deformation_attached(Operator):
     bl_options = {'REGISTER'}
 
     def execute(self, context):
-        attached, detached = _resolve_pair()
-        _set_authoring_view(attached, detached, 'ATTACHED')
-        _set_active_object(context, attached)
-        context.scene.daf_settings.deformation_status = "VIEWING ATTACHED REGION"
-        return {'FINISHED'}
+        try:
+            attached, detached = _resolve_pair()
+            _set_authoring_view(attached, detached, 'ATTACHED', context)
+            _set_active_object(context, attached)
+            context.scene.daf_settings.deformation_status = "VIEWING ATTACHED REGION"
+            return {'FINISHED'}
+        except Exception as exc:
+            self.report({'ERROR'}, str(exc))
+            return {'CANCELLED'}
 
 
 class DAF_OT_show_deformation_detached(Operator):
@@ -2259,11 +2630,15 @@ class DAF_OT_show_deformation_detached(Operator):
     bl_options = {'REGISTER'}
 
     def execute(self, context):
-        attached, detached = _resolve_pair()
-        _set_authoring_view(attached, detached, 'DETACHED')
-        _set_active_object(context, detached)
-        context.scene.daf_settings.deformation_status = "VIEWING DETACHED REGION"
-        return {'FINISHED'}
+        try:
+            attached, detached = _resolve_pair()
+            _set_authoring_view(attached, detached, 'DETACHED', context)
+            _set_active_object(context, detached)
+            context.scene.daf_settings.deformation_status = "VIEWING DETACHED REGION"
+            return {'FINISHED'}
+        except Exception as exc:
+            self.report({'ERROR'}, str(exc))
+            return {'CANCELLED'}
 
 
 class DAF_OT_show_deformation_overlay(Operator):
@@ -2272,10 +2647,42 @@ class DAF_OT_show_deformation_overlay(Operator):
     bl_options = {'REGISTER'}
 
     def execute(self, context):
-        attached, detached = _resolve_pair()
-        _set_authoring_view(attached, detached, 'BOTH')
-        context.scene.daf_settings.deformation_status = "PAIR OVERLAY ENABLED"
-        return {'FINISHED'}
+        try:
+            attached, detached = _resolve_pair()
+            _set_authoring_view(attached, detached, 'BOTH', context)
+            context.scene.daf_settings.deformation_status = "PAIR OVERLAY ENABLED"
+            return {'FINISHED'}
+        except Exception as exc:
+            self.report({'ERROR'}, str(exc))
+            return {'CANCELLED'}
+
+
+class DAF_OT_repair_legacy_pair_sync(Operator):
+    bl_idname = "daf.repair_legacy_pair_sync"
+    bl_label = "Repair Legacy Pair Sync"
+    bl_description = "Safely resynchronize Forge-managed legacy detached keys from their authoritative attached copies"
+    bl_options = {'REGISTER', 'UNDO'}
+
+    def execute(self, context):
+        try:
+            result = repair_legacy_pair_sync(context=context)
+            validation = validate_deformations(require_keys=True)
+            settings = context.scene.daf_settings
+            settings.last_deformation_validation = validation["status"]
+            settings.deformation_status = result["summary"]
+            report = (
+                f"{result['summary']} — {result['skipped']} skipped / "
+                f"{result['inspected']} inspected; validation {validation['status']}"
+            )
+            if validation["status"] == "PASS" and not result["unrepairable"]:
+                self.report({'INFO'}, report)
+            else:
+                validation_detail = "; ".join(validation.get("errors", [])[:2])
+                self.report({'WARNING'}, report + (": " + validation_detail if validation_detail else ""))
+            return {'FINISHED'}
+        except Exception as exc:
+            self.report({'ERROR'}, str(exc))
+            return {'CANCELLED'}
 
 
 class DAF_OT_validate_deformations(Operator):
@@ -2371,6 +2778,12 @@ def draw_panel(box, context, settings):
     if settings.deformation_seed_center_valid:
         capture = _capture_payload(settings)
         capture_box.label(text=f"Captured {len(capture.get('faceIndices', []))} faces / {len(capture.get('vertexIndices', []))} vertices", icon='CHECKMARK')
+        if capture.get("virtualConnectedComponentCount") is not None:
+            capture_box.label(
+                text=f"Virtual seam connectivity: {capture.get('virtualConnectedComponentCount')} component",
+                icon='LINKED',
+            )
+            capture_box.label(text=f"Virtual weld members: {capture.get('virtualWeldMemberCount', 0)}")
     else:
         capture_box.label(text="Capture a valid surface selection", icon='ERROR')
 
@@ -2438,6 +2851,10 @@ def draw_panel(box, context, settings):
     validation_box = box.box()
     validation_box.label(text="7. Validation and Export", icon='CHECKMARK')
     validation_box.operator("daf.validate_deformations", text="Validate Morph Targets", icon='CHECKMARK')
+    validation_box.operator("daf.repair_legacy_pair_sync", text="REPAIR LEGACY PAIR SYNC", icon='FILE_REFRESH')
+    repair_summary = payload.get("legacyPairRepair", {}).get("summary")
+    if repair_summary:
+        validation_box.label(text="Legacy pair repair: " + repair_summary.replace("LEGACY PAIR REPAIR — ", ""), icon='LINKED')
     validation_box.label(text="Export remains in Damage Segment & Stump Authoring", icon='EXPORT')
     validation_box.label(text="Attached/detached deltas stay exact-index synchronized", icon='LINKED')
     validation_box.label(text="Source mesh and rig remain protected", icon='LOCKED')
@@ -2478,5 +2895,6 @@ CLASSES = (
     DAF_OT_show_deformation_attached,
     DAF_OT_show_deformation_detached,
     DAF_OT_show_deformation_overlay,
+    DAF_OT_repair_legacy_pair_sync,
     DAF_OT_validate_deformations,
 )

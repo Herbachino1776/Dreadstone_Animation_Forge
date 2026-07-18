@@ -21,6 +21,7 @@ class StaticContractTests(unittest.TestCase):
         cls.trees = contracts.parse_sources(cls.sources)
         cls.literals = contracts.string_literals(cls.trees.values())
         cls.deformation = cls.sources["deformation_authoring.py"]
+        cls.trauma = cls.sources["trauma_field.py"]
 
     def test_addon_and_deformation_version(self) -> None:
         self.assertEqual(
@@ -55,10 +56,29 @@ class StaticContractTests(unittest.TestCase):
         manifest = contracts.MANIFEST_PATH.read_text(encoding="utf-8")
         self.assertIn('schema_version = "1.0.0"', manifest)
         self.assertIn('id = "dreadstone_animation_forge"', manifest)
-        self.assertIn('version = "3.10.0"', manifest)
+        self.assertIn('version = "3.10.1"', manifest)
         builder = (ROOT / "scripts" / "build_release.py").read_text(encoding="utf-8")
         self.assertIn('"blender_manifest.toml",\n    "__init__.py",', builder)
         self.assertNotIn('"dreadstone_animation_forge/__init__.py"', builder)
+        builder_tree = ast.parse(builder)
+        self.assertEqual(
+            contracts.literal_assignment(builder_tree, "ARCHIVE_ENTRIES"),
+            (
+                "blender_manifest.toml",
+                "__init__.py",
+                "damage_readiness.py",
+                "damage_authoring.py",
+                "deformation_authoring.py",
+                "trauma_field.py",
+                "README.txt",
+                "VALIDATION.txt",
+            ),
+        )
+        version = contracts.EXPECTED_VERSION
+        self.assertEqual(
+            f"Dreadstone_Animation_Forge_v{'_'.join(map(str, version))}.zip",
+            "Dreadstone_Animation_Forge_v3_10_1.zip",
+        )
 
     def test_manifest_schemas(self) -> None:
         self.assertTrue(contracts.REQUIRED_SCHEMAS <= self.literals)
@@ -121,6 +141,19 @@ class StaticContractTests(unittest.TestCase):
         self.assertEqual(operators["daf.show_deformation_overlay"], "Show Both")
         self.assertIn('row.operator("daf.show_deformation_overlay", text="Both"', self.deformation)
 
+    def test_visibility_normalization_is_pair_scoped_and_viewport_only(self) -> None:
+        tree = self.trees["deformation_authoring.py"]
+        function = next(
+            node for node in tree.body
+            if isinstance(node, ast.FunctionDef) and node.name == "_set_authoring_view"
+        )
+        attributes = {node.attr for node in ast.walk(function) if isinstance(node, ast.Attribute)}
+        self.assertIn("hide_viewport", attributes)
+        self.assertIn("hide_set", attributes)
+        self.assertNotIn("hide_render", attributes)
+        self.assertIn("layer_collection.exclude = False", self.deformation)
+        self.assertIn("def _visibility_blocker(context, obj):", self.deformation)
+
     def test_build_active_preset_and_zero_weight_contracts(self) -> None:
         self.assertIn('bl_idname = "daf.build_active_deformation_preset"', self.deformation)
         self.assertIn('text="BUILD ACTIVE PRESET"', self.deformation)
@@ -161,6 +194,22 @@ class StaticContractTests(unittest.TestCase):
         for key_name in contracts.REQUIRED_DEFORMATION_KEYS:
             self.assertIn(key_name, self.literals)
 
+    def test_legacy_pair_repair_operator_and_strict_sync_metadata(self) -> None:
+        operators = contracts.operator_contracts([self.trees["deformation_authoring.py"]])
+        self.assertEqual(operators.get("daf.repair_legacy_pair_sync"), "Repair Legacy Pair Sync")
+        self.assertIn('text="REPAIR LEGACY PAIR SYNC"', self.deformation)
+        self.assertIn("def repair_legacy_pair_sync(", self.deformation)
+        self.assertIn("_sync_exact_index_key_pair(attached, detached, name)", self.deformation)
+        self.assertIn("if before <= SYNC_TOLERANCE:", self.deformation)
+        self.assertIn("if max_delta_error > SYNC_TOLERANCE:", self.deformation)
+        for field in (
+            "legacySyncStatus",
+            "legacySyncErrorBefore",
+            "legacySyncErrorAfter",
+            "legacySyncRepairApplied",
+        ):
+            self.assertIn(field, self.deformation)
+
     def test_capture_and_stamp_stack_operators(self) -> None:
         operators = contracts.operator_contracts([self.trees["deformation_authoring.py"]])
         required = {
@@ -189,10 +238,32 @@ class StaticContractTests(unittest.TestCase):
         self.assertIn("REBUILT FROM BASIS", self.deformation)
 
     def test_capture_connectivity_and_geodesic_cache_are_revalidated(self) -> None:
-        self.assertIn("def _captured_face_component_count(attached, face_indices):", self.deformation)
+        self.assertIn("def _captured_face_component_count(attached, face_indices, virtual_weld=None):", self.deformation)
         self.assertIn("Captured face patch contains disconnected islands", self.deformation)
         self.assertIn("current_topology != cache_context", self.deformation)
         self.assertIn("_invalidate_geodesic_cache()", self.deformation)
+        self.assertIn('cache_context["virtualWeldDigest"]', self.deformation)
+        self.assertIn('cache_context["virtualWeldTolerance"]', self.deformation)
+
+    def test_virtual_weld_capture_and_geodesic_contracts(self) -> None:
+        for marker in (
+            "def build_virtual_weld_map(",
+            "def virtualize_edges(",
+            "def virtual_face_components(",
+            "virtual_members: Sequence[Sequence[int]] | None = None",
+            '"virtualWeldDigest"',
+            '"virtualWeldTolerance"',
+        ):
+            self.assertIn(marker, self.trauma)
+        for marker in (
+            "trauma_field.build_virtual_weld_map",
+            "trauma_field.virtual_face_components",
+            'virtual_members=virtual_weld["virtual_members"]',
+            '"virtualWeldTolerance"',
+            '"virtualWeldDigest"',
+            '"virtualConnectedComponentCount"',
+        ):
+            self.assertIn(marker, self.deformation)
 
     def test_additive_deformation_manifest_fields(self) -> None:
         for marker in (
@@ -232,6 +303,21 @@ class StaticContractTests(unittest.TestCase):
             with self.subTest(workflow=workflow.name):
                 source = workflow.read_text(encoding="utf-8")
                 self.assertNotRegex(source, hardcoded_zip)
+
+    def test_v3101_hotfix_documentation_contracts(self) -> None:
+        documentation = "\n".join(
+            path.read_text(encoding="utf-8")
+            for path in (ROOT / "README.md", ROOT / "CHANGELOG.md", ROOT / "docs" / "DEVELOPMENT.md")
+        )
+        for marker in (
+            "3.10.1",
+            "missing legacy keys are not recreated",
+            "unrepairable attached keys are not overwritten",
+            "analytical only",
+            "no Blender mesh merge",
+            "does not rewrite render/export visibility",
+        ):
+            self.assertIn(marker, documentation)
 
 
 if __name__ == "__main__":

@@ -28,10 +28,10 @@ MODULE_NAMES = (
 )
 MODULE_PATHS = tuple(PACKAGE / name for name in MODULE_NAMES)
 
-EXPECTED_VERSION = (3, 10, 0)
+EXPECTED_VERSION = (3, 10, 1)
 EXPECTED_READINESS_BUILD = "2026-07-15.virtual-weld.1"
 EXPECTED_AUTHORING_BUILD = "2026-07-16.segment-stump-deform.1"
-EXPECTED_DEFORMATION_BUILD = "2026-07-17.trauma-field.1"
+EXPECTED_DEFORMATION_BUILD = "2026-07-18.trauma-hotfix.1"
 
 REQUIRED_SCHEMAS = {
     "dreadstone.animation_pack.v1",
@@ -109,12 +109,13 @@ REQUIRED_OPERATORS = {
     "daf.toggle_trauma_stamp": "Enable / Disable Stamp",
     "daf.preview_active_trauma_stamp": "Preview Active Stamp",
     "daf.rebuild_active_deformation": "Rebuild Active Deformation",
+    "daf.repair_legacy_pair_sync": "Repair Legacy Pair Sync",
 }
 
 REQUIRED_UI_TEXT = {
     "Damage Readiness Analyzer",
     "Damage Segment & Stump Authoring v3.9",
-    "Trauma Field Authoring v3.10.0",
+    "Trauma Field Authoring v3.10.1",
     "Restore Reimported GLB Intact Preview",
     "Validate Complete Damage Asset",
     "BUILD ACTIVE PRESET",
@@ -265,7 +266,7 @@ def check_extension_manifest() -> None:
         (
             'schema_version = "1.0.0"',
             'id = "dreadstone_animation_forge"',
-            'version = "3.10.0"',
+            'version = "3.10.1"',
             'name = "Dreadstone Animation Forge"',
             'type = "add-on"',
             'blender_version_min = "4.2.0"',
@@ -367,8 +368,12 @@ def check_preview_and_presets(source: str) -> None:
         source,
         (
             'PREVIEW_KEY_NAME = "__DSB_DEFORMATION_SEED_PREVIEW"',
-            "attached.hide_set(False)",
-            "detached.hide_set(True)",
+            "attached.hide_set(not show_attached)",
+            "detached.hide_set(not show_detached)",
+            "obj.hide_viewport = False",
+            "layer_collection.exclude = False",
+            "layer_collection.hide_viewport = False",
+            "def _visibility_blocker(context, obj):",
             'bl_idname = "daf.show_deformation_attached"',
             'bl_idname = "daf.show_deformation_detached"',
             'bl_idname = "daf.show_deformation_overlay"',
@@ -401,6 +406,9 @@ def check_trauma_field_contracts(sources: dict[str, str], trees: dict[str, ast.M
     require_markers(
         sources["trauma_field.py"],
         (
+            "def build_virtual_weld_map(",
+            "def virtualize_edges(",
+            "def virtual_face_components(",
             "def build_weighted_adjacency(",
             "def geodesic_distances(",
             "def selection_hash(",
@@ -409,6 +417,8 @@ def check_trauma_field_contracts(sources: dict[str, str], trees: dict[str, ast.M
             "def validate_stamp_stack(",
             "def evaluate_stamp_stack(",
             "heapq.heappop",
+            '"virtualWeldDigest"',
+            '"virtualWeldTolerance"',
         ),
         "pure trauma-field algorithms",
     )
@@ -422,7 +432,17 @@ def check_trauma_field_contracts(sources: dict[str, str], trees: dict[str, ast.M
             'bl_idname = "daf.capture_deformation_selected_vertices"',
             'bl_idname = "daf.preview_active_trauma_stamp"',
             'bl_idname = "daf.rebuild_active_deformation"',
+            'bl_idname = "daf.repair_legacy_pair_sync"',
             "trauma_field.evaluate_stamp_stack",
+            "trauma_field.build_virtual_weld_map",
+            "trauma_field.virtual_face_components",
+            'virtual_members=virtual_weld["virtual_members"]',
+            '"virtualConnectedComponentCount"',
+            '"legacySyncStatus"',
+            '"legacySyncErrorBefore"',
+            '"legacySyncErrorAfter"',
+            '"legacySyncRepairApplied"',
+            'text="REPAIR LEGACY PAIR SYNC"',
             '"registeredRegions"',
             '"orderedStamps"',
             '"activeRegionId"',
@@ -486,14 +506,14 @@ def check_repository_hygiene() -> None:
 
 
 def main() -> int:
-    print("DREADSTONE ANIMATION FORGE v3.10.0 STATIC VALIDATION")
+    print("DREADSTONE ANIMATION FORGE v3.10.1 STATIC VALIDATION")
     print("Blender is not imported; runtime acceptance remains separate.")
 
     sources: dict[str, str] = {}
     trees: dict[str, ast.Module] = {}
     checks: list[tuple[str, Callable[[], None]]] = [
         ("all five package modules exist", check_module_files),
-        ("Blender extension manifest exists and matches v3.10.0", check_extension_manifest),
+        ("Blender extension manifest exists and matches v3.10.1", check_extension_manifest),
         ("all Python modules parse with ast.parse", lambda: check_parse(sources)),
         ("all Python modules compile with py_compile", check_compile),
         ("add-on/deformation version and build contracts", lambda: check_versions(trees)),

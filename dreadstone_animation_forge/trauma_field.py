@@ -14,6 +14,7 @@ import heapq
 import json
 import math
 import uuid
+from itertools import product
 from collections.abc import Iterable, Mapping, Sequence
 
 
@@ -91,10 +92,150 @@ def _clamp_vector(value: Sequence[float], maximum: float) -> tuple[float, float,
     return _scale(value, maximum / length)
 
 
+def build_virtual_weld_map(
+    positions: Sequence[Sequence[float]],
+    tolerance: float | None = None,
+) -> dict[str, object]:
+    """Build a deterministic, non-destructive positional weld description.
+
+    ``positions`` are world-space coordinates. Virtual IDs are assigned in raw
+    vertex-index order, and a spatial hash examines only the 27 neighboring
+    tolerance cells. No input mesh or coordinate is modified.
+    """
+
+    world_positions = tuple(_vector3(position, "position") for position in positions)
+    if tolerance is None:
+        if world_positions:
+            minimum = tuple(min(point[axis] for point in world_positions) for axis in range(3))
+            maximum = tuple(max(point[axis] for point in world_positions) for axis in range(3))
+            bounds_diagonal = _length(_subtract(maximum, minimum))
+        else:
+            bounds_diagonal = 0.0
+        resolved_tolerance = max(1e-7, bounds_diagonal * 1e-7)
+    else:
+        resolved_tolerance = float(tolerance)
+        if not math.isfinite(resolved_tolerance) or resolved_tolerance <= 0.0:
+            raise ValueError("virtual weld tolerance must be finite and positive")
+
+    inverse_tolerance = 1.0 / resolved_tolerance
+    tolerance_squared = resolved_tolerance * resolved_tolerance
+    buckets: dict[tuple[int, int, int], list[int]] = {}
+    seed_positions: list[tuple[float, float, float]] = []
+    members: list[list[int]] = []
+    raw_to_virtual: list[int] = []
+
+    def cell_for(point: Sequence[float]) -> tuple[int, int, int]:
+        return tuple(math.floor(point[axis] * inverse_tolerance) for axis in range(3))  # type: ignore[return-value]
+
+    for raw_index, point in enumerate(world_positions):
+        cell = cell_for(point)
+        candidates: list[tuple[float, int]] = []
+        for offset in product((-1, 0, 1), repeat=3):
+            neighbor_cell = (cell[0] + offset[0], cell[1] + offset[1], cell[2] + offset[2])
+            for virtual_id in buckets.get(neighbor_cell, ()):
+                difference = _subtract(point, seed_positions[virtual_id])
+                distance_squared = _dot(difference, difference)
+                if distance_squared <= tolerance_squared:
+                    candidates.append((distance_squared, virtual_id))
+        if candidates:
+            virtual_id = min(candidates)[1]
+        else:
+            virtual_id = len(seed_positions)
+            seed_positions.append(point)
+            members.append([])
+            buckets.setdefault(cell, []).append(virtual_id)
+        raw_to_virtual.append(virtual_id)
+        members[virtual_id].append(raw_index)
+
+    normalized_members = tuple(tuple(sorted(group)) for group in members)
+    digest = hashlib.sha256()
+    digest.update(f"tolerance:{resolved_tolerance:.17g}\n".encode("ascii"))
+    for raw_index, (point, virtual_id) in enumerate(zip(world_positions, raw_to_virtual)):
+        digest.update(
+            (
+                f"raw:{raw_index}|virtual:{virtual_id}|"
+                f"position:{point[0]:.17g},{point[1]:.17g},{point[2]:.17g}\n"
+            ).encode("ascii")
+        )
+    for virtual_id, group in enumerate(normalized_members):
+        digest.update(f"members:{virtual_id}:{','.join(map(str, group))}\n".encode("ascii"))
+    return {
+        "raw_vertex_to_virtual": tuple(raw_to_virtual),
+        "virtual_members": normalized_members,
+        "tolerance": float(resolved_tolerance),
+        "digest": digest.hexdigest(),
+    }
+
+
+def virtualize_edges(
+    edges: Iterable[Sequence[int]],
+    raw_vertex_to_virtual: Sequence[int],
+) -> tuple[tuple[int, int], ...]:
+    """Return sorted unique virtual edges, discarding collapsed raw edges."""
+
+    vertex_count = len(raw_vertex_to_virtual)
+    result: set[tuple[int, int]] = set()
+    for edge in edges:
+        if len(edge) != 2:
+            raise ValueError("each virtualized edge must contain two vertex indices")
+        left, right = int(edge[0]), int(edge[1])
+        if not (0 <= left < vertex_count and 0 <= right < vertex_count):
+            raise ValueError(f"edge ({left}, {right}) is outside the vertex range")
+        virtual_left = int(raw_vertex_to_virtual[left])
+        virtual_right = int(raw_vertex_to_virtual[right])
+        if virtual_left == virtual_right:
+            continue
+        result.add(tuple(sorted((virtual_left, virtual_right))))
+    return tuple(sorted(result))
+
+
+def virtual_face_components(
+    faces: Sequence[Sequence[int]],
+    raw_vertex_to_virtual: Sequence[int],
+) -> tuple[tuple[int, ...], ...]:
+    """Group faces that share a complete virtualized edge.
+
+    Sharing only one virtual vertex is deliberately insufficient, so faces that
+    merely touch at a corner remain separate components.
+    """
+
+    edge_faces: dict[tuple[int, int], list[int]] = {}
+    for face_index, face in enumerate(faces):
+        raw_vertices = tuple(int(index) for index in face)
+        if len(raw_vertices) < 3:
+            raise ValueError("each face must contain at least three vertex indices")
+        raw_edges = tuple(
+            (raw_vertices[index], raw_vertices[(index + 1) % len(raw_vertices)])
+            for index in range(len(raw_vertices))
+        )
+        for edge in virtualize_edges(raw_edges, raw_vertex_to_virtual):
+            edge_faces.setdefault(edge, []).append(face_index)
+
+    neighbors = [set() for _ in faces]
+    for linked_faces in edge_faces.values():
+        for left in linked_faces:
+            neighbors[left].update(right for right in linked_faces if right != left)
+    remaining = set(range(len(faces)))
+    components: list[tuple[int, ...]] = []
+    while remaining:
+        stack = [min(remaining)]
+        component: set[int] = set()
+        while stack:
+            current = stack.pop()
+            if current in component:
+                continue
+            component.add(current)
+            remaining.discard(current)
+            stack.extend(sorted(neighbors[current] - component, reverse=True))
+        components.append(tuple(sorted(component)))
+    return tuple(components)
+
+
 def build_weighted_adjacency(
     vertex_count: int,
     edges: Iterable[Sequence[float]],
     positions: Sequence[Sequence[float]] | None = None,
+    virtual_members: Sequence[Sequence[int]] | None = None,
 ) -> tuple[tuple[tuple[int, float], ...], ...]:
     """Build a deterministic undirected weighted vertex adjacency graph.
 
@@ -129,6 +270,23 @@ def build_weighted_adjacency(
         if previous is None or weight < previous:
             neighbors[left][right] = weight
             neighbors[right][left] = weight
+    if virtual_members is not None:
+        claimed: set[int] = set()
+        for raw_group in virtual_members:
+            group = tuple(sorted({int(index) for index in raw_group}))
+            if any(index < 0 or index >= vertex_count for index in group):
+                raise ValueError("a virtual weld member is outside the vertex range")
+            if claimed.intersection(group):
+                raise ValueError("a raw vertex belongs to multiple virtual weld groups")
+            claimed.update(group)
+            if len(group) < 2:
+                continue
+            anchor = group[0]
+            for member in group[1:]:
+                previous = neighbors[anchor].get(member)
+                if previous is None or previous > 0.0:
+                    neighbors[anchor][member] = 0.0
+                    neighbors[member][anchor] = 0.0
     return tuple(tuple(sorted(row.items())) for row in neighbors)
 
 
@@ -193,6 +351,8 @@ def geodesic_cache_key(
     captured_selection_hash: str,
     distance_mode: str,
     maximum_distance: float,
+    virtual_weld_digest: str = "",
+    virtual_weld_tolerance: float = 0.0,
 ) -> str:
     """Build a deterministic cache key that cannot cross region/selection state."""
 
@@ -200,12 +360,16 @@ def geodesic_cache_key(
         raise ValueError(f"unsupported distance mode {distance_mode!r}")
     if not math.isfinite(maximum_distance) or maximum_distance < 0.0:
         raise ValueError("maximum_distance must be finite and non-negative")
+    if not math.isfinite(virtual_weld_tolerance) or virtual_weld_tolerance < 0.0:
+        raise ValueError("virtual_weld_tolerance must be finite and non-negative")
     payload = {
         "topologyFingerprint": str(topology_fingerprint),
         "objectIdentity": str(object_identity),
         "selectionHash": str(captured_selection_hash),
         "distanceMode": distance_mode,
         "maximumDistance": format(float(maximum_distance), ".12g"),
+        "virtualWeldDigest": str(virtual_weld_digest),
+        "virtualWeldTolerance": format(float(virtual_weld_tolerance), ".17g"),
     }
     encoded = json.dumps(payload, sort_keys=True, separators=(",", ":")).encode("utf-8")
     return hashlib.sha256(encoded).hexdigest()

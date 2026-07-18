@@ -1,5 +1,16 @@
 # Changelog
 
+## 3.10.1
+
+- Add guarded attached-authority repair for stale Forge-managed legacy detached keys while preserving strict exact-index world-space validation.
+- Restore detached value drivers for healthy and repaired legacy pairs, record additive sync metadata, and leave missing or unrepairable keys untouched.
+- Add deterministic analytical virtual welding for imported GLB split seams using `max(1e-7, world_bounds_diagonal * 1e-7)`.
+- Define selected-face connectivity by shared virtualized edges, preserving rejection of true islands and corner-only contact.
+- Add zero-cost links within virtual weld groups so radius-limited surface geodesics cross legitimate split seams without destructive topology edits.
+- Include virtual weld digest and tolerance in capture metadata and geodesic cache identity.
+- Normalize only the active registered pair and relevant DSB collection path for Attached, Detached, and Both viewport inspection without changing render/export visibility.
+- Preserve the Blender 5.1.2 extension-root ZIP layout and deterministic release build.
+
 ## 3.10.0
 
 - Package the add-on as a Blender extension with `blender_manifest.toml` and `__init__.py` at the ZIP root for Blender 5.1.2 **Install from Disk** compatibility.

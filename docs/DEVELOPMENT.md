@@ -22,7 +22,7 @@ Static success means the accepted source contracts remain present. It does not p
 
 ## Build the installable ZIP
 
-Run `python scripts/build_release.py`. The command validates first and writes `dist/Dreadstone_Animation_Forge_v3_10_0.zip`. The archive has deterministic timestamps and ordering and contains only:
+Run `python scripts/build_release.py`. The command validates first and writes `dist/Dreadstone_Animation_Forge_v3_10_1.zip`. The archive has deterministic timestamps and ordering and contains only:
 
 ```text
 blender_manifest.toml
@@ -39,38 +39,29 @@ VALIDATION.txt
 
 ## Blender 5.1.2 runtime acceptance
 
-Perform this exact primary test in Blender 5.1.2 before accepting or publishing a release:
+Perform this exact beginner-readable acceptance in Blender 5.1.2 before accepting or publishing a release. Repository checks and GitHub Actions do not perform these steps.
 
-1. Install the generated v3.10.0 ZIP.
-2. Restart Blender fully.
-3. Open the accepted Testman Damage Asset Blend.
-4. Confirm legacy v3.9.1 keys remain present.
-5. Confirm the head pair migrates or registers as region `head`.
-6. Select a connected left-temple face patch.
-7. Capture the patch.
-8. Use `SURFACE_DISTANCE`.
-9. Use `PATCH_FEATHERED`.
-10. Create a new key named `Head_Impact_Left_v001`.
-11. Add Broad Cave, Compact Dent, Raised Impact Rim, and slight Directional Shear stamps.
-12. Rebuild the deformation.
-13. Modify one stamp and rebuild.
-14. Confirm the remaining stamps persist correctly.
-15. Preview attached.
-16. Preview detached.
-17. Confirm deformation physical size matches.
-18. Validate morph targets.
-19. Export GLB and manifest.
-20. Clean-reimport.
-21. Confirm morph names and behavior remain correct.
+1. **A — Install from Disk.** Close any old Forge session, open Blender 5.1.2, choose **Edit > Preferences > Add-ons > Install from Disk**, select `dist/Dreadstone_Animation_Forge_v3_10_1.zip` without extracting it, enable **Dreadstone Animation Forge**, and restart Blender.
+2. **B — Open the affected asset.** Open the accepted Testman Damage Asset authoring Blend and save a disposable test copy before editing.
+3. **C — Check the intentional deletion.** In **Object Data Properties > Shape Keys** for both `DSB_ATTACHED_HEAD` and `DSB_SEGMENT_HEAD`, confirm a previously deleted `Head_Dent_Left` is still absent. Merely opening Trauma Field must not recreate it.
+4. **D — Repair legacy sync.** Open **Dreadstone > Trauma Field Authoring v3.10.1**, select region `head`, click **REPAIR LEGACY PAIR SYNC**, and record the inspected, healthy, repaired, skipped, and unrepairable counts. Confirm the deleted key remains absent.
+5. **E — Validate morph targets.** Click **Validate Morph Targets** and record the complete result. A repairable stale detached legacy key should now pass; an unsafe attached key must remain unchanged and report why it is unrepairable.
+6. **F — Rebuild the active procedural key.** Select or create `Head_Impact_Left_v001`, retain its Broad Cave, Compact Dent, Raised Impact Rim, and slight Directional Shear stamps, click **REBUILD ACTIVE DEFORMATION**, and confirm no unrelated stale legacy mismatch blocks the rebuild.
+7. **G — Select a seam-crossing patch.** Make `DSB_ATTACHED_HEAD` active, enter Edit Mode with face selection enabled, and select one visibly continuous 30–80-face temple patch that crosses an imported GLB UV/normal/material split seam.
+8. **H — Capture it.** Choose **Selected Face Patch** and click **Capture Connected Face Patch**. Confirm the panel reports one virtual seam component and does not report disconnected islands.
+9. **I — Prove true islands still fail.** Add a genuinely separate face island to the selection and capture again. Confirm Forge rejects the selection as disconnected; remove the island and recapture the original patch.
+10. **J — Preview Surface Distance.** Set **Surface Distance** and **Patch Feathered** or **Connected Surface**, then preview the active stamp. Confirm influence crosses the legitimate split seam smoothly and still stops at the configured feather distance or radius.
+11. **K — Check for skull shortcuts.** Orbit to the opposite side and inspect the preview. Confirm influence follows connected surface edges and does not jump directly through the skull to a spatially nearby but surface-disconnected area.
+12. **L — Enter Damage Detached preview.** In **Damage Segment & Stump Authoring**, choose **Head–Neck** and click **Preview Detached**. Confirm the detached head and the expected caps appear.
+13. **M — Return to Trauma Attached.** In Trauma Field click **Attached**. Confirm the full `DSB_ATTACHED_HEAD` is visible, `DSB_SEGMENT_HEAD` is hidden, the upper head is present, and no stump cap was newly shown.
+14. **N — Inspect Detached.** Click **Detached**. Confirm `DSB_ATTACHED_HEAD` is hidden and the complete `DSB_SEGMENT_HEAD` is visible without Trauma Field changing cap or render/export state.
+15. **O — Inspect Both and restore Damage Intact.** Click **Both** and confirm both head objects overlap visibly with no new stump. Return to Damage Authoring and click **Preview Intact**; confirm the existing intact body preview still works.
+16. **P — Repeat on the left forearm.** Register `DSB_ATTACHED_FOREARM_L` and `DSB_SEGMENT_FOREARM_L` as `forearm_left`, validate the pair, repeat the seam-crossing patch and true-island checks, build and rebuild one Flat Compression stamp, and repeat Attached, Detached, Both, and Damage Preview Intact checks.
+17. **Q — Validate the complete asset.** In Damage Authoring run **Validate Complete Damage Asset** and record all validation output. Confirm the temporary `__DSB_DEFORMATION_SEED_PREVIEW` key is not part of export data.
+18. **R — Export.** Run **Export Damage GLB + Manifest** to a project folder. Confirm the GLB, manifest JSON, and validation JSON are created and the manifest retains all three accepted schemas plus v3.10.1 deformation metadata.
+19. **S — Clean reimport.** Start a clean Blender file, import the exported GLB, run **Restore Reimported GLB Intact Preview**, confirm the intact head and forearms are complete, detached pieces/caps/socket are hidden as before, and verify the expected morph names and behavior.
 
-Then perform this secondary generic-region smoke test:
-
-1. Register `DSB_ATTACHED_FOREARM_L` and `DSB_SEGMENT_FOREARM_L`.
-2. Use region ID `forearm_left`.
-3. Capture a connected surface patch.
-4. Build one Flat Compression stamp.
-5. Rebuild.
-6. Validate attached/detached synchronization.
+The repair contract is intentionally narrow: missing legacy keys are not recreated automatically, unrepairable attached keys are not overwritten, virtual welding is analytical only, and no Blender mesh merge operation occurs. Trauma Field viewport inspection does not rewrite render/export visibility.
 
 Also require the add-on to enable without registration errors, **Validate Complete Damage Asset** to pass, the exported manifest to retain all three accepted schemas, the temporary preview key to be absent from export, and intact/detached damage previews to retain their accepted behavior.
 

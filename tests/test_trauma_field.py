@@ -40,7 +40,110 @@ def stamp(stamp_id: str, order: int, family: str = "COMPACT_DENT") -> dict[str, 
     })
 
 
+def split_seam_surface():
+    positions = (
+        (0.0, 0.0, 0.0),
+        (1.0, 0.0, 0.0),
+        (1.0, 1.0, 0.0),
+        (0.0, 1.0, 0.0),
+        (1.0, 0.0, 0.0),
+        (2.0, 0.0, 0.0),
+        (2.0, 1.0, 0.0),
+        (1.0, 1.0, 0.0),
+    )
+    faces = ((0, 1, 2, 3), (4, 5, 6, 7))
+    edges = (
+        (0, 1), (1, 2), (2, 3), (3, 0),
+        (4, 5), (5, 6), (6, 7), (7, 4),
+    )
+    return positions, faces, edges
+
+
 class TraumaFieldTests(unittest.TestCase):
+    def test_virtual_weld_mapping_collapses_only_split_seam_members(self) -> None:
+        positions, _faces, _edges = split_seam_surface()
+        weld = trauma_field.build_virtual_weld_map(positions)
+        raw_to_virtual = weld["raw_vertex_to_virtual"]
+        self.assertEqual(raw_to_virtual[1], raw_to_virtual[4])
+        self.assertEqual(raw_to_virtual[2], raw_to_virtual[7])
+        self.assertNotEqual(raw_to_virtual[0], raw_to_virtual[1])
+        self.assertEqual(
+            tuple(group for group in weld["virtual_members"] if len(group) > 1),
+            ((1, 4), (2, 7)),
+        )
+        diagonal = math.sqrt(5.0)
+        self.assertAlmostEqual(weld["tolerance"], max(1e-7, diagonal * 1e-7))
+
+    def test_virtual_weld_digest_and_mapping_are_deterministic(self) -> None:
+        positions, _faces, _edges = split_seam_surface()
+        first = trauma_field.build_virtual_weld_map(positions)
+        second = trauma_field.build_virtual_weld_map(positions)
+        self.assertEqual(first, second)
+        self.assertEqual(first["digest"], second["digest"])
+
+    def test_virtualized_edge_construction_is_sorted_and_unique(self) -> None:
+        positions, _faces, _edges = split_seam_surface()
+        weld = trauma_field.build_virtual_weld_map(positions)
+        raw_to_virtual = weld["raw_vertex_to_virtual"]
+        seam_edge = tuple(sorted((raw_to_virtual[1], raw_to_virtual[2])))
+        virtual_edges = trauma_field.virtualize_edges(((1, 2), (4, 7), (2, 1)), raw_to_virtual)
+        self.assertEqual(virtual_edges, (seam_edge,))
+
+    def test_split_seam_faces_share_one_virtual_edge_component(self) -> None:
+        positions, faces, _edges = split_seam_surface()
+        weld = trauma_field.build_virtual_weld_map(positions)
+        components = trauma_field.virtual_face_components(faces, weld["raw_vertex_to_virtual"])
+        self.assertEqual(components, ((0, 1),))
+
+    def test_true_disconnected_face_islands_remain_separate(self) -> None:
+        positions = (
+            (0, 0, 0), (1, 0, 0), (1, 1, 0), (0, 1, 0),
+            (3, 0, 0), (4, 0, 0), (4, 1, 0), (3, 1, 0),
+        )
+        faces = ((0, 1, 2, 3), (4, 5, 6, 7))
+        weld = trauma_field.build_virtual_weld_map(positions)
+        self.assertEqual(trauma_field.virtual_face_components(faces, weld["raw_vertex_to_virtual"]), ((0,), (1,)))
+
+    def test_corner_only_virtual_contact_does_not_connect_faces(self) -> None:
+        positions = (
+            (0, 0, 0), (1, 0, 0), (1, 1, 0), (0, 1, 0),
+            (1, 1, 0), (2, 1, 0), (2, 2, 0), (1, 2, 0),
+        )
+        faces = ((0, 1, 2, 3), (4, 5, 6, 7))
+        weld = trauma_field.build_virtual_weld_map(positions)
+        self.assertEqual(trauma_field.virtual_face_components(faces, weld["raw_vertex_to_virtual"]), ((0,), (1,)))
+
+    def test_edges_outside_explicit_weld_tolerance_do_not_connect(self) -> None:
+        tolerance = 1e-4
+        positions = (
+            (0, 0, 0), (1, 0, 0), (1, 1, 0), (0, 1, 0),
+            (1 + tolerance * 1.01, 0, 0), (2, 0, 0), (2, 1, 0), (1 + tolerance * 1.01, 1, 0),
+        )
+        faces = ((0, 1, 2, 3), (4, 5, 6, 7))
+        weld = trauma_field.build_virtual_weld_map(positions, tolerance=tolerance)
+        self.assertNotEqual(weld["raw_vertex_to_virtual"][1], weld["raw_vertex_to_virtual"][4])
+        self.assertEqual(trauma_field.virtual_face_components(faces, weld["raw_vertex_to_virtual"]), ((0,), (1,)))
+
+    def test_geodesic_crosses_split_seam_through_zero_cost_weld_links(self) -> None:
+        positions, _faces, edges = split_seam_surface()
+        weld = trauma_field.build_virtual_weld_map(positions)
+        adjacency = trauma_field.build_weighted_adjacency(
+            len(positions), edges, positions, virtual_members=weld["virtual_members"]
+        )
+        distances = trauma_field.geodesic_distances(adjacency, (0,))
+        self.assertAlmostEqual(distances[4], 1.0)
+        self.assertAlmostEqual(distances[5], 2.0)
+        self.assertAlmostEqual(distances[6], 3.0)
+
+    def test_geodesic_radius_limit_still_applies_after_virtual_seam_crossing(self) -> None:
+        positions, _faces, edges = split_seam_surface()
+        weld = trauma_field.build_virtual_weld_map(positions)
+        adjacency = trauma_field.build_weighted_adjacency(
+            len(positions), edges, positions, virtual_members=weld["virtual_members"]
+        )
+        distances = trauma_field.geodesic_distances(adjacency, (0,), maximum_distance=1.5)
+        self.assertIn(4, distances)
+        self.assertNotIn(5, distances)
     def test_adjacency_construction_uses_world_edge_lengths(self) -> None:
         adjacency = trauma_field.build_weighted_adjacency(
             3,
@@ -90,6 +193,14 @@ class TraumaFieldTests(unittest.TestCase):
         self.assertNotEqual(
             trauma_field.geodesic_cache_key(*args),
             trauma_field.geodesic_cache_key("topology", "Other:Mesh", "selection", "SURFACE_DISTANCE", 0.25),
+        )
+        self.assertNotEqual(
+            trauma_field.geodesic_cache_key(*args, "weld-a", 1e-7),
+            trauma_field.geodesic_cache_key(*args, "weld-b", 1e-7),
+        )
+        self.assertNotEqual(
+            trauma_field.geodesic_cache_key(*args, "weld-a", 1e-7),
+            trauma_field.geodesic_cache_key(*args, "weld-a", 2e-7),
         )
 
     def test_patch_only_weights_move_only_captured_vertices(self) -> None:
