@@ -16,13 +16,13 @@ python -m unittest discover -s tests -p "test_*.py"
 python scripts/build_release.py
 ```
 
-Static validation checks parseability, compilation, version/build/schema contracts, generated names, seams, deformation keys, operator IDs and labels, exact-index world-space synchronization, morph export hooks, forbidden transfer mechanisms, merge markers, and repository hygiene.
+Static validation checks parseability, compilation, version/build/schema contracts, generated names, seams, legacy deformation keys, registered regions, capture and stamp contracts, exact-index world-space synchronization, morph export hooks, forbidden transfer mechanisms, merge markers, and repository hygiene.
 
 Static success means the accepted source contracts remain present. It does not prove Blender registration, UI behavior, mesh operations, viewport presentation, sculpt mode transitions, glTF export, or reimport behavior.
 
 ## Build the installable ZIP
 
-Run `python scripts/build_release.py`. The command validates first and writes `dist/Dreadstone_Animation_Forge_v3_9_1.zip`. The archive has deterministic timestamps and ordering and contains only:
+Run `python scripts/build_release.py`. The command validates first and writes `dist/Dreadstone_Animation_Forge_v3_10_0.zip`. The archive has deterministic timestamps and ordering and contains only:
 
 ```text
 README.txt
@@ -32,31 +32,49 @@ dreadstone_animation_forge/__init__.py
 dreadstone_animation_forge/damage_readiness.py
 dreadstone_animation_forge/damage_authoring.py
 dreadstone_animation_forge/deformation_authoring.py
+dreadstone_animation_forge/trauma_field.py
 ```
 
 `dist/` is generated and must not be committed.
 
 ## Blender 5.1.2 runtime acceptance
 
-Perform this test in Blender 5.1.2 before accepting or publishing a release:
+Perform this exact primary test in Blender 5.1.2 before accepting or publishing a release:
 
-1. Build the release ZIP and install or reload it in Blender.
-2. Confirm the add-on enables and its classes register without errors.
-3. Open an existing protected Damage Asset Blend containing the generated attached/detached head pair.
-4. Open **Damage Deformation Authoring v3.9.1** and choose **Attached** authoring view.
-5. Select exactly one face on `DSB_ATTACHED_HEAD` and run **Capture Center from Selected Face**.
-6. Select a standard key and click **BUILD ACTIVE PRESET**.
-7. Confirm the preset is visibly readable at world scale and the managed key begins at/returns to zero when expected.
-8. Switch to **Detached** and confirm the matching deformation has the same world-space delta despite object transforms.
-9. Inspect **Both** overlay mode and attached/detached preview visibility controls.
-10. Optionally run **Begin Sculpt**, make a small edit, then **Finish Sculpt & Sync** and confirm the exact-index pair remains valid.
-11. Run **Validate Morph Targets** and require a pass.
-12. Run **Validate Complete Damage Asset** and require a pass.
-13. Export **Damage GLB + Manifest**; verify morph targets, morph normals, manifest schemas, deformation metadata, and the absence of the temporary seed key.
-14. Import the GLB into a clean scene, run **Restore Reimported GLB Intact Preview**, and confirm intact geometry, visibility, textured display, framing, and hidden socket/caps/detached props.
-15. Exercise Head–Neck, both elbows, and Lower Spine detached previews with representative approved animations.
+1. Install the generated v3.10.0 ZIP.
+2. Restart Blender fully.
+3. Open the accepted Testman Damage Asset Blend.
+4. Confirm legacy v3.9.1 keys remain present.
+5. Confirm the head pair migrates or registers as region `head`.
+6. Select a connected left-temple face patch.
+7. Capture the patch.
+8. Use `SURFACE_DISTANCE`.
+9. Use `PATCH_FEATHERED`.
+10. Create a new key named `Head_Impact_Left_v001`.
+11. Add Broad Cave, Compact Dent, Raised Impact Rim, and slight Directional Shear stamps.
+12. Rebuild the deformation.
+13. Modify one stamp and rebuild.
+14. Confirm the remaining stamps persist correctly.
+15. Preview attached.
+16. Preview detached.
+17. Confirm deformation physical size matches.
+18. Validate morph targets.
+19. Export GLB and manifest.
+20. Clean-reimport.
+21. Confirm morph names and behavior remain correct.
 
-Record the Blender version, source commit, release ZIP SHA-256, asset used, validation outputs, and any visual observations. Do not describe GitHub Actions as Blender runtime testing.
+Then perform this secondary generic-region smoke test:
+
+1. Register `DSB_ATTACHED_FOREARM_L` and `DSB_SEGMENT_FOREARM_L`.
+2. Use region ID `forearm_left`.
+3. Capture a connected surface patch.
+4. Build one Flat Compression stamp.
+5. Rebuild.
+6. Validate attached/detached synchronization.
+
+Also require the add-on to enable without registration errors, **Validate Complete Damage Asset** to pass, the exported manifest to retain all three accepted schemas, the temporary preview key to be absent from export, and intact/detached damage previews to retain their accepted behavior.
+
+Record the Blender version, source commit, ZIP SHA-256, asset used, validation outputs, and visual observations. Do not describe GitHub Actions as Blender runtime testing.
 
 ## Project workflow
 

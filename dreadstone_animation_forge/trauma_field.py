@@ -1,0 +1,481 @@
+"""Pure trauma-field algorithms for Dreadstone Animation Forge.
+
+This module deliberately has no Blender imports. Mesh extraction, world/local
+coordinate conversion, shape-key writes, operators, properties, and UI remain in
+``deformation_authoring.py``; the reusable graph and recipe logic lives here so
+it can be tested in ordinary Python.
+"""
+
+from __future__ import annotations
+
+import copy
+import hashlib
+import heapq
+import json
+import math
+import uuid
+from collections.abc import Iterable, Mapping, Sequence
+
+
+TRAUMA_FAMILIES = (
+    "COMPACT_DENT",
+    "BROAD_CAVE",
+    "FLAT_COMPRESSION",
+    "DIRECTIONAL_SHEAR",
+    "RAISED_IMPACT_RIM",
+    "RIDGE_COLLAPSE",
+)
+
+PLACEMENT_MODES = (
+    "SINGLE_FACE",
+    "SELECTED_FACE_PATCH",
+    "SELECTED_VERTICES",
+    "CURSOR",
+)
+
+INFLUENCE_MODES = (
+    "PATCH_ONLY",
+    "PATCH_FEATHERED",
+    "CONNECTED_SURFACE",
+)
+
+DISTANCE_MODES = (
+    "SURFACE_DISTANCE",
+    "WORLD_DISTANCE",
+)
+
+
+def _vector3(value: Sequence[float], label: str) -> tuple[float, float, float]:
+    if len(value) != 3:
+        raise ValueError(f"{label} must contain three values")
+    result = tuple(float(component) for component in value)
+    if not all(math.isfinite(component) for component in result):
+        raise ValueError(f"{label} contains non-finite values")
+    return result  # type: ignore[return-value]
+
+
+def _add(a: Sequence[float], b: Sequence[float]) -> tuple[float, float, float]:
+    return (a[0] + b[0], a[1] + b[1], a[2] + b[2])
+
+
+def _subtract(a: Sequence[float], b: Sequence[float]) -> tuple[float, float, float]:
+    return (a[0] - b[0], a[1] - b[1], a[2] - b[2])
+
+
+def _scale(value: Sequence[float], factor: float) -> tuple[float, float, float]:
+    return (value[0] * factor, value[1] * factor, value[2] * factor)
+
+
+def _dot(a: Sequence[float], b: Sequence[float]) -> float:
+    return a[0] * b[0] + a[1] * b[1] + a[2] * b[2]
+
+
+def _length(value: Sequence[float]) -> float:
+    return math.sqrt(_dot(value, value))
+
+
+def _normalized(value: Sequence[float], label: str = "direction") -> tuple[float, float, float]:
+    vector = _vector3(value, label)
+    length = _length(vector)
+    if length <= 1e-12:
+        raise ValueError(f"{label} has zero length")
+    return _scale(vector, 1.0 / length)
+
+
+def _clamp_vector(value: Sequence[float], maximum: float) -> tuple[float, float, float]:
+    if maximum <= 0.0:
+        raise ValueError("maximum displacement must be positive")
+    length = _length(value)
+    if length <= maximum or length <= 1e-15:
+        return _vector3(value, "displacement")
+    return _scale(value, maximum / length)
+
+
+def build_weighted_adjacency(
+    vertex_count: int,
+    edges: Iterable[Sequence[float]],
+    positions: Sequence[Sequence[float]] | None = None,
+) -> tuple[tuple[tuple[int, float], ...], ...]:
+    """Build a deterministic undirected weighted vertex adjacency graph.
+
+    Edges may be ``(a, b)`` pairs when world-space positions are supplied, or
+    explicit ``(a, b, weight)`` triples. Duplicate edges retain the shortest
+    valid weight.
+    """
+
+    if vertex_count < 0:
+        raise ValueError("vertex_count cannot be negative")
+    if positions is not None and len(positions) != vertex_count:
+        raise ValueError("positions must match vertex_count")
+    world_positions = tuple(_vector3(position, "position") for position in positions) if positions is not None else None
+    neighbors: list[dict[int, float]] = [dict() for _ in range(vertex_count)]
+    for edge in edges:
+        if len(edge) not in {2, 3}:
+            raise ValueError("each edge must contain two indices and optional weight")
+        left, right = int(edge[0]), int(edge[1])
+        if left == right:
+            continue
+        if not (0 <= left < vertex_count and 0 <= right < vertex_count):
+            raise ValueError(f"edge ({left}, {right}) is outside the vertex range")
+        if len(edge) == 3:
+            weight = float(edge[2])
+        elif world_positions is not None:
+            weight = _length(_subtract(world_positions[left], world_positions[right]))
+        else:
+            weight = 1.0
+        if not math.isfinite(weight) or weight < 0.0:
+            raise ValueError(f"edge ({left}, {right}) has invalid weight {weight!r}")
+        previous = neighbors[left].get(right)
+        if previous is None or weight < previous:
+            neighbors[left][right] = weight
+            neighbors[right][left] = weight
+    return tuple(tuple(sorted(row.items())) for row in neighbors)
+
+
+def geodesic_distances(
+    adjacency: Sequence[Sequence[tuple[int, float]]],
+    seeds: Iterable[int],
+    maximum_distance: float | None = None,
+) -> dict[int, float]:
+    """Return shortest edge-graph distances using radius-limited Dijkstra."""
+
+    if maximum_distance is not None and (not math.isfinite(maximum_distance) or maximum_distance < 0.0):
+        raise ValueError("maximum_distance must be finite and non-negative")
+    seed_set = sorted({int(seed) for seed in seeds})
+    if not seed_set:
+        raise ValueError("at least one geodesic seed is required")
+    count = len(adjacency)
+    if any(seed < 0 or seed >= count for seed in seed_set):
+        raise ValueError("a geodesic seed is outside the vertex range")
+    distances = {seed: 0.0 for seed in seed_set}
+    queue = [(0.0, seed) for seed in seed_set]
+    heapq.heapify(queue)
+    while queue:
+        distance, vertex = heapq.heappop(queue)
+        if distance != distances.get(vertex):
+            continue
+        if maximum_distance is not None and distance > maximum_distance:
+            continue
+        for neighbor, weight in adjacency[vertex]:
+            if neighbor < 0 or neighbor >= count or not math.isfinite(weight) or weight < 0.0:
+                raise ValueError("adjacency contains an invalid weighted edge")
+            candidate = distance + weight
+            if maximum_distance is not None and candidate > maximum_distance:
+                continue
+            if candidate < distances.get(neighbor, math.inf):
+                distances[neighbor] = candidate
+                heapq.heappush(queue, (candidate, neighbor))
+    return distances
+
+
+def selection_hash(
+    indices: Iterable[int],
+    topology_fingerprint: str = "",
+    selection_kind: str = "VERTEX",
+) -> str:
+    """Hash a selection independently of input ordering or duplicates."""
+
+    normalized = sorted({int(index) for index in indices})
+    if any(index < 0 for index in normalized):
+        raise ValueError("selection indices cannot be negative")
+    payload = {
+        "indices": normalized,
+        "kind": str(selection_kind).upper(),
+        "topologyFingerprint": str(topology_fingerprint),
+    }
+    encoded = json.dumps(payload, sort_keys=True, separators=(",", ":")).encode("utf-8")
+    return hashlib.sha256(encoded).hexdigest()
+
+
+def geodesic_cache_key(
+    topology_fingerprint: str,
+    object_identity: str,
+    captured_selection_hash: str,
+    distance_mode: str,
+    maximum_distance: float,
+) -> str:
+    """Build a deterministic cache key that cannot cross region/selection state."""
+
+    if distance_mode not in DISTANCE_MODES:
+        raise ValueError(f"unsupported distance mode {distance_mode!r}")
+    if not math.isfinite(maximum_distance) or maximum_distance < 0.0:
+        raise ValueError("maximum_distance must be finite and non-negative")
+    payload = {
+        "topologyFingerprint": str(topology_fingerprint),
+        "objectIdentity": str(object_identity),
+        "selectionHash": str(captured_selection_hash),
+        "distanceMode": distance_mode,
+        "maximumDistance": format(float(maximum_distance), ".12g"),
+    }
+    encoded = json.dumps(payload, sort_keys=True, separators=(",", ":")).encode("utf-8")
+    return hashlib.sha256(encoded).hexdigest()
+
+
+def falloff_weight(distance: float, radius: float, exponent: float = 1.0) -> float:
+    if not all(math.isfinite(value) for value in (distance, radius, exponent)):
+        raise ValueError("falloff values must be finite")
+    if radius <= 0.0:
+        raise ValueError("falloff radius must be positive")
+    if exponent <= 0.0:
+        raise ValueError("falloff exponent must be positive")
+    normalized = max(0.0, min(1.0, 1.0 - max(0.0, distance) / radius))
+    return normalized**exponent
+
+
+def surface_mask_weights(
+    vertex_count: int,
+    selected_indices: Iterable[int],
+    distances: Mapping[int, float],
+    influence_mode: str,
+    radius: float,
+    feather_distance: float,
+    exponent: float = 1.0,
+) -> tuple[float, ...]:
+    """Calculate PATCH_ONLY, PATCH_FEATHERED, or CONNECTED_SURFACE weights."""
+
+    if influence_mode not in INFLUENCE_MODES:
+        raise ValueError(f"unsupported influence mode {influence_mode!r}")
+    if vertex_count < 0:
+        raise ValueError("vertex_count cannot be negative")
+    selected = {int(index) for index in selected_indices}
+    if any(index < 0 or index >= vertex_count for index in selected):
+        raise ValueError("a selected vertex is outside the vertex range")
+    if not selected:
+        raise ValueError("surface masks require at least one selected vertex")
+    if feather_distance < 0.0 or not math.isfinite(feather_distance):
+        raise ValueError("feather distance must be finite and non-negative")
+    weights = [0.0] * vertex_count
+    if influence_mode == "PATCH_ONLY":
+        for index in selected:
+            weights[index] = 1.0
+        return tuple(weights)
+    if influence_mode == "PATCH_FEATHERED":
+        for index in range(vertex_count):
+            if index in selected:
+                weights[index] = 1.0
+            elif feather_distance > 0.0 and index in distances:
+                weights[index] = falloff_weight(float(distances[index]), feather_distance, exponent)
+        return tuple(weights)
+    for index, distance in distances.items():
+        if index < 0 or index >= vertex_count:
+            raise ValueError("a distance vertex is outside the vertex range")
+        weights[index] = falloff_weight(float(distance), radius, exponent)
+    return tuple(weights)
+
+
+def new_stamp_id() -> str:
+    """Create an opaque stable ID; duplication always requests a fresh value."""
+
+    return "stamp_" + uuid.uuid4().hex
+
+
+def normalize_stamp(stamp: Mapping[str, object]) -> dict[str, object]:
+    """Return a validated, serialization-safe trauma stamp recipe."""
+
+    family = str(stamp.get("family", "COMPACT_DENT"))
+    placement_mode = str(stamp.get("placementMode", "SINGLE_FACE"))
+    influence_mode = str(stamp.get("influenceMode", "PATCH_FEATHERED"))
+    distance_mode = str(stamp.get("distanceMode", "SURFACE_DISTANCE"))
+    if family not in TRAUMA_FAMILIES:
+        raise ValueError(f"unsupported trauma family {family!r}")
+    if placement_mode not in PLACEMENT_MODES:
+        raise ValueError(f"unsupported placement mode {placement_mode!r}")
+    if influence_mode not in INFLUENCE_MODES:
+        raise ValueError(f"unsupported influence mode {influence_mode!r}")
+    if distance_mode not in DISTANCE_MODES:
+        raise ValueError(f"unsupported distance mode {distance_mode!r}")
+    normalized = {
+        "stampId": str(stamp.get("stampId") or new_stamp_id()),
+        "displayName": str(stamp.get("displayName") or family.replace("_", " ").title()),
+        "enabled": bool(stamp.get("enabled", True)),
+        "family": family,
+        "placementMode": placement_mode,
+        "capture": copy.deepcopy(stamp.get("capture") or {}),
+        "center": list(_vector3(stamp.get("center", (0.0, 0.0, 0.0)), "stamp center")),  # type: ignore[arg-type]
+        "direction": list(_normalized(stamp.get("direction", (0.0, 0.0, -1.0)), "stamp direction")),  # type: ignore[arg-type]
+        "radius": float(stamp.get("radius", 0.075)),
+        "depth": float(stamp.get("depth", 0.025)),
+        "falloff": float(stamp.get("falloff", 2.0)),
+        "influenceMode": influence_mode,
+        "distanceMode": distance_mode,
+        "featherDistance": float(stamp.get("featherDistance", 0.02)),
+        "seamProtection": float(stamp.get("seamProtection", 0.025)),
+        "strength": float(stamp.get("strength", 1.0)),
+        "maximumDisplacement": float(stamp.get("maximumDisplacement", 0.065)),
+        "orderIndex": int(stamp.get("orderIndex", 0)),
+    }
+    errors = validate_stamp_stack([normalized], require_contiguous_order=False)
+    if errors:
+        raise ValueError("; ".join(errors))
+    return normalized
+
+
+def validate_stamp_stack(
+    stamps: Sequence[Mapping[str, object]],
+    *,
+    require_contiguous_order: bool = True,
+) -> list[str]:
+    errors: list[str] = []
+    seen_ids: set[str] = set()
+    orders: list[int] = []
+    for position, stamp in enumerate(stamps):
+        stamp_id = str(stamp.get("stampId", ""))
+        prefix = f"Stamp {stamp_id or position}"
+        if not stamp_id:
+            errors.append(f"{prefix} has no stable stamp ID.")
+        elif stamp_id in seen_ids:
+            errors.append(f"Duplicate stamp ID {stamp_id}.")
+        seen_ids.add(stamp_id)
+        family = str(stamp.get("family", ""))
+        if family not in TRAUMA_FAMILIES:
+            errors.append(f"{prefix} uses unsupported trauma family {family!r}.")
+        if str(stamp.get("placementMode", "")) not in PLACEMENT_MODES:
+            errors.append(f"{prefix} has an invalid placement mode.")
+        if str(stamp.get("influenceMode", "")) not in INFLUENCE_MODES:
+            errors.append(f"{prefix} has an invalid influence mode.")
+        if str(stamp.get("distanceMode", "")) not in DISTANCE_MODES:
+            errors.append(f"{prefix} has an invalid distance mode.")
+        try:
+            _normalized(stamp.get("direction", ()), "stamp direction")  # type: ignore[arg-type]
+        except (TypeError, ValueError) as exc:
+            errors.append(f"{prefix}: {exc}.")
+        numeric_rules = (
+            ("radius", True, False),
+            ("depth", False, False),
+            ("falloff", True, False),
+            ("featherDistance", False, False),
+            ("seamProtection", False, False),
+            ("strength", False, False),
+            ("maximumDisplacement", True, False),
+        )
+        for field, must_be_positive, may_be_negative in numeric_rules:
+            try:
+                value = float(stamp.get(field, math.nan))
+            except (TypeError, ValueError):
+                value = math.nan
+            if not math.isfinite(value):
+                errors.append(f"{prefix} has non-finite {field}.")
+            elif must_be_positive and value <= 0.0:
+                errors.append(f"{prefix} requires positive {field}.")
+            elif not may_be_negative and value < 0.0:
+                errors.append(f"{prefix} cannot use negative {field}.")
+        try:
+            order = int(stamp.get("orderIndex", -1))
+            orders.append(order)
+            if order < 0:
+                errors.append(f"{prefix} has an invalid negative order index.")
+        except (TypeError, ValueError):
+            errors.append(f"{prefix} has an invalid order index.")
+    if len(orders) != len(set(orders)):
+        errors.append("Trauma stamp order indices must be unique.")
+    if require_contiguous_order and orders and sorted(orders) != list(range(len(stamps))):
+        errors.append("Trauma stamp order indices must be contiguous from zero.")
+    return errors
+
+
+def ordered_stamps(stamps: Sequence[Mapping[str, object]]) -> list[dict[str, object]]:
+    errors = validate_stamp_stack(stamps)
+    if errors:
+        raise ValueError("; ".join(errors))
+    return [copy.deepcopy(dict(stamp)) for stamp in sorted(stamps, key=lambda value: int(value["orderIndex"]))]
+
+
+def reindex_stamps(stamps: Sequence[Mapping[str, object]]) -> list[dict[str, object]]:
+    result = [copy.deepcopy(dict(stamp)) for stamp in stamps]
+    for index, stamp in enumerate(result):
+        stamp["orderIndex"] = index
+    return result
+
+
+def duplicate_stamp(stamp: Mapping[str, object], stamp_id: str | None = None) -> dict[str, object]:
+    duplicate = copy.deepcopy(dict(stamp))
+    duplicate["stampId"] = stamp_id or new_stamp_id()
+    duplicate["displayName"] = str(stamp.get("displayName") or "Trauma Stamp") + " Copy"
+    return normalize_stamp(duplicate)
+
+
+def stamp_displacement(
+    position: Sequence[float],
+    stamp: Mapping[str, object],
+    influence: float,
+    distance: float | None = None,
+) -> tuple[float, float, float]:
+    """Evaluate one family in world space for one vertex."""
+
+    recipe = normalize_stamp(stamp)
+    return _normalized_stamp_displacement(position, recipe, influence, distance)
+
+
+def _normalized_stamp_displacement(
+    position: Sequence[float],
+    recipe: Mapping[str, object],
+    influence: float,
+    distance: float | None = None,
+) -> tuple[float, float, float]:
+    weight = max(0.0, min(1.0, float(influence)))
+    if weight <= 0.0 or not recipe["enabled"]:
+        return (0.0, 0.0, 0.0)
+    point = _vector3(position, "position")
+    center = _vector3(recipe["center"], "stamp center")  # type: ignore[arg-type]
+    direction = _normalized(recipe["direction"], "stamp direction")  # type: ignore[arg-type]
+    depth = float(recipe["depth"])
+    radius = float(recipe["radius"])
+    strength = float(recipe["strength"])
+    family = str(recipe["family"])
+    if distance is None:
+        distance = _length(_subtract(point, center))
+    radial_fraction = max(0.0, min(1.5, float(distance) / radius))
+    if family == "COMPACT_DENT":
+        displacement = _scale(direction, depth * strength * weight**1.25)
+    elif family == "BROAD_CAVE":
+        displacement = _scale(direction, depth * strength * weight**0.72)
+    elif family == "FLAT_COMPRESSION":
+        plane_point = _add(center, _scale(direction, depth))
+        signed_to_plane = _dot(_subtract(plane_point, point), direction)
+        displacement = _scale(direction, signed_to_plane * min(1.0, strength * weight))
+    elif family == "DIRECTIONAL_SHEAR":
+        displacement = _scale(direction, depth * strength * weight)
+    elif family == "RAISED_IMPACT_RIM":
+        ring = math.exp(-((radial_fraction - 0.78) / 0.14) ** 2)
+        displacement = _scale(direction, -depth * 0.25 * strength * ring * max(weight, 0.2))
+    else:  # RIDGE_COLLAPSE
+        protrusion = min(1.0, abs(_dot(_subtract(point, center), direction)) / radius)
+        displacement = _scale(direction, depth * strength * weight**1.35 * (0.55 + 0.45 * protrusion))
+    return _clamp_vector(displacement, float(recipe["maximumDisplacement"]))
+
+
+def evaluate_stamp_stack(
+    basis_positions: Sequence[Sequence[float]],
+    stamps: Sequence[Mapping[str, object]],
+    weights_by_stamp: Mapping[str, Sequence[float]],
+    distances_by_stamp: Mapping[str, Mapping[int, float]] | None = None,
+) -> tuple[tuple[float, float, float], ...]:
+    """Replay enabled stamps from Basis in explicit order without drift."""
+
+    basis = tuple(_vector3(position, "basis position") for position in basis_positions)
+    result = list(basis)
+    distances_by_stamp = distances_by_stamp or {}
+    for raw_stamp in ordered_stamps(stamps):
+        stamp = normalize_stamp(raw_stamp)
+        if not bool(stamp.get("enabled", True)):
+            continue
+        stamp_id = str(stamp["stampId"])
+        weights = weights_by_stamp.get(stamp_id)
+        if weights is None or len(weights) != len(result):
+            raise ValueError(f"Stamp {stamp_id} has no complete influence weights")
+        distances = distances_by_stamp.get(stamp_id, {})
+        maximum = float(stamp["maximumDisplacement"])
+        for index, current in enumerate(result):
+            displacement = _normalized_stamp_displacement(current, stamp, float(weights[index]), distances.get(index))
+            candidate = _add(current, displacement)
+            total_delta = _clamp_vector(_subtract(candidate, basis[index]), maximum)
+            result[index] = _add(basis[index], total_delta)
+    return tuple(result)
+
+
+def recipe_digest(stamps: Sequence[Mapping[str, object]]) -> str:
+    """Hash normalized explicit order for deterministic rebuild metadata."""
+
+    normalized = [normalize_stamp(stamp) for stamp in ordered_stamps(stamps)]
+    encoded = json.dumps(normalized, sort_keys=True, separators=(",", ":"), allow_nan=False).encode("utf-8")
+    return hashlib.sha256(encoded).hexdigest()

@@ -15,12 +15,13 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 PACKAGE = ROOT / "dreadstone_animation_forge"
 DIST = ROOT / "dist"
-DEFORMATION_BUILD = "2026-07-16.deformation-workbench.2"
+DEFORMATION_BUILD = "2026-07-17.trauma-field.1"
 MODULES = (
     "__init__.py",
     "damage_readiness.py",
     "damage_authoring.py",
     "deformation_authoring.py",
+    "trauma_field.py",
 )
 ARCHIVE_ENTRIES = (
     "README.txt",
@@ -30,6 +31,7 @@ ARCHIVE_ENTRIES = (
     "dreadstone_animation_forge/damage_readiness.py",
     "dreadstone_animation_forge/damage_authoring.py",
     "dreadstone_animation_forge/deformation_authoring.py",
+    "dreadstone_animation_forge/trauma_field.py",
 )
 ZIP_TIMESTAMP = (1980, 1, 1, 0, 0, 0)
 
@@ -141,8 +143,8 @@ def main() -> int:
     filename_version = "_".join(map(str, version))
     target = DIST / f"Dreadstone_Animation_Forge_v{filename_version}.zip"
     DIST.mkdir(exist_ok=True)
-    if target.exists():
-        target.unlink()
+    for stale in DIST.glob("Dreadstone_Animation_Forge_v*.zip"):
+        stale.unlink()
 
     readme = (ROOT / "README.md").read_text(encoding="utf-8").encode("utf-8")
     build_zip(target, readme, validation_text(version, report))

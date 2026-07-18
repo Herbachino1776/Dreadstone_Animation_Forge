@@ -48,6 +48,7 @@ class StaticContractTests(unittest.TestCase):
 
     def test_required_package_modules_exist(self) -> None:
         self.assertEqual(set(self.sources), set(contracts.MODULE_NAMES))
+        self.assertIn("trauma_field.py", self.sources)
 
     def test_manifest_schemas(self) -> None:
         self.assertTrue(contracts.REQUIRED_SCHEMAS <= self.literals)
@@ -128,8 +129,88 @@ class StaticContractTests(unittest.TestCase):
         self.assertIn(("export_morph_normal", True), pairs)
 
     def test_no_nearest_neighbor_pair_transfer(self) -> None:
-        identifiers = contracts.executable_identifiers(self.trees["deformation_authoring.py"])
+        identifiers = (
+            contracts.executable_identifiers(self.trees["deformation_authoring.py"])
+            | contracts.executable_identifiers(self.trees["trauma_field.py"])
+        )
         self.assertFalse(contracts.FORBIDDEN_TRANSFER_IDENTIFIERS & identifiers)
+
+    def test_trauma_field_modes_and_exact_families(self) -> None:
+        tree = self.trees["trauma_field.py"]
+        self.assertEqual(set(contracts.literal_assignment(tree, "TRAUMA_FAMILIES")), contracts.REQUIRED_TRAUMA_FAMILIES)
+        self.assertEqual(set(contracts.literal_assignment(tree, "PLACEMENT_MODES")), contracts.REQUIRED_CAPTURE_MODES)
+        self.assertEqual(set(contracts.literal_assignment(tree, "INFLUENCE_MODES")), contracts.REQUIRED_INFLUENCE_MODES)
+        self.assertEqual(set(contracts.literal_assignment(tree, "DISTANCE_MODES")), contracts.REQUIRED_DISTANCE_MODES)
+
+    def test_region_registry_and_legacy_head_migration_contracts(self) -> None:
+        source = self.deformation
+        self.assertIn('REGISTRY_PROPERTY = "dsb_deformation_region_registry_json"', source)
+        self.assertIn('record = _record_from_pair("head", attached, detached, "head_neck")', source)
+        self.assertIn('"recipeStatus": "LEGACY_MANUAL"', source)
+        self.assertIn('"legacy": True', source)
+        for key_name in contracts.REQUIRED_DEFORMATION_KEYS:
+            self.assertIn(key_name, self.literals)
+
+    def test_capture_and_stamp_stack_operators(self) -> None:
+        operators = contracts.operator_contracts([self.trees["deformation_authoring.py"]])
+        required = {
+            "daf.register_deformation_region",
+            "daf.validate_deformation_region",
+            "daf.remove_deformation_region",
+            "daf.capture_deformation_selected_patch",
+            "daf.capture_deformation_selected_vertices",
+            "daf.add_trauma_stamp",
+            "daf.duplicate_trauma_stamp",
+            "daf.remove_trauma_stamp",
+            "daf.move_trauma_stamp_up",
+            "daf.move_trauma_stamp_down",
+            "daf.toggle_trauma_stamp",
+            "daf.select_trauma_stamp",
+            "daf.preview_active_trauma_stamp",
+            "daf.rebuild_active_deformation",
+        }
+        self.assertTrue(required <= set(operators))
+
+    def test_preview_and_rebuild_are_separate_operations(self) -> None:
+        self.assertIn("def preview_active_stamp(context, quiet=False):", self.deformation)
+        self.assertIn("def rebuild_active_deformation(context):", self.deformation)
+        self.assertIn("_basis_world_positions(attached)", self.deformation)
+        self.assertIn("clear_seed_preview()", self.deformation)
+        self.assertIn("REBUILT FROM BASIS", self.deformation)
+
+    def test_capture_connectivity_and_geodesic_cache_are_revalidated(self) -> None:
+        self.assertIn("def _captured_face_component_count(attached, face_indices):", self.deformation)
+        self.assertIn("Captured face patch contains disconnected islands", self.deformation)
+        self.assertIn("current_topology != cache_context", self.deformation)
+        self.assertIn("_invalidate_geodesic_cache()", self.deformation)
+
+    def test_additive_deformation_manifest_fields(self) -> None:
+        for marker in (
+            '"registeredRegions"',
+            '"activeRegionId"',
+            '"authoredRegionIds"',
+            '"orderedStamps"',
+            '"maximumPairDeltaError"',
+            '"validationStatus"',
+        ):
+            self.assertIn(marker, self.deformation)
+        self.assertIn("dreadstone.damage_deformation.v1", self.literals)
+
+    def test_core_active_region_operations_do_not_resolve_head_constants(self) -> None:
+        protected_functions = {
+            "_resolve_active_region",
+            "_stamp_weights",
+            "_stamp_local_coordinates",
+            "preview_active_stamp",
+            "rebuild_active_deformation",
+            "sync_key_to_detached",
+        }
+        for node in self.trees["deformation_authoring.py"].body:
+            if isinstance(node, ast.FunctionDef) and node.name in protected_functions:
+                identifiers = {item.id for item in ast.walk(node) if isinstance(item, ast.Name)}
+                with self.subTest(function=node.name):
+                    self.assertNotIn("ATTACHED_HEAD_NAME", identifiers)
+                    self.assertNotIn("DETACHED_HEAD_NAME", identifiers)
 
     def test_workflows_do_not_hardcode_versioned_dreadstone_zip_names(self) -> None:
         hardcoded_zip = r"Dreadstone_Animation_Forge_v\d+(?:[_.]\d+){2}(?:\.zip)?"

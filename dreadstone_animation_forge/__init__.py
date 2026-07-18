@@ -1,10 +1,10 @@
 bl_info = {
     "name": "Dreadstone Animation Forge",
     "author": "Dreadstone Black",
-    "version": (3, 9, 1),
+    "version": (3, 10, 0),
     "blender": (3, 6, 0),
     "location": "3D Viewport > Sidebar > Dreadstone",
-    "description": "Animation authoring, damage readiness, protected segment/stump authoring, and scale-safe paired deformation shape keys and one-click trauma presets.",
+    "description": "Animation authoring, protected damage assets, and registered-region trauma-field shape-key authoring.",
     "category": "Animation",
 }
 
@@ -704,6 +704,25 @@ def _deformation_metadata_property_updated(self, context):
     if module is not None:
         module.update_active_key_metadata(context)
 
+
+def _deformation_region_items(self, context):
+    module = sys.modules.get(f"{__package__}.deformation_authoring")
+    if module is None:
+        return [("NONE", "No Regions", "Register an attached/detached mesh pair")]
+    try:
+        return module.region_enum_items()
+    except Exception:
+        return [("NONE", "No Regions", "Register an attached/detached mesh pair")]
+
+
+def _deformation_region_updated(self, context):
+    module = sys.modules.get(f"{__package__}.deformation_authoring")
+    if module is not None and self.deformation_region not in {"", "NONE"}:
+        try:
+            module._set_active_region(self.deformation_region, context)
+        except Exception:
+            pass
+
 class DAFSettings(PropertyGroup):
     # Compact interface state. These values are stored in the Blender scene.
     ui_character_open: BoolProperty(default=True)
@@ -1170,14 +1189,74 @@ class DAFSettings(PropertyGroup):
     last_damage_manifest_path: StringProperty(default="", options={'HIDDEN'})
     last_damage_validation_path: StringProperty(default="", options={'HIDDEN'})
 
-    # Damage deformation authoring v3.9.
+    # Trauma Field Authoring v3.10.
     deformation_region: EnumProperty(
-        name="Region",
-        items=[("HEAD", "Head", "Paired attached and detached head morph targets")],
-        default="HEAD",
+        name="Active Region",
+        items=_deformation_region_items,
+        update=_deformation_region_updated,
+    )
+    deformation_region_id: StringProperty(
+        name="New Region ID",
+        description="Unique semantic ID for the selected attached/detached pair",
+        default="head",
+    )
+    deformation_related_seam_id: StringProperty(
+        name="Related Seam ID",
+        description="Optional Damage Authoring seam ID used for protection weighting",
+        default="head_neck",
     )
     deformation_key_name: StringProperty(name="New Key Name", default="Head_Dent_Left")
     deformation_active_key: StringProperty(name="Active Deformation", default="", options={'HIDDEN'})
+    deformation_capture_mode: EnumProperty(
+        name="Placement Mode",
+        items=[
+            ('SINGLE_FACE', "Single Face", "Capture exactly one selected face"),
+            ('SELECTED_FACE_PATCH', "Selected Face Patch", "Capture one connected component of selected faces"),
+            ('SELECTED_VERTICES', "Selected Vertices", "Capture one or more selected vertices"),
+            ('CURSOR', "3D Cursor", "Capture the cursor and one surface seed vertex"),
+        ],
+        default='SINGLE_FACE',
+    )
+    deformation_influence_mode: EnumProperty(
+        name="Influence Mask",
+        items=[
+            ('PATCH_ONLY', "Patch Only", "Only captured vertices are eligible"),
+            ('PATCH_FEATHERED', "Patch Feathered", "Keep captured vertices full and feather across connected edges"),
+            ('CONNECTED_SURFACE', "Connected Surface", "Spread over the connected surface within the radius"),
+        ],
+        default='PATCH_FEATHERED',
+    )
+    deformation_distance_mode: EnumProperty(
+        name="Distance Mode",
+        items=[
+            ('SURFACE_DISTANCE', "Surface Distance", "Use world-length weighted edge-graph geodesic distance"),
+            ('WORLD_DISTANCE', "World Distance", "Use direct world-space distance for compatibility and diagnosis"),
+        ],
+        default='SURFACE_DISTANCE',
+    )
+    deformation_feather_distance: FloatProperty(
+        name="Feather Distance", default=0.020, min=0.0, max=0.30, unit='LENGTH',
+        update=_deformation_preview_property_updated,
+    )
+    deformation_stamp_family: EnumProperty(
+        name="Trauma Family",
+        items=[
+            ('COMPACT_DENT', "Compact Dent", "Localized inward depression"),
+            ('BROAD_CAVE', "Broad Cave", "Wide soft inward collapse"),
+            ('FLAT_COMPRESSION', "Flat Compression", "Compress vertices toward an impact plane"),
+            ('DIRECTIONAL_SHEAR', "Directional Shear", "Controlled lateral displacement"),
+            ('RAISED_IMPACT_RIM', "Raised Impact Rim", "Restrained raised lip around an impact"),
+            ('RIDGE_COLLAPSE', "Ridge Collapse", "Push a protruding ridge inward"),
+        ],
+        default='COMPACT_DENT',
+    )
+    deformation_stamp_name: StringProperty(name="Stamp Name", default="Impact Stamp")
+    deformation_stamp_strength: FloatProperty(
+        name="Stamp Strength", default=1.0, min=0.0, max=2.0, precision=2,
+        update=_deformation_preview_property_updated,
+    )
+    deformation_active_stamp_id: StringProperty(default="", options={'HIDDEN'})
+    deformation_capture_json: StringProperty(default="", options={'HIDDEN'})
     deformation_auto_preview: BoolProperty(
         name="Live Seed Preview",
         description="Refresh the temporary seed morph while sliders change",
@@ -3228,7 +3307,7 @@ class DAF_PT_panel(Panel):
             layout,
             s,
             "ui_deformation_authoring_open",
-            "Damage Deformation Authoring v3.9",
+            "Trauma Field Authoring v3.10.0",
         )
         if opened:
             configure_property_box(box)
@@ -3501,6 +3580,10 @@ sys.modules.pop(_DAMAGE_AUTHORING_MODULE_NAME, None)
 importlib.invalidate_caches()
 damage_authoring = importlib.import_module(".damage_authoring", __package__)
 DAMAGE_AUTHORING_CLASSES = damage_authoring.CLASSES
+
+_TRAUMA_FIELD_MODULE_NAME = f"{__package__}.trauma_field"
+sys.modules.pop(_TRAUMA_FIELD_MODULE_NAME, None)
+importlib.invalidate_caches()
 
 _DEFORMATION_AUTHORING_MODULE_NAME = f"{__package__}.deformation_authoring"
 sys.modules.pop(_DEFORMATION_AUTHORING_MODULE_NAME, None)

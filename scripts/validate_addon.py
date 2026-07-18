@@ -23,13 +23,14 @@ MODULE_NAMES = (
     "damage_readiness.py",
     "damage_authoring.py",
     "deformation_authoring.py",
+    "trauma_field.py",
 )
 MODULE_PATHS = tuple(PACKAGE / name for name in MODULE_NAMES)
 
-EXPECTED_VERSION = (3, 9, 1)
+EXPECTED_VERSION = (3, 10, 0)
 EXPECTED_READINESS_BUILD = "2026-07-15.virtual-weld.1"
 EXPECTED_AUTHORING_BUILD = "2026-07-16.segment-stump-deform.1"
-EXPECTED_DEFORMATION_BUILD = "2026-07-16.deformation-workbench.2"
+EXPECTED_DEFORMATION_BUILD = "2026-07-17.trauma-field.1"
 
 REQUIRED_SCHEMAS = {
     "dreadstone.animation_pack.v1",
@@ -91,12 +92,28 @@ REQUIRED_OPERATORS = {
     "daf.show_deformation_detached": "Show Detached",
     "daf.show_deformation_overlay": "Show Both",
     "daf.validate_deformations": "Validate Deformations",
+    "daf.register_deformation_region": "Register Selected Region Pair",
+    "daf.select_deformation_region": "Select Active Region",
+    "daf.validate_deformation_region": "Validate Registered Pair",
+    "daf.remove_deformation_region": "Remove Region Registration",
+    "daf.capture_deformation_selected_patch": "Capture Connected Face Patch",
+    "daf.capture_deformation_selected_vertices": "Capture Selected Vertices",
+    "daf.add_trauma_stamp": "Add Stamp",
+    "daf.select_trauma_stamp": "Select Active Stamp",
+    "daf.update_trauma_stamp": "Update Active Stamp",
+    "daf.duplicate_trauma_stamp": "Duplicate Stamp",
+    "daf.remove_trauma_stamp": "Remove Stamp",
+    "daf.move_trauma_stamp_up": "Move Stamp Up",
+    "daf.move_trauma_stamp_down": "Move Stamp Down",
+    "daf.toggle_trauma_stamp": "Enable / Disable Stamp",
+    "daf.preview_active_trauma_stamp": "Preview Active Stamp",
+    "daf.rebuild_active_deformation": "Rebuild Active Deformation",
 }
 
 REQUIRED_UI_TEXT = {
     "Damage Readiness Analyzer",
     "Damage Segment & Stump Authoring v3.9",
-    "Damage Deformation Authoring v3.9",
+    "Trauma Field Authoring v3.10.0",
     "Restore Reimported GLB Intact Preview",
     "Validate Complete Damage Asset",
     "BUILD ACTIVE PRESET",
@@ -105,6 +122,18 @@ REQUIRED_UI_TEXT = {
     "Both",
     "Sculpting is optional; presets are now intended to read clearly out of the box",
 }
+
+REQUIRED_TRAUMA_FAMILIES = {
+    "COMPACT_DENT",
+    "BROAD_CAVE",
+    "FLAT_COMPRESSION",
+    "DIRECTIONAL_SHEAR",
+    "RAISED_IMPACT_RIM",
+    "RIDGE_COLLAPSE",
+}
+REQUIRED_CAPTURE_MODES = {"SINGLE_FACE", "SELECTED_FACE_PATCH", "SELECTED_VERTICES", "CURSOR"}
+REQUIRED_INFLUENCE_MODES = {"PATCH_ONLY", "PATCH_FEATHERED", "CONNECTED_SURFACE"}
+REQUIRED_DISTANCE_MODES = {"SURFACE_DISTANCE", "WORLD_DISTANCE"}
 
 FORBIDDEN_TRANSFER_IDENTIFIERS = {
     "kdtree",
@@ -263,6 +292,7 @@ def check_package_imports(sources: dict[str, str]) -> None:
         "package module imports",
     )
     require("from . import damage_readiness" in sources["damage_authoring.py"], "damage_authoring relative import changed")
+    require("from . import trauma_field" in sources["deformation_authoring.py"], "trauma_field relative import is missing")
 
 
 def check_schemas_names_keys_seams(trees: dict[str, ast.Module]) -> None:
@@ -334,7 +364,53 @@ def check_preview_and_presets(source: str) -> None:
             'bl_idname = "daf.finish_deformation_sculpt"',
             "Sculpting is optional",
         ),
-        "v3.9.1 preview/preset/sculpt contracts",
+        "legacy preview/preset/sculpt contracts",
+    )
+
+
+def check_trauma_field_contracts(sources: dict[str, str], trees: dict[str, ast.Module]) -> None:
+    trauma_tree = trees["trauma_field.py"]
+    families = set(literal_assignment(trauma_tree, "TRAUMA_FAMILIES"))
+    placements = set(literal_assignment(trauma_tree, "PLACEMENT_MODES"))
+    influences = set(literal_assignment(trauma_tree, "INFLUENCE_MODES"))
+    distances = set(literal_assignment(trauma_tree, "DISTANCE_MODES"))
+    require(families == REQUIRED_TRAUMA_FAMILIES, f"trauma families changed: {sorted(families)}")
+    require(placements == REQUIRED_CAPTURE_MODES, f"capture modes changed: {sorted(placements)}")
+    require(influences == REQUIRED_INFLUENCE_MODES, f"influence modes changed: {sorted(influences)}")
+    require(distances == REQUIRED_DISTANCE_MODES, f"distance modes changed: {sorted(distances)}")
+    require_markers(
+        sources["trauma_field.py"],
+        (
+            "def build_weighted_adjacency(",
+            "def geodesic_distances(",
+            "def selection_hash(",
+            "def geodesic_cache_key(",
+            "def surface_mask_weights(",
+            "def validate_stamp_stack(",
+            "def evaluate_stamp_stack(",
+            "heapq.heappop",
+        ),
+        "pure trauma-field algorithms",
+    )
+    require_markers(
+        sources["deformation_authoring.py"],
+        (
+            'REGISTRY_PROPERTY = "dsb_deformation_region_registry_json"',
+            "def _resolve_active_region(",
+            'bl_idname = "daf.register_deformation_region"',
+            'bl_idname = "daf.capture_deformation_selected_patch"',
+            'bl_idname = "daf.capture_deformation_selected_vertices"',
+            'bl_idname = "daf.preview_active_trauma_stamp"',
+            'bl_idname = "daf.rebuild_active_deformation"',
+            "trauma_field.evaluate_stamp_stack",
+            '"registeredRegions"',
+            '"orderedStamps"',
+            '"activeRegionId"',
+            '"maximumPairDeltaError"',
+            '"validationStatus"',
+            '"recipeStatus": "LEGACY_MANUAL"',
+        ),
+        "region registry and trauma authoring integration",
     )
 
 
@@ -348,8 +424,8 @@ def check_glb_morph_hooks(tree: ast.Module) -> None:
     require(required <= pairs, "GLB morph export flags changed or are missing")
 
 
-def check_no_nearest_neighbor(tree: ast.Module) -> None:
-    found = sorted(FORBIDDEN_TRANSFER_IDENTIFIERS & executable_identifiers(tree))
+def check_no_nearest_neighbor(trees: Iterable[ast.Module]) -> None:
+    found = sorted(FORBIDDEN_TRANSFER_IDENTIFIERS & set().union(*(executable_identifiers(tree) for tree in trees)))
     require(not found, f"nearest-neighbor transfer identifiers found: {', '.join(found)}")
 
 
@@ -390,13 +466,13 @@ def check_repository_hygiene() -> None:
 
 
 def main() -> int:
-    print("DREADSTONE ANIMATION FORGE v3.9.1 STATIC VALIDATION")
+    print("DREADSTONE ANIMATION FORGE v3.10.0 STATIC VALIDATION")
     print("Blender is not imported; runtime acceptance remains separate.")
 
     sources: dict[str, str] = {}
     trees: dict[str, ast.Module] = {}
     checks: list[tuple[str, Callable[[], None]]] = [
-        ("all four package modules exist", check_module_files),
+        ("all five package modules exist", check_module_files),
         ("all Python modules parse with ast.parse", lambda: check_parse(sources)),
         ("all Python modules compile with py_compile", check_compile),
         ("add-on/deformation version and build contracts", lambda: check_versions(trees)),
@@ -405,8 +481,9 @@ def main() -> int:
         ("required operators and UI labels", lambda: check_operators_and_ui(trees)),
         ("world-space exact-index deformation synchronization", lambda: check_world_space_and_exact_index(sources["deformation_authoring.py"])),
         ("attached/detached preview, preset, and optional sculpt contracts", lambda: check_preview_and_presets(sources["deformation_authoring.py"])),
+        ("trauma-field algorithms, registry, stamps, rebuild, and additive manifest contracts", lambda: check_trauma_field_contracts(sources, trees)),
         ("GLB morph target and morph normal export hooks", lambda: check_glb_morph_hooks(trees["damage_authoring.py"])),
-        ("no nearest-neighbor deformation transfer implementation", lambda: check_no_nearest_neighbor(trees["deformation_authoring.py"])),
+        ("no nearest-neighbor deformation transfer implementation", lambda: check_no_nearest_neighbor((trees["deformation_authoring.py"], trees["trauma_field.py"]))),
         ("no unresolved source merge markers", lambda: check_merge_markers(sources)),
         ("no generated, cache, backup, archive, or temporary files tracked", check_repository_hygiene),
     ]
