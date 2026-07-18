@@ -1123,7 +1123,7 @@ class DAFSettings(PropertyGroup):
     ui_damage_readiness_open: BoolProperty(default=False)
     damage_readiness_output_directory: StringProperty(
         name="Report Output Folder",
-        description="Report folder. Blank uses a saved Blend file's adjacent damage_readiness_reports folder; unsaved files require an explicit folder and never fall back to the Windows system drive",
+        description="Explicit project folder for readiness reports; blank values, unsaved // paths, and drive roots are rejected",
         default="",
         subtype='DIR_PATH'
     )

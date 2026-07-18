@@ -19,6 +19,7 @@ from typing import Callable, Iterable
 ROOT = Path(__file__).resolve().parents[1]
 PACKAGE = ROOT / "dreadstone_animation_forge"
 MANIFEST_PATH = PACKAGE / "blender_manifest.toml"
+USER_GUIDE_PATH = ROOT / "docs" / "USER_WORKFLOW_GUIDE.md"
 MODULE_NAMES = (
     "__init__.py",
     "damage_readiness.py",
@@ -32,6 +33,71 @@ EXPECTED_VERSION = (3, 10, 1)
 EXPECTED_READINESS_BUILD = "2026-07-15.virtual-weld.1"
 EXPECTED_AUTHORING_BUILD = "2026-07-16.segment-stump-deform.1"
 EXPECTED_DEFORMATION_BUILD = "2026-07-18.trauma-hotfix.1"
+
+REQUIRED_GUIDE_HEADINGS = (
+    "## 1. Install Dreadstone Animation Forge 3.10.1",
+    "## 2. Open the Dreadstone panel",
+    "## 3. Import and prepare a source GLB",
+    "## 5. Author and approve animation drafts",
+    "## 6. Build and validate an approved animation pack",
+    "## 7. Run Damage Readiness",
+    "## 8. Build Damage Segment and Stump Authoring assets",
+    "## 9. Preview intact and detached states",
+    "## 10. Register and validate deformation pairs",
+    "## 12. Capture a surface with every placement mode",
+    "## 13. Choose influence masks, distance modes, and damage axis",
+    "## 14. Create and manage trauma stamps",
+    "## 15. Preview, rebuild, compare, sculpt, and repair",
+    "## 16. Run every validation command",
+    "## 17. Export the damage GLB and manifest",
+    "## 18. Clean reimport and verification",
+    "## 19. Beginner recipes",
+    "## 20. Troubleshooting and recovery",
+    "## Complete public button inventory",
+)
+
+REQUIRED_GUIDE_UI_LABELS = {
+    "**Adopt Imported Animation Pack**",
+    "**Safe Resize**",
+    "**Analyze Rig**",
+    "**Analyze Damage Readiness**",
+    "**Preview Candidate Seam**",
+    "**Load READY Handoff**",
+    "**Build Authoring Asset**",
+    "**Preview Intact**",
+    "**Preview Detached**",
+    "**Register Selected Pair**",
+    "**Validate Pair**",
+    "**Capture Single Face**",
+    "**Capture Connected Face Patch**",
+    "**Capture Selected Vertices**",
+    "**Capture 3D Cursor**",
+    "**Patch Only**",
+    "**Patch Feathered**",
+    "**Connected Surface**",
+    "**Surface Distance**",
+    "**World Distance**",
+    "**Add Stamp**",
+    "**Update Active Stamp**",
+    "**Enable / Disable**",
+    "**Compact Dent**",
+    "**Broad Cave**",
+    "**Flat Compression**",
+    "**Directional Shear**",
+    "**Raised Impact Rim**",
+    "**Ridge Collapse**",
+    "**REBUILD ACTIVE DEFORMATION**",
+    "**Attached**",
+    "**Detached**",
+    "**Both**",
+    "**REPAIR LEGACY PAIR SYNC**",
+    "**Validate Morph Targets**",
+    "**Validate Complete Damage Asset**",
+    "**Export Damage GLB + Manifest**",
+    "**Restore Reimported GLB Intact Preview**",
+    "**Build Approved Animation Pack**",
+    "**Validate Last Built Pack**",
+}
 
 REQUIRED_SCHEMAS = {
     "dreadstone.animation_pack.v1",
@@ -257,6 +323,32 @@ def check_module_files() -> None:
     if not MANIFEST_PATH.is_file():
         missing.append(MANIFEST_PATH.relative_to(ROOT).as_posix())
     require(not missing, f"missing modules: {', '.join(missing)}")
+
+
+def current_version_string() -> str:
+    return ".".join(map(str, EXPECTED_VERSION))
+
+
+def current_zip_name() -> str:
+    return f"Dreadstone_Animation_Forge_v{'_'.join(map(str, EXPECTED_VERSION))}.zip"
+
+
+def check_user_workflow_guide() -> None:
+    require(USER_GUIDE_PATH.is_file(), "docs/USER_WORKFLOW_GUIDE.md is missing")
+    guide = USER_GUIDE_PATH.read_text(encoding="utf-8")
+    require(current_version_string() in guide, f"user guide does not contain version {current_version_string()}")
+    require(current_zip_name() in guide, f"user guide does not contain release ZIP {current_zip_name()}")
+    missing_headings = [heading for heading in REQUIRED_GUIDE_HEADINGS if heading not in guide]
+    require(not missing_headings, "user guide missing workflow headings: " + "; ".join(missing_headings))
+    missing_labels = sorted(label for label in REQUIRED_GUIDE_UI_LABELS if label not in guide)
+    require(not missing_labels, "user guide missing key UI labels: " + ", ".join(missing_labels))
+
+    readme = (ROOT / "README.md").read_text(encoding="utf-8")
+    development = (ROOT / "docs" / "DEVELOPMENT.md").read_text(encoding="utf-8")
+    releases = (ROOT / "docs" / "RELEASES.md").read_text(encoding="utf-8")
+    require("docs/USER_WORKFLOW_GUIDE.md" in readme, "README does not link to the authoritative user guide")
+    require("USER_WORKFLOW_GUIDE.md" in development, "DEVELOPMENT does not link to the authoritative user guide")
+    require("docs/USER_WORKFLOW_GUIDE.md" in releases, "release checklist does not reference the authoritative user guide")
 
 
 def check_extension_manifest() -> None:
@@ -527,6 +619,7 @@ def main() -> int:
         ("no nearest-neighbor deformation transfer implementation", lambda: check_no_nearest_neighbor((trees["deformation_authoring.py"], trees["trauma_field.py"]))),
         ("no unresolved source merge markers", lambda: check_merge_markers(sources)),
         ("no generated, cache, backup, archive, or temporary files tracked", check_repository_hygiene),
+        ("authoritative user workflow guide inventory and release metadata", check_user_workflow_guide),
     ]
 
     failures: list[str] = []

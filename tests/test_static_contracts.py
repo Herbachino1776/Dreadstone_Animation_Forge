@@ -80,6 +80,32 @@ class StaticContractTests(unittest.TestCase):
             "Dreadstone_Animation_Forge_v3_10_1.zip",
         )
 
+    def test_authoritative_user_workflow_guide_contract(self) -> None:
+        contracts.check_user_workflow_guide()
+        guide = contracts.USER_GUIDE_PATH.read_text(encoding="utf-8")
+        self.assertIn(contracts.current_version_string(), guide)
+        self.assertIn(contracts.current_zip_name(), guide)
+        for heading in contracts.REQUIRED_GUIDE_HEADINGS:
+            with self.subTest(heading=heading):
+                self.assertIn(heading, guide)
+        for label in contracts.REQUIRED_GUIDE_UI_LABELS:
+            with self.subTest(label=label):
+                self.assertIn(label, guide)
+
+    def test_release_readme_contains_install_quick_start_and_guide_reference(self) -> None:
+        readme = (ROOT / "README.md").read_text(encoding="utf-8")
+        for marker in (
+            "3.10.1",
+            "Dreadstone_Animation_Forge_v3_10_1.zip",
+            "Install from Disk",
+            "## Quick start",
+            "docs/USER_WORKFLOW_GUIDE.md",
+        ):
+            with self.subTest(marker=marker):
+                self.assertIn(marker, readme)
+        builder = (ROOT / "scripts" / "build_release.py").read_text(encoding="utf-8")
+        self.assertIn('(ROOT / "README.md").read_text', builder)
+
     def test_manifest_schemas(self) -> None:
         self.assertTrue(contracts.REQUIRED_SCHEMAS <= self.literals)
 
@@ -307,7 +333,12 @@ class StaticContractTests(unittest.TestCase):
     def test_v3101_hotfix_documentation_contracts(self) -> None:
         documentation = "\n".join(
             path.read_text(encoding="utf-8")
-            for path in (ROOT / "README.md", ROOT / "CHANGELOG.md", ROOT / "docs" / "DEVELOPMENT.md")
+            for path in (
+                ROOT / "README.md",
+                ROOT / "CHANGELOG.md",
+                ROOT / "docs" / "DEVELOPMENT.md",
+                ROOT / "docs" / "USER_WORKFLOW_GUIDE.md",
+            )
         )
         for marker in (
             "3.10.1",
