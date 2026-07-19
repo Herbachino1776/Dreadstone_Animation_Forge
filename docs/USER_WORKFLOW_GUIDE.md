@@ -1,9 +1,9 @@
 # Dreadstone Animation Forge user workflow guide
 
-- **Current Forge version:** `3.11.0`
+- **Current Forge version:** `3.12.0`
 - **Supported Blender version:** Blender `5.1.2`
-- **Current release ZIP:** `Dreadstone_Animation_Forge_v3_11_0.zip`
-- **Last updated:** 2026-07-18
+- **Current release ZIP:** `Dreadstone_Animation_Forge_v3_12_0.zip`
+- **Last updated:** 2026-07-19
 
 This is the authoritative user how-to for the current Forge release. It follows the labels and behavior implemented in the add-on. If an older note, video, or README disagrees with this guide, use this guide.
 
@@ -20,9 +20,9 @@ Save a working copy of the `.blend` before authoring. Forge protects the importe
 > **WARNING**
 > Never apply the scale of a Forge safe wrapper such as `DSB_SIZE_ROOT_ADOPTED`. Never animate bone scale. Those operations can invalidate sizing, animation, and exact-index deformation contracts.
 
-## 1. Install Dreadstone Animation Forge 3.11.0
+## 1. Install Dreadstone Animation Forge 3.12.0
 
-1. Obtain `Dreadstone_Animation_Forge_v3_11_0.zip`.
+1. Obtain `Dreadstone_Animation_Forge_v3_12_0.zip`.
 2. Do not extract the ZIP. It is a Blender extension package whose `blender_manifest.toml` and `__init__.py` are at the ZIP root.
 3. Open Blender 5.1.2.
 4. Choose **Edit > Preferences > Add-ons**.
@@ -31,7 +31,7 @@ Save a working copy of the `.blend` before authoring. Forge protects the importe
 7. Close Preferences. Restart Blender if an older Forge version was loaded in this session.
 
 > **EXPECTED RESULT**
-> Blender lists Dreadstone Animation Forge version 3.11.0 and the add-on enables without a registration error.
+> Blender lists Dreadstone Animation Forge version 3.12.0 and the add-on enables without a registration error.
 
 > **TROUBLESHOOTING**
 > If Blender says the package is invalid, confirm that you selected the original ZIP without extracting or rezipping it. If old labels remain after upgrading, restart Blender so no stale add-on module remains loaded.
@@ -43,7 +43,7 @@ Save a working copy of the `.blend` before authoring. Forge protects the importe
 3. Click the **Dreadstone** tab.
 4. Expand the sections you need by clicking their headings.
 
-The one panel is titled **Dreadstone Animation Forge**. Its major sections are **Character Setup**, **Ground Preview**, **Rig Mapping & Direction**, **Source Damage Readiness**, **Damage Segment & Stump Authoring v3.9**, **Trauma Field Authoring v3.11.0**, **Arm & Hand Pose Polish**, **Walk Draft**, **Death / Collapse Draft**, **Flank Hurt Drafts**, **Approved Animation Pack**, and **Action Cleanup & Safety**.
+The one panel is titled **Dreadstone Animation Forge**. Its major sections are **Character Setup**, **Ground Preview**, **Rig Mapping & Direction**, **Source Damage Readiness**, **Damage Segment & Stump Authoring v3.9**, **Trauma Field Authoring v3.12.0**, **Arm & Hand Pose Polish**, **Walk Draft**, **Death / Collapse Draft**, **Flank Hurt Drafts**, **Approved Animation Pack**, and **Action Cleanup & Safety**.
 
 ## 3. Import and prepare a source GLB
 
@@ -292,7 +292,7 @@ Trauma Field authoring always works through an explicit pair: an attached mesh u
 1. In Object Mode, select exactly two mesh objects.
 2. Select the detached object first.
 3. Shift-select the attached object last so the attached object is active (brighter outline).
-4. Expand **Trauma Field Authoring v3.11.0**.
+4. Expand **Trauma Field Authoring v3.12.0**.
 5. In **New Region ID**, enter a unique semantic name such as `head`, `forearm_left`, or `forearm_right`.
 6. In **Related Seam ID**, enter the matching seam ID: `head_neck`, `left_elbow`, `right_elbow`, or `lower_spine`.
 7. Click **Register Selected Pair**.
@@ -412,10 +412,10 @@ Order can matter because each enabled stamp is applied to the result of the prev
 
 ### Save stamps for a rebuild or Forge upgrade
 
-**Save Stamp Library...** writes every procedural stamp stack in every registered deformation region to one portable `.dsbstamps.json` file. It preserves deformation-key names, stamp names and stable IDs, order, enabled state, trauma family, surface capture, influence and distance modes, radius, depth, falloff, strength, seam protection, displacement limit, and damage direction. It saves recipes rather than source geometry, generated meshes, or Source Readiness reports.
+**Save Stamp Library...** writes every procedural stamp stack in every registered deformation region to one portable `.dsbstamps.json` file. It preserves deformation-key names, stamp names and stable IDs, order, enabled state, trauma family, surface capture, influence and distance modes, radius, depth, falloff, strength, seam protection, displacement limit, damage direction, and each key's optional Surface Gore Overlay recipe. It saves recipes rather than source geometry, generated meshes, preview materials, or Source Readiness reports.
 
 1. Save the current `.blend` as a backup.
-2. In **Trauma Field Authoring v3.11.0**, click **Save Stamp Library...**.
+2. In **Trauma Field Authoring v3.12.0**, click **Save Stamp Library...**.
 3. Choose a project folder and filename. Forge adds `.dsbstamps.json` when needed.
 4. Keep this small JSON file beside the source GLB or in source control.
 
@@ -431,7 +431,7 @@ First import the same source GLB, run Source Damage Readiness, build the Damage 
 1. Confirm each destination pair passes **Validate Pair**.
 2. Click **Load Stamp Library...** and select the saved `.dsbstamps.json` file.
 3. Forge first looks for the same region ID and exact topology. If GLB export/import or a compatible Forge rebuild changed only split vertices or indices, it can rebind the saved capture through analytical local-space or world-space positional anchors. Every anchor must match within `max(0.000001, local_bounds_diagonal × 0.000002)`; saved faces must still resolve as exact positional faces.
-4. Forge creates the missing deformation keys, rebinds captures to the current attached object, rebuilds every enabled stack from `Basis`, synchronizes its detached partner by exact vertex index in world space, and runs **Validate Morph Targets**.
+4. Forge creates the missing deformation keys, rebinds captures and optional gore linkage to the current attached object, rebuilds every enabled stack from `Basis`, synchronizes its detached partner by exact vertex index in world space, and runs **Validate Morph Targets**.
 5. Select each restored key, click **Solo**, and compare **Attached**, **Detached**, and **Both**.
 
 > **WARNING**
@@ -490,6 +490,36 @@ Use **REPAIR LEGACY PAIR SYNC** only when **Validate Morph Targets** reports a s
 
 Healthy keys keep their geometry and regain their detached value driver. Safe stale detached keys are rebuilt by matching vertex index in world space. Procedural stamp stacks, missing keys, arbitrary unmanaged keys, and unsafe keys remain unchanged. Forge never recreates an intentionally missing key and never overwrites an unrepairable attached key.
 
+## Surface Gore Overlay for blunt trauma
+
+Surface Gore Overlay is an optional authoring layer for a caved-in or crushed outer surface. Use it after a blunt deformation when skin, scalp, hair, clothing, or another original exterior should remain recognizable but look locally coated with wet ooze, smear, clotting, or impact speckle. It is not exposed tissue: Forge does not cut a hole, reveal an interior, generate a cavity, replace the deformation, or import a decal atlas. Version 3.12.0 needs no custom art.
+
+The mask comes from one selected trauma stamp's captured region and influence falloff. Coverage, edge feather, and deterministic procedural breakup keep it localized and irregular. The preview adds `DSB_Surface_Gore_Mask` to each paired mesh and temporarily assigns Forge-owned copies of its current materials. Those copies mix the original material surface with a dark wet Principled surface. The source materials are never edited. **Clear Overlay Preview**, selecting another key, deleting the key, or exporting restores the original material slots and removes the managed mask/material data.
+
+### Exact click-by-click workflow
+
+1. Register the head attached/detached pair and select the `head` region as described above.
+2. Click **Create Blunt Gore Head Set** to create `Head_Impact_Left_v001`, `Head_Impact_Right_v001`, `Head_Impact_Front_v001`, and `Head_Impact_Back_v001`. You can instead create any future blunt-impact key with **Create Damage Shape Key**.
+3. Click one impact key so it is the active deformation.
+4. Select the intended surface on the attached mesh and use **Capture Single Face**, **Capture Connected Face Patch**, **Capture Selected Vertices**, or **Capture 3D Cursor**. A connected face patch generally gives the clearest bounded head-impact mask.
+5. Configure a blunt trauma family, click **Add Stamp**, select that numbered stamp, and click **REBUILD ACTIVE DEFORMATION**. Confirm that the head caves in while the exterior remains closed.
+6. Expand **5. Surface Gore Overlay** and check **Enable Surface Gore Overlay**.
+7. Choose **Gore Preset**, then click **Use Preset Defaults**. Available presets are `Gore_Ooze_Wet`, `Gore_Clot_Dark`, `Gore_Smear_Heavy`, `Gore_Speckled_Impact`, and `Gore_Crush_Bloodied`.
+8. Adjust **Coverage**, **Scatter / Breakup**, **Edge Feather**, **Wetness / Gloss**, **Darkness**, **Color Bias**, and **Variation Seed**. Coverage controls how much of the linked influence is coated; scatter breaks it into patches; edge feather controls the transition; wetness controls roughness/clear-coat response; the seed recreates the same breakup after save/load.
+9. Click **Apply Gore Overlay Settings**. Forge stores one overlay recipe on the active deformation and links it to the currently selected stamp ID, region ID, capture hash, and capture topology.
+10. Click **Preview / Refresh Overlay**. Forge saves the visible settings again, builds the managed mask/material preview on both objects, and switches the open 3D Viewport to Material Preview so wetness and color are visible.
+11. Click **Attached**, **Detached**, and **Both**. You author only once: the exact-index pair receives the same mask and metadata. Confirm the coating stays on the intended deformed side and that no hollow space or interior appears.
+12. If you change controls, click **Preview / Refresh Overlay** again. Click **Clear Overlay Preview** to restore the original materials without disabling or deleting the saved overlay recipe.
+13. Click **Validate Morph Targets**. Require the deformation, surface-gore overlay, and export statuses to pass before continuing.
+14. Click **Save Stamp Library...** to preserve the stamp and overlay together. On a compatible clean rebuild, **Load Stamp Library...** restores the settings, deterministic seed, linkage, and digest; select the key and click **Preview / Refresh Overlay** to recreate preview-only materials.
+15. Run **Validate Complete Damage Asset**, then **Export Damage GLB + Manifest**. Export clears preview resources but retains the semantic `surfaceGoreOverlay` metadata for future runtime consumption.
+
+> **EXPECTED RESULT**
+> A blunt impact remains a closed, deformed outer surface with recognizable source skin/scalp/hair and localized irregular blood-darkened wet coverage. Attached and detached views agree. The same mask returns after a portable save/load because its variation seed and linked capture are preserved.
+
+> **TROUBLESHOOTING**
+> An invalid preset/range, removed linked stamp, changed capture hash/topology, removed region, broken digest, or missing preview resource claimed as ready fails surface-gore validation. Select the correct stamp and recapture if needed, click **Apply Gore Overlay Settings**, rebuild the preview, and validate again. If the result looks uniform, increase **Scatter / Breakup** or lower **Coverage**. If it spreads too far, use a tighter capture/influence, lower coverage, or reduce edge feather.
+
 ## 16. Run every validation command
 
 Forge displays three different domains: **Source Readiness** describes only the original imported asset; **Authoring Validation** describes generated pieces, pairs, keys, stamps, and caps; **Export Validation** requires both contracts and verifies export preparation. Run them in this order for a complete project:
@@ -498,7 +528,7 @@ Forge displays three different domains: **Source Readiness** describes only the 
 2. **Analyze Source Damage Readiness** — writes the original-source health, stable identity contract, and four-seam handoff; all seams must be `AUTOMATIC_CANDIDATE` for protected auto-authoring.
 3. **Load READY Handoff** — validates the schema, analyzer revision, READY state, closed contours, and current source fingerprints.
 4. **Validate Pair** — checks exact attached/detached topology for the active deformation region.
-5. **Validate Morph Targets** — checks every registered region, managed key pairs, finite coordinates, stored captures, stamp recipes, displacement limits, temporary-preview cleanup, and paired world-space delta equality.
+5. **Validate Morph Targets** — checks every registered region, managed key pairs, finite coordinates, stored captures, stamp recipes, displacement limits, paired world-space delta equality, and the separate Surface Gore Overlay contract: preset/ranges, linked region/stamp/capture, deterministic recipe digest, and any preview resources currently marked ready.
 6. **Validate Complete Damage Asset** — runs Authoring Validation: it verifies the existing source contract, generated pieces, cap topology/material/direction, skinning/rig targets, complete non-overlapping partitions, contour gaps against **Intact Seam Tolerance**, deformation pairs, keys, and enabled stamps.
 7. **Validate Last Built Pack** — when using the animation-pack workflow, rereads the last GLB and compares its animation inventory with its manifest.
 
@@ -510,7 +540,7 @@ Forge displays three different domains: **Source Readiness** describes only the 
 ## 17. Export the damage GLB and manifest
 
 1. Return to Object Mode.
-2. Click **Clear Temporary Preview** if a stamp preview exists.
+2. Click **Clear Temporary Preview** if a stamp preview exists. **Clear Overlay Preview** is optional because export safely performs the same managed gore cleanup.
 3. Run **Validate Morph Targets** and require `PASS`.
 4. In **Damage Segment & Stump Authoring v3.9**, run **Validate Complete Damage Asset** and require `PASS`.
 5. Set **Damage Export Folder**. If blank in a saved `.blend`, Forge uses `//damage_exports/`. An unsaved `.blend` requires an explicit folder. A drive root is rejected.
@@ -519,7 +549,7 @@ Forge displays three different domains: **Source Readiness** describes only the 
 8. Click **Open Damage Export Folder**.
 
 > **EXPECTED RESULT**
-> Forge reports “Exported `<name>.glb` and validated manifest.” The folder contains `<name>.glb`, `<name>.json`, and `<name>_validation.json`. The manifest uses `dreadstone.damage_authoring.v1` and includes `dreadstone.damage_deformation.v1` deformation data with registered regions and ordered stamp metadata.
+> Forge reports “Exported `<name>.glb` and validated manifest.” The folder contains `<name>.glb`, `<name>.json`, and `<name>_validation.json`. The manifest uses `dreadstone.damage_authoring.v1` and includes `dreadstone.damage_deformation.v1` deformation data with registered regions, ordered stamp metadata, and optional `surfaceGoreOverlay` semantics: preset, region/capture linkage, coverage, breakup, feather, wetness, darkness, color, patch scale, repeatable seed, digest, and validation status.
 
 The panel shows **Source Readiness: VALID**, **Authoring Validation: PASS**, and **Export Validation: PASS**. Export includes generated authoring objects but excludes the protected source copy. It enables GLB animations, extras, morph targets, and morph normals, and restores your pre-export selection and visibility afterward. The source-readiness JSON and Markdown timestamps/content are not rewritten by export.
 
@@ -555,6 +585,16 @@ The restore button enables Mesh visibility in open 3D Views, unhides the importe
 9. Click **REBUILD ACTIVE DEFORMATION**, then **Attached**, **Detached**, and **Both**.
 10. Run **Validate Morph Targets**.
 
+### Recipe: coat a crushed left head impact with surface gore
+
+1. Follow the layered head-impact recipe through **REBUILD ACTIVE DEFORMATION**, or click **Create Blunt Gore Head Set** and finish the capture/stamp for `Head_Impact_Left_v001`.
+2. Select the stamp whose capture best defines the damaged left side.
+3. Expand **5. Surface Gore Overlay**, check **Enable Surface Gore Overlay**, choose `Gore_Crush_Bloodied`, and click **Use Preset Defaults**.
+4. Keep coverage below full, retain visible scatter, and adjust wetness/darkness to the material-preview lighting. Change **Variation Seed** only when you want a different repeatable patch layout.
+5. Click **Apply Gore Overlay Settings**, then **Preview / Refresh Overlay**.
+6. Compare **Attached**, **Detached**, and **Both**. Confirm the skull shape is deformed but closed, original hair/skin/scalp remain recognizable, and the red-dark glossy coating does not leave the impact region.
+7. Run **Validate Morph Targets**, then **Save Stamp Library...**. Clear and rebuild the preview once to confirm material restoration and deterministic recreation.
+
 ### Recipe: create a left forearm impact
 
 1. Register `DSB_ATTACHED_FOREARM_L` (active) with `DSB_SEGMENT_FOREARM_L` as `forearm_left`, related to `left_elbow`; click **Validate Pair**.
@@ -567,7 +607,7 @@ The restore button enables Mesh visibility in open 3D Views, unhides the importe
 ### Recipe: carry four head stamps into a clean source rebuild
 
 1. Open the old generated/reimported Damage `.blend` that still contains the four head-impact keys and stamps.
-2. Expand **Trauma Field Authoring v3.11.0** and click **Save Stamp Library...**. Confirm the message says four keys and four stamps.
+2. Expand **Trauma Field Authoring v3.12.0** and click **Save Stamp Library...**. Confirm the message says four keys and four stamps.
 3. Start a new `.blend`, import the same original source GLB, and run **Analyze Source Damage Readiness**.
 4. Run **Load READY Handoff** and **Build Authoring Asset**.
 5. Register `DSB_ATTACHED_HEAD` with `DSB_SEGMENT_HEAD` as region `head`, then require **Validate Pair** to pass.
@@ -643,8 +683,9 @@ Use this inventory during release acceptance to make sure no public operation ha
 - **Ground Preview:** **Create Floor**, **Align Pose**.
 - **Source Damage Readiness:** **Analyze Source Damage Readiness**, **Repair Source Readiness Contract**, **Preview Candidate Seam**, **Clear Preview**, **Open Report Folder**, **Open Markdown**.
 - **Damage Segment & Stump Authoring v3.9:** **Load READY Handoff**, **Build Authoring Asset**, **Clear Generated Asset / Restore Source**, **Preview Intact**, **Preview Detached**, **Restore Reimported GLB Intact Preview**, **Validate Complete Damage Asset**, **Export Damage GLB + Manifest**, **Open Damage Export Folder**.
-- **Trauma Field — regions and keys:** **Use Selected Region**, **Validate Pair**, **Register Selected Pair**, **Remove Registration**, **Create Damage Shape Key**, **Create Standard Head Set**, each managed key button, **Solo**, **Zero All**, **Delete Active**, **Mirror Active**.
+- **Trauma Field — regions and keys:** **Use Selected Region**, **Validate Pair**, **Register Selected Pair**, **Remove Registration**, **Create Damage Shape Key**, **Create Standard Head Set**, **Create Blunt Gore Head Set**, each managed key button, **Solo**, **Zero All**, **Delete Active**, **Mirror Active**.
 - **Trauma Field — capture and stamps:** **Capture Single Face**, **Capture Connected Face Patch**, **Capture Selected Vertices**, **Capture 3D Cursor**, each numbered stamp button, **Add Stamp**, **Duplicate**, **Remove**, **Move Up**, **Move Down**, **Enable / Disable**, **Save Stamp Library...**, **Load Stamp Library...**, **Update Active Stamp**.
+- **Trauma Field — Surface Gore Overlay:** **Enable Surface Gore Overlay**, **Gore Preset**, **Use Preset Defaults**, **Apply Gore Overlay Settings**, **Preview / Refresh Overlay**, **Clear Overlay Preview**.
 - **Trauma Field — preview, sculpt, and validation:** **Attached**, **Detached**, **Both**, **Preview Active Stamp**, **Clear Temporary Preview**, **REBUILD ACTIVE DEFORMATION**, conditional **BUILD ACTIVE PRESET**, **Preview Legacy Seed**, **Commit Legacy Seed**, **Begin Sculpt**, **Finish Sculpt & Sync**, **Validate Morph Targets**, **REPAIR LEGACY PAIR SYNC**.
 - **Arm & Hand Pose Polish:** **Zero Arm & Hand Polish**.
 - **Walk Draft:** **Generate / Refresh Walk Draft**, **Version / Approve Walk Draft**.

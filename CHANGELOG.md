@@ -1,5 +1,17 @@
 # Changelog
 
+## 3.12.0
+
+- Add optional **Surface Gore Overlay** authoring per deformation key for blunt trauma without exposed tissue, cavities, holes, or runtime game-side shader playback.
+- Add five procedural presets: `Gore_Ooze_Wet`, `Gore_Clot_Dark`, `Gore_Smear_Heavy`, `Gore_Speckled_Impact`, and `Gore_Crush_Bloodied`.
+- Generate a repeatable patchy mask from the linked trauma stamp's captured surface influence, edge feather, coverage, scatter, physical patch scale, and variation seed so no custom art is required.
+- Preview wet/dark gore on the deformed outer surface through a managed color attribute and temporary copies of each object's original materials; clearing or exporting restores the original attached/detached material slots.
+- Add the four directional `Head_Impact_*_v001` blunt-impact targets and author one linked overlay recipe that previews consistently on both exact-index paired meshes.
+- Extend portable stamp-library v2 records with optional surface-gore recipes and digests while continuing to load v1 libraries and leaving keys without gore unchanged.
+- Export additive preset, region, linked stamp/capture, coverage, scatter, feather, wetness, darkness, color, scale, seed, digest, and validation metadata under each authored deformation.
+- Separate deformation, gore-overlay, and export validation status and detect invalid presets/ranges, missing or stale capture linkage, removed stamps/regions, broken recipes/digests, and missing claimed preview resources.
+- Add focused deterministic serialization, validation, portable round-trip, tamper detection, seed/mask, no-gore regression, UI/preview, and export contract tests.
+
 ## 3.11.0
 
 - Add **Save Stamp Library...** to preserve every procedural stamp stack across all registered deformation regions in a portable `.dsbstamps.json` file.

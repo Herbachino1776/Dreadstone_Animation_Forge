@@ -15,6 +15,43 @@ import validate_addon as contracts  # noqa: E402
 
 
 class StaticContractTests(unittest.TestCase):
+    def test_surface_gore_overlay_authoring_contract(self) -> None:
+        for preset in (
+            "Gore_Ooze_Wet",
+            "Gore_Clot_Dark",
+            "Gore_Smear_Heavy",
+            "Gore_Speckled_Impact",
+            "Gore_Crush_Bloodied",
+        ):
+            self.assertIn(preset, self.trauma)
+        for helper in (
+            "def normalize_gore_overlay(",
+            "def validate_gore_overlay(",
+            "def gore_mask_value(",
+            "def preview_surface_gore(",
+            "def clear_surface_gore_preview(",
+        ):
+            self.assertIn(helper, self.trauma + self.deformation)
+        for operator in (
+            "daf.update_surface_gore_overlay",
+            "daf.preview_surface_gore_overlay",
+            "daf.clear_surface_gore_overlay_preview",
+            "daf.create_blunt_gore_head_deformations",
+        ):
+            self.assertIn(operator, self.deformation)
+        for key_name in (
+            "Head_Impact_Left_v001",
+            "Head_Impact_Right_v001",
+            "Head_Impact_Front_v001",
+            "Head_Impact_Back_v001",
+        ):
+            self.assertIn(key_name, self.deformation)
+        self.assertIn('entry["surfaceGoreOverlay"] = overlay', self.deformation)
+        self.assertIn('entry["goreOverlayDigest"]', self.deformation)
+        self.assertIn('GORE_PREVIEW_ATTRIBUTE = "DSB_Surface_Gore_Mask"', self.deformation)
+        self.assertIn('material = source.copy()', self.deformation)
+        self.assertIn('clear_surface_gore_preview(all_regions=True)', self.deformation)
+
     @classmethod
     def setUpClass(cls) -> None:
         cls.sources = contracts.read_sources()
@@ -56,7 +93,7 @@ class StaticContractTests(unittest.TestCase):
         manifest = contracts.MANIFEST_PATH.read_text(encoding="utf-8")
         self.assertIn('schema_version = "1.0.0"', manifest)
         self.assertIn('id = "dreadstone_animation_forge"', manifest)
-        self.assertIn('version = "3.11.0"', manifest)
+        self.assertIn('version = "3.12.0"', manifest)
         builder = (ROOT / "scripts" / "build_release.py").read_text(encoding="utf-8")
         self.assertIn('"blender_manifest.toml",\n    "__init__.py",', builder)
         self.assertNotIn('"dreadstone_animation_forge/__init__.py"', builder)
@@ -77,7 +114,7 @@ class StaticContractTests(unittest.TestCase):
         version = contracts.EXPECTED_VERSION
         self.assertEqual(
             f"Dreadstone_Animation_Forge_v{'_'.join(map(str, version))}.zip",
-            "Dreadstone_Animation_Forge_v3_11_0.zip",
+            "Dreadstone_Animation_Forge_v3_12_0.zip",
         )
 
     def test_authoritative_user_workflow_guide_contract(self) -> None:
@@ -95,8 +132,8 @@ class StaticContractTests(unittest.TestCase):
     def test_release_readme_contains_install_quick_start_and_guide_reference(self) -> None:
         readme = (ROOT / "README.md").read_text(encoding="utf-8")
         for marker in (
-            "3.11.0",
-            "Dreadstone_Animation_Forge_v3_11_0.zip",
+            "3.12.0",
+            "Dreadstone_Animation_Forge_v3_12_0.zip",
             "Install from Disk",
             "## Quick start",
             "docs/USER_WORKFLOW_GUIDE.md",

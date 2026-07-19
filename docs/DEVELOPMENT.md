@@ -22,13 +22,13 @@ python -m unittest discover -s tests -p "test_*.py"
 python scripts/build_release.py
 ```
 
-Static validation checks parseability, compilation, version/build/schema contracts, generated names, seams, public operators and labels, trauma-field contracts, exact-index synchronization, GLB hooks, repository hygiene, and the required inventory/version/artifact markers in `docs/USER_WORKFLOW_GUIDE.md`.
+Static validation checks parseability, compilation, version/build/schema contracts, generated names, seams, public operators and labels, trauma-field and surface-gore contracts, managed preview cleanup, exact-index synchronization, GLB hooks, repository hygiene, and the required inventory/version/artifact markers in `docs/USER_WORKFLOW_GUIDE.md`.
 
 Static success does not prove Blender registration, UI behavior, mesh operations, viewport presentation, sculpt transitions, GLB export, or reimport behavior.
 
 ## Build the installable ZIP
 
-Run `python scripts/build_release.py`. It validates first and writes `dist/Dreadstone_Animation_Forge_v3_11_0.zip` with deterministic timestamps and ordering. Its exact root layout is:
+Run `python scripts/build_release.py`. It validates first and writes `dist/Dreadstone_Animation_Forge_v3_12_0.zip` with deterministic timestamps and ordering. Its exact root layout is:
 
 ```text
 blender_manifest.toml
@@ -53,9 +53,11 @@ Use the current [user workflow guide](USER_WORKFLOW_GUIDE.md) as the acceptance 
 4. Require Source Readiness, **Validate Morph Targets**, **Validate Complete Damage Asset** (Authoring Validation), Export Validation, and exported validation JSON to pass.
 5. After building authoring assets, explicitly rerun Source Readiness and confirm its analyzed inventory is still the original source rather than `DSB_BODY_CORE` or `DSB_ATTACHED_*`.
 6. On a disposable affected 3.8 file, run **Repair Source Readiness Contract** and confirm generated topology, keys, and stamps are byte-for-byte/metadata unchanged.
-7. Save a multi-key **Stamp Library**, load it into a clean authoring rebuild from the same source, and confirm names, stable IDs, order, enabled state, captures, rebuilt geometry, exact-index pairing, and validation survive the round trip. Exercise both exact-topology loading and analytical positional-anchor rebinding across GLB split/index changes; confirm unmatched anchors and conflicting existing keys are rejected without mutation.
-8. Confirm virtual welding remains analytical only, missing legacy keys are not recreated, unrepairable attached keys are not overwritten, and Trauma Field views do not rewrite render/export visibility.
-9. Record Blender version, source commit, ZIP SHA-256, assets, validation outputs, and visual observations.
+7. Build `Head_Impact_Left_v001`, `Head_Impact_Right_v001`, `Head_Impact_Front_v001`, and `Head_Impact_Back_v001`; link one enabled surface-gore overlay to each key's stamp capture and verify localized patchy wet coverage on both attached and detached previews without holes, exposed tissue, or loss of recognizable skin/scalp/hair.
+8. Clear every gore preview and confirm original material slots return exactly. Rebuild previews, then export and confirm managed preview materials/attributes are removed while additive semantic overlay metadata remains in the manifest.
+9. Save a multi-key **Stamp Library**, load it into a clean authoring rebuild from the same source, and confirm names, stable IDs, order, enabled state, captures, gore settings/seeds/digests, rebuilt geometry, exact-index pairing, and validation survive the round trip. Exercise both exact-topology loading and analytical positional-anchor rebinding across GLB split/index changes; confirm unmatched anchors and conflicting existing keys are rejected without mutation.
+10. Confirm virtual welding remains analytical only, missing legacy keys are not recreated, unrepairable attached keys are not overwritten, and Trauma Field views do not rewrite render/export visibility.
+11. Record Blender version, source commit, ZIP SHA-256, assets, validation outputs, surface-gore/material observations, and reimported manifest observations.
 
 GitHub Actions runs static checks and packaging; it is not Blender runtime testing.
 

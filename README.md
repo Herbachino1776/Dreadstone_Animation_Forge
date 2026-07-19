@@ -1,10 +1,10 @@
 # Dreadstone Animation Forge
 
-Dreadstone Animation Forge `3.11.0` is a proprietary Blender add-on for animation drafting, protected damage-segment and stump authoring, portable trauma-stamp libraries, trauma-field morph authoring, and GLB/manifest export. The supported runtime is Blender `5.1.2`.
+Dreadstone Animation Forge `3.12.0` is a proprietary Blender add-on for animation drafting, protected damage-segment and stump authoring, portable trauma-stamp libraries, trauma-field morph authoring, procedural blunt-trauma surface gore overlays, and GLB/manifest export. The supported runtime is Blender `5.1.2`.
 
 ## Install and open
 
-1. Download `Dreadstone_Animation_Forge_v3_11_0.zip`.
+1. Download `Dreadstone_Animation_Forge_v3_12_0.zip`.
 2. In Blender 5.1.2 choose **Edit > Preferences > Add-ons > Install from Disk**.
 3. Select the ZIP without extracting it and enable **Dreadstone Animation Forge**.
 4. In the 3D Viewport press `N`, then open the **Dreadstone** tab.
@@ -15,7 +15,7 @@ Dreadstone Animation Forge `3.11.0` is a proprietary Blender add-on for animatio
 2. Select the imported character mesh or armature, run **Analyze Rig**, and prepare sizing/grounding only if needed.
 3. Choose an explicit **Report Output Folder** and run **Analyze Source Damage Readiness** on the original imported source.
 4. When all four seams are automatic and **Overall** is `SOURCE READY`, run **Load READY Handoff** and **Build Authoring Asset**.
-5. Register exact-topology attached/detached pairs, capture surfaces, add trauma stamps, then run **REBUILD ACTIVE DEFORMATION**. Use **Save Stamp Library...** to make a portable backup before rebuilding the project or upgrading Forge.
+5. Register exact-topology attached/detached pairs, capture surfaces, add trauma stamps, then run **REBUILD ACTIVE DEFORMATION**. For blunt damage, enable the optional **Surface Gore Overlay**, select a built-in preset, and preview the managed wet/patchy coating on both paired meshes. Use **Save Stamp Library...** to preserve both the stamps and optional overlay recipe before rebuilding the project or upgrading Forge.
 6. Require **Validate Morph Targets** and **Validate Complete Damage Asset** (Authoring Validation) to pass.
 7. Run **Export Damage GLB + Manifest** (Export Validation), import the GLB into a clean scene, and click **Restore Reimported GLB Intact Preview**.
 

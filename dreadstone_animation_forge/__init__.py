@@ -1,7 +1,7 @@
 bl_info = {
     "name": "Dreadstone Animation Forge",
     "author": "Dreadstone Black",
-    "version": (3, 11, 0),
+    "version": (3, 12, 0),
     "blender": (3, 6, 0),
     "location": "3D Viewport > Sidebar > Dreadstone",
     "description": "Animation authoring, protected damage assets, and registered-region trauma-field shape-key authoring.",
@@ -740,6 +740,7 @@ class DAFSettings(PropertyGroup):
     ui_pack_open: BoolProperty(default=False)
     ui_workflow_open: BoolProperty(default=False)
     ui_deformation_authoring_open: BoolProperty(default=True)
+    ui_surface_gore_open: BoolProperty(default=True)
 
     target_height: FloatProperty(
         name="Target Height",
@@ -1191,7 +1192,7 @@ class DAFSettings(PropertyGroup):
     last_damage_manifest_path: StringProperty(default="", options={'HIDDEN'})
     last_damage_validation_path: StringProperty(default="", options={'HIDDEN'})
 
-    # Trauma Field Authoring v3.11.0.
+    # Trauma Field Authoring v3.12.0.
     deformation_region: EnumProperty(
         name="Active Region",
         items=_deformation_region_items,
@@ -1307,6 +1308,43 @@ class DAFSettings(PropertyGroup):
     deformation_maximum_influence: FloatProperty(
         name="Maximum Runtime Weight", default=1.0, min=0.05, max=2.0, precision=2,
         update=_deformation_metadata_property_updated,
+    )
+    deformation_gore_enabled: BoolProperty(
+        name="Enable Surface Gore Overlay",
+        description="Author a procedural blunt-trauma coating on the linked captured outer surface",
+        default=False,
+    )
+    deformation_gore_preset: EnumProperty(
+        name="Gore Preset",
+        items=[
+            ('Gore_Ooze_Wet', "Ooze Wet", "Wet localized ooze with medium organic breakup"),
+            ('Gore_Clot_Dark', "Clot Dark", "Darker clotted patches with lower gloss"),
+            ('Gore_Smear_Heavy', "Smear Heavy", "Broad heavy smear with soft edges"),
+            ('Gore_Speckled_Impact', "Speckled Impact", "Sparse fine impact breakup"),
+            ('Gore_Crush_Bloodied', "Crush Bloodied", "Dense dark wet coverage for a crushed surface"),
+        ],
+        default='Gore_Ooze_Wet',
+    )
+    deformation_gore_coverage: FloatProperty(name="Coverage", default=0.72, min=0.0, max=1.0, precision=2)
+    deformation_gore_scatter: FloatProperty(name="Scatter / Breakup", default=0.48, min=0.0, max=1.0, precision=2)
+    deformation_gore_edge_feather: FloatProperty(name="Edge Feather", default=0.70, min=0.0, max=1.0, precision=2)
+    deformation_gore_wetness: FloatProperty(name="Wetness / Gloss", default=0.92, min=0.0, max=1.0, precision=2)
+    deformation_gore_darkness: FloatProperty(name="Darkness", default=0.38, min=0.0, max=1.0, precision=2)
+    deformation_gore_color_bias: FloatVectorProperty(
+        name="Color Bias",
+        description="Linear RGB bias for the procedural blood coating",
+        size=3,
+        default=(0.34, 0.012, 0.008),
+        min=0.0,
+        max=1.0,
+        subtype='COLOR',
+    )
+    deformation_gore_mask_seed: IntProperty(
+        name="Variation Seed",
+        description="Repeatable procedural breakup seed",
+        default=1776,
+        min=0,
+        max=2147483647,
     )
     deformation_status: StringProperty(default="NOT INITIALIZED", options={'HIDDEN'})
     last_deformation_validation: StringProperty(default="NOT VALIDATED", options={'HIDDEN'})
@@ -3318,7 +3356,7 @@ class DAF_PT_panel(Panel):
             layout,
             s,
             "ui_deformation_authoring_open",
-            "Trauma Field Authoring v3.11.0",
+            "Trauma Field Authoring v3.12.0",
         )
         if opened:
             configure_property_box(box)
@@ -3629,6 +3667,10 @@ def register():
     for c in CLASSES: bpy.utils.register_class(c)
     bpy.types.Scene.daf_settings=PointerProperty(type=DAFSettings)
 def unregister():
+    try:
+        deformation_authoring.clear_surface_gore_preview(all_regions=True)
+    except Exception:
+        pass
     if hasattr(bpy.types.Scene,"daf_settings"): del bpy.types.Scene.daf_settings
     for c in reversed(CLASSES): bpy.utils.unregister_class(c)
 if __name__=="__main__": register()

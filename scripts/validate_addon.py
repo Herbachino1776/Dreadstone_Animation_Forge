@@ -29,13 +29,13 @@ MODULE_NAMES = (
 )
 MODULE_PATHS = tuple(PACKAGE / name for name in MODULE_NAMES)
 
-EXPECTED_VERSION = (3, 11, 0)
+EXPECTED_VERSION = (3, 12, 0)
 EXPECTED_READINESS_BUILD = "2026-07-18.source-contract.1"
 EXPECTED_AUTHORING_BUILD = "2026-07-18.source-contract.1"
-EXPECTED_DEFORMATION_BUILD = "2026-07-18.stamp-library.1"
+EXPECTED_DEFORMATION_BUILD = "2026-07-19.surface-gore.1"
 
 REQUIRED_GUIDE_HEADINGS = (
-    "## 1. Install Dreadstone Animation Forge 3.11.0",
+    "## 1. Install Dreadstone Animation Forge 3.12.0",
     "## 2. Open the Dreadstone panel",
     "## 3. Import and prepare a source GLB",
     "## 5. Author and approve animation drafts",
@@ -48,6 +48,7 @@ REQUIRED_GUIDE_HEADINGS = (
     "## 13. Choose influence masks, distance modes, and damage axis",
     "## 14. Create and manage trauma stamps",
     "## 15. Preview, rebuild, compare, sculpt, and repair",
+    "## Surface Gore Overlay for blunt trauma",
     "## 16. Run every validation command",
     "## 17. Export the damage GLB and manifest",
     "## 18. Clean reimport and verification",
@@ -83,6 +84,12 @@ REQUIRED_GUIDE_UI_LABELS = {
     "**Enable / Disable**",
     "**Save Stamp Library...**",
     "**Load Stamp Library...**",
+    "**Create Blunt Gore Head Set**",
+    "**Enable Surface Gore Overlay**",
+    "**Use Preset Defaults**",
+    "**Apply Gore Overlay Settings**",
+    "**Preview / Refresh Overlay**",
+    "**Clear Overlay Preview**",
     "**Compact Dent**",
     "**Broad Cave**",
     "**Flat Compression**",
@@ -185,12 +192,18 @@ REQUIRED_OPERATORS = {
     "daf.repair_legacy_pair_sync": "Repair Legacy Pair Sync",
     "daf.save_trauma_stamp_library": "Save Trauma Stamp Library",
     "daf.load_trauma_stamp_library": "Load Trauma Stamp Library",
+    "daf.create_blunt_gore_head_deformations": "Create Blunt Gore Head Set",
+    "daf.apply_surface_gore_preset": "Use Gore Preset Defaults",
+    "daf.update_surface_gore_overlay": "Apply Gore Overlay Settings",
+    "daf.preview_surface_gore_overlay": "Preview / Refresh Overlay",
+    "daf.clear_surface_gore_overlay_preview": "Clear Overlay Preview",
 }
 
 REQUIRED_UI_TEXT = {
     "Source Damage Readiness",
     "Damage Segment & Stump Authoring v3.9",
-    "Trauma Field Authoring v3.11.0",
+    "Trauma Field Authoring v3.12.0",
+    "5. Surface Gore Overlay",
     "Restore Reimported GLB Intact Preview",
     "Validate Complete Damage Asset",
     "BUILD ACTIVE PRESET",
@@ -367,7 +380,7 @@ def check_extension_manifest() -> None:
         (
             'schema_version = "1.0.0"',
             'id = "dreadstone_animation_forge"',
-            'version = "3.11.0"',
+            'version = "3.12.0"',
             'name = "Dreadstone Animation Forge"',
             'type = "add-on"',
             'blender_version_min = "4.2.0"',
@@ -415,6 +428,43 @@ def check_package_imports(sources: dict[str, str]) -> None:
     )
     require("from . import damage_readiness" in sources["damage_authoring.py"], "damage_authoring relative import changed")
     require("from . import trauma_field" in sources["deformation_authoring.py"], "trauma_field relative import is missing")
+
+
+def check_surface_gore_contracts(sources: dict[str, str], trees: dict[str, ast.Module]) -> None:
+    trauma = sources["trauma_field.py"]
+    deformation = sources["deformation_authoring.py"]
+    presets = literal_assignment(trees["trauma_field.py"], "GORE_PRESETS")
+    require(
+        set(presets) == {
+            "Gore_Ooze_Wet", "Gore_Clot_Dark", "Gore_Smear_Heavy",
+            "Gore_Speckled_Impact", "Gore_Crush_Bloodied",
+        },
+        "surface gore built-in preset family changed",
+    )
+    require_markers(
+        trauma,
+        (
+            "def default_gore_overlay(", "def normalize_gore_overlay(",
+            "def validate_gore_overlay(", "def gore_overlay_digest(",
+            "def gore_overlay_export_metadata(", "def gore_mask_value(",
+            '"goreOverlayEnabled"', '"gorePresetId"', '"goreCoverage"', '"goreScatter"',
+            '"goreEdgeFeather"', '"goreWetness"', '"goreDarkness"', '"goreColorBias"',
+            '"goreMaskSeed"', '"linkedRegionId"', '"linkedStampId"',
+        ),
+        "surface gore logic",
+    )
+    require_markers(
+        deformation,
+        (
+            'GORE_PREVIEW_ATTRIBUTE = "DSB_Surface_Gore_Mask"',
+            "def preview_surface_gore(", "def clear_surface_gore_preview(",
+            "material = source.copy()", "clear_surface_gore_preview(all_regions=True)",
+            '"surfaceGoreOverlay"', '"goreOverlayDigest"',
+            '"goreOverlayValidationStatus"', '"exportValidationStatus"',
+            "daf.preview_surface_gore_overlay", "daf.clear_surface_gore_overlay_preview",
+        ),
+        "surface gore Blender authoring/export",
+    )
 
 
 def check_schemas_names_keys_seams(trees: dict[str, ast.Module]) -> None:
@@ -679,18 +729,19 @@ def check_repository_hygiene() -> None:
 
 
 def main() -> int:
-    print("DREADSTONE ANIMATION FORGE v3.11.0 STATIC VALIDATION")
+    print("DREADSTONE ANIMATION FORGE v3.12.0 STATIC VALIDATION")
     print("Blender is not imported; runtime acceptance remains separate.")
 
     sources: dict[str, str] = {}
     trees: dict[str, ast.Module] = {}
     checks: list[tuple[str, Callable[[], None]]] = [
         ("all five package modules exist", check_module_files),
-        ("Blender extension manifest exists and matches v3.11.0", check_extension_manifest),
+        ("Blender extension manifest exists and matches v3.12.0", check_extension_manifest),
         ("all Python modules parse with ast.parse", lambda: check_parse(sources)),
         ("all Python modules compile with py_compile", check_compile),
         ("add-on/deformation version and build contracts", lambda: check_versions(trees)),
         ("expected package-relative module imports", lambda: check_package_imports(sources)),
+        ("surface gore presets, preview management, persistence, validation, and export contracts", lambda: check_surface_gore_contracts(sources, trees)),
         ("manifest schemas, DSB names, seams, and standard keys", lambda: check_schemas_names_keys_seams(trees)),
         ("required operators and UI labels", lambda: check_operators_and_ui(trees)),
         ("world-space exact-index deformation synchronization", lambda: check_world_space_and_exact_index(sources["deformation_authoring.py"])),

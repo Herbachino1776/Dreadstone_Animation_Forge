@@ -88,12 +88,131 @@ def four_key_stamp_library() -> dict[str, object]:
             "relatedSeamId": "head_neck",
             "keys": keys,
         }],
-        "3.11.0",
+        "3.12.0",
         "test-build",
     )
 
 
+def valid_gore_overlay(seed: int = 1776) -> dict[str, object]:
+    return trauma_field.default_gore_overlay(
+        "Gore_Crush_Bloodied",
+        enabled=True,
+        region_id="head",
+        linked_stamp_id="head_0",
+        selection_hash="abc",
+        topology_fingerprint="a" * 64,
+        seed=seed,
+    )
+
+
 class TraumaFieldTests(unittest.TestCase):
+    def test_surface_gore_built_in_presets_and_default_handling(self) -> None:
+        self.assertEqual(
+            tuple(trauma_field.GORE_PRESETS),
+            (
+                "Gore_Ooze_Wet",
+                "Gore_Clot_Dark",
+                "Gore_Smear_Heavy",
+                "Gore_Speckled_Impact",
+                "Gore_Crush_Bloodied",
+            ),
+        )
+        overlay = trauma_field.default_gore_overlay()
+        self.assertFalse(overlay["goreOverlayEnabled"])
+        self.assertEqual(overlay["gorePresetId"], "Gore_Ooze_Wet")
+
+    def test_surface_gore_metadata_serializes_without_loss(self) -> None:
+        overlay = valid_gore_overlay()
+        restored = trauma_field.normalize_gore_overlay(json.loads(json.dumps(overlay)))
+        self.assertEqual(restored, overlay)
+        self.assertEqual(restored["goreColorBias"], [0.3, 0.01, 0.007])
+
+    def test_enabled_surface_gore_validation_accepts_valid_linkage(self) -> None:
+        errors = trauma_field.validate_gore_overlay(
+            valid_gore_overlay(),
+            expected_region_id="head",
+            available_stamp_ids=["head_0"],
+        )
+        self.assertEqual(errors, [])
+
+    def test_enabled_surface_gore_validation_rejects_invalid_recipe(self) -> None:
+        overlay = valid_gore_overlay()
+        overlay["gorePresetId"] = "Exposed_Cavity"
+        overlay["goreCoverage"] = 1.5
+        overlay["linkedStampId"] = "removed"
+        overlay["linkedSelectionHash"] = ""
+        errors = trauma_field.validate_gore_overlay(
+            overlay,
+            expected_region_id="head",
+            available_stamp_ids=["head_0"],
+        )
+        self.assertTrue(any("unsupported preset" in error for error in errors))
+        self.assertTrue(any("goreCoverage" in error for error in errors))
+        self.assertTrue(any("removed trauma stamp" in error for error in errors))
+        self.assertTrue(any("capture selection" in error for error in errors))
+
+    def test_surface_gore_seed_and_mask_are_deterministic(self) -> None:
+        overlay = valid_gore_overlay(seed=8675309)
+        restored = trauma_field.normalize_gore_overlay(json.loads(json.dumps(overlay)))
+        self.assertEqual(restored["goreMaskSeed"], 8675309)
+        first = trauma_field.gore_mask_value(0.84, (0.12, -0.03, 0.44), overlay)
+        second = trauma_field.gore_mask_value(0.84, (0.12, -0.03, 0.44), restored)
+        self.assertEqual(first, second)
+        self.assertEqual(trauma_field.gore_mask_value(0.0, (0.12, -0.03, 0.44), overlay), 0.0)
+
+    def test_surface_gore_export_metadata_includes_runtime_semantics(self) -> None:
+        exported = trauma_field.gore_overlay_export_metadata(valid_gore_overlay(seed=31415))
+        overlay = exported["surfaceGoreOverlay"]
+        for field in (
+            "goreOverlayEnabled", "gorePresetId", "goreCoverage", "goreScatter",
+            "goreEdgeFeather", "goreWetness", "goreDarkness", "goreColorBias",
+            "goreMaskSeed", "linkedRegionId", "linkedStampId", "linkedSelectionHash",
+        ):
+            self.assertIn(field, overlay)
+        self.assertEqual(overlay["goreMaskSeed"], 31415)
+        self.assertEqual(exported["goreOverlayDigest"], trauma_field.gore_overlay_digest(overlay))
+
+    def test_portable_stamp_library_preserves_surface_gore(self) -> None:
+        library = four_key_stamp_library()
+        key = library["regions"][0]["keys"][0]
+        key["surfaceGoreOverlay"] = valid_gore_overlay(seed=42)
+        key["goreOverlayDigest"] = trauma_field.gore_overlay_digest(key["surfaceGoreOverlay"])
+        library.pop("libraryDigest")
+        library = trauma_field.normalize_stamp_library(library)
+        restored = trauma_field.normalize_stamp_library(json.loads(json.dumps(library)))
+        restored_key = restored["regions"][0]["keys"][0]
+        self.assertEqual(restored_key["surfaceGoreOverlay"]["goreMaskSeed"], 42)
+        self.assertEqual(
+            restored_key["goreOverlayDigest"],
+            trauma_field.gore_overlay_digest(restored_key["surfaceGoreOverlay"]),
+        )
+
+    def test_portable_stamp_library_detects_surface_gore_tampering(self) -> None:
+        library = four_key_stamp_library()
+        key = library["regions"][0]["keys"][0]
+        key["surfaceGoreOverlay"] = valid_gore_overlay()
+        key["goreOverlayDigest"] = trauma_field.gore_overlay_digest(key["surfaceGoreOverlay"])
+        library.pop("libraryDigest")
+        library = trauma_field.normalize_stamp_library(library)
+        library["regions"][0]["keys"][0]["surfaceGoreOverlay"]["goreWetness"] = 0.1
+        with self.assertRaisesRegex(ValueError, "surface gore overlay digest"):
+            trauma_field.normalize_stamp_library(library)
+
+    def test_deformation_without_surface_gore_has_no_new_key_field(self) -> None:
+        library = four_key_stamp_library()
+        self.assertEqual(library["formatVersion"], 2)
+        for key in library["regions"][0]["keys"]:
+            self.assertNotIn("surfaceGoreOverlay", key)
+            self.assertNotIn("goreOverlayDigest", key)
+
+    def test_legacy_v1_stamp_library_remains_loadable(self) -> None:
+        library = four_key_stamp_library()
+        library["formatVersion"] = 1
+        library.pop("libraryDigest")
+        normalized = trauma_field.normalize_stamp_library(library)
+        self.assertEqual(normalized["formatVersion"], 1)
+        self.assertEqual(normalized["keyCount"], 4)
+
     def test_virtual_weld_mapping_collapses_only_split_seam_members(self) -> None:
         positions, _faces, _edges = split_seam_surface()
         weld = trauma_field.build_virtual_weld_map(positions)

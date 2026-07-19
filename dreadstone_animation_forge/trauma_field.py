@@ -58,7 +58,57 @@ DIRECTION_MODES = (
 )
 
 STAMP_LIBRARY_SCHEMA = "dreadstone.trauma_stamp_library.v1"
-STAMP_LIBRARY_FORMAT_VERSION = 1
+STAMP_LIBRARY_FORMAT_VERSION = 2
+SUPPORTED_STAMP_LIBRARY_FORMAT_VERSIONS = (1, 2)
+
+GORE_PRESETS = {
+    "Gore_Ooze_Wet": {
+        "goreCoverage": 0.72,
+        "goreScatter": 0.48,
+        "goreEdgeFeather": 0.70,
+        "goreWetness": 0.92,
+        "goreDarkness": 0.38,
+        "goreColorBias": (0.34, 0.012, 0.008),
+        "gorePatchScale": 0.018,
+    },
+    "Gore_Clot_Dark": {
+        "goreCoverage": 0.64,
+        "goreScatter": 0.62,
+        "goreEdgeFeather": 0.54,
+        "goreWetness": 0.58,
+        "goreDarkness": 0.72,
+        "goreColorBias": (0.24, 0.008, 0.006),
+        "gorePatchScale": 0.012,
+    },
+    "Gore_Smear_Heavy": {
+        "goreCoverage": 0.86,
+        "goreScatter": 0.30,
+        "goreEdgeFeather": 0.82,
+        "goreWetness": 0.80,
+        "goreDarkness": 0.48,
+        "goreColorBias": (0.38, 0.014, 0.009),
+        "gorePatchScale": 0.028,
+    },
+    "Gore_Speckled_Impact": {
+        "goreCoverage": 0.46,
+        "goreScatter": 0.90,
+        "goreEdgeFeather": 0.62,
+        "goreWetness": 0.74,
+        "goreDarkness": 0.42,
+        "goreColorBias": (0.42, 0.016, 0.010),
+        "gorePatchScale": 0.008,
+    },
+    "Gore_Crush_Bloodied": {
+        "goreCoverage": 0.78,
+        "goreScatter": 0.68,
+        "goreEdgeFeather": 0.66,
+        "goreWetness": 0.86,
+        "goreDarkness": 0.56,
+        "goreColorBias": (0.30, 0.010, 0.007),
+        "gorePatchScale": 0.015,
+    },
+}
+DEFAULT_GORE_PRESET_ID = "Gore_Ooze_Wet"
 
 GENERATED_AUTHORING_PREFIXES = (
     "DSB_BODY_CORE",
@@ -610,6 +660,195 @@ def new_stamp_id() -> str:
     return "stamp_" + uuid.uuid4().hex
 
 
+def default_gore_overlay(
+    preset_id: str = DEFAULT_GORE_PRESET_ID,
+    *,
+    enabled: bool = False,
+    region_id: str = "",
+    linked_stamp_id: str = "",
+    selection_hash: str = "",
+    topology_fingerprint: str = "",
+    seed: int = 1776,
+) -> dict[str, object]:
+    """Create a complete, serialization-safe blunt-trauma overlay recipe."""
+
+    if preset_id not in GORE_PRESETS:
+        raise ValueError(f"unsupported surface gore preset {preset_id!r}")
+    return normalize_gore_overlay({
+        "goreOverlayEnabled": bool(enabled),
+        "gorePresetId": preset_id,
+        **GORE_PRESETS[preset_id],
+        "goreMaskSeed": int(seed),
+        "linkedRegionId": str(region_id),
+        "linkedStampId": str(linked_stamp_id),
+        "linkedSelectionHash": str(selection_hash),
+        "linkedCaptureTopologyFingerprint": str(topology_fingerprint),
+        "validationStatus": "NOT_VALIDATED",
+    })
+
+
+def normalize_gore_overlay(overlay: Mapping[str, object]) -> dict[str, object]:
+    """Canonicalize the optional surface-gore recipe without preview-only state."""
+
+    if not isinstance(overlay, Mapping):
+        raise ValueError("Surface gore overlay recipe must be an object.")
+    preset_id = str(overlay.get("gorePresetId", ""))
+    if preset_id not in GORE_PRESETS:
+        raise ValueError(f"unsupported surface gore preset {preset_id!r}")
+    defaults = GORE_PRESETS[preset_id]
+    color = overlay.get("goreColorBias", defaults["goreColorBias"])
+    try:
+        normalized_color = [float(value) for value in color]  # type: ignore[union-attr]
+    except (TypeError, ValueError):
+        raise ValueError("surface gore color bias must contain three finite channels") from None
+    if len(normalized_color) != 3 or any(not math.isfinite(value) or not 0.0 <= value <= 1.0 for value in normalized_color):
+        raise ValueError("surface gore color bias channels must be finite values from zero to one")
+    try:
+        normalized = {
+            "goreOverlayEnabled": bool(overlay.get("goreOverlayEnabled", False)),
+            "gorePresetId": preset_id,
+            "goreCoverage": float(overlay.get("goreCoverage", defaults["goreCoverage"])),
+            "goreScatter": float(overlay.get("goreScatter", defaults["goreScatter"])),
+            "goreEdgeFeather": float(overlay.get("goreEdgeFeather", defaults["goreEdgeFeather"])),
+            "goreWetness": float(overlay.get("goreWetness", defaults["goreWetness"])),
+            "goreDarkness": float(overlay.get("goreDarkness", defaults["goreDarkness"])),
+            "goreColorBias": normalized_color,
+            "gorePatchScale": float(overlay.get("gorePatchScale", defaults["gorePatchScale"])),
+            "goreMaskSeed": int(overlay.get("goreMaskSeed", 1776)),
+            "linkedRegionId": str(overlay.get("linkedRegionId", "")),
+            "linkedStampId": str(overlay.get("linkedStampId", "")),
+            "linkedSelectionHash": str(overlay.get("linkedSelectionHash", "")),
+            "linkedCaptureTopologyFingerprint": str(overlay.get("linkedCaptureTopologyFingerprint", "")),
+            "validationStatus": str(overlay.get("validationStatus", "NOT_VALIDATED")),
+        }
+    except (TypeError, ValueError, OverflowError) as exc:
+        raise ValueError(f"surface gore overlay contains an invalid number: {exc}") from None
+    errors = validate_gore_overlay(normalized)
+    if errors:
+        raise ValueError("; ".join(errors))
+    return normalized
+
+
+def validate_gore_overlay(
+    overlay: Mapping[str, object],
+    *,
+    expected_region_id: str | None = None,
+    available_stamp_ids: Sequence[str] | None = None,
+) -> list[str]:
+    """Validate semantic gore data separately from Blender preview resources."""
+
+    errors: list[str] = []
+    preset_id = str(overlay.get("gorePresetId", ""))
+    if preset_id not in GORE_PRESETS:
+        errors.append(f"Surface gore overlay uses unsupported preset {preset_id!r}.")
+    for field in ("goreCoverage", "goreScatter", "goreEdgeFeather", "goreWetness", "goreDarkness"):
+        try:
+            value = float(overlay.get(field, math.nan))
+        except (TypeError, ValueError):
+            value = math.nan
+        if not math.isfinite(value) or not 0.0 <= value <= 1.0:
+            errors.append(f"Surface gore overlay {field} must be a finite value from zero to one.")
+    try:
+        patch_scale = float(overlay.get("gorePatchScale", math.nan))
+    except (TypeError, ValueError):
+        patch_scale = math.nan
+    if not math.isfinite(patch_scale) or patch_scale <= 0.0:
+        errors.append("Surface gore overlay gorePatchScale must be positive and finite.")
+    color = overlay.get("goreColorBias", ())
+    try:
+        channels = tuple(float(value) for value in color)  # type: ignore[union-attr]
+    except (TypeError, ValueError):
+        channels = ()
+    if len(channels) != 3 or any(not math.isfinite(value) or not 0.0 <= value <= 1.0 for value in channels):
+        errors.append("Surface gore overlay color bias must contain three finite channels from zero to one.")
+    try:
+        seed = int(overlay.get("goreMaskSeed", -1))
+    except (TypeError, ValueError, OverflowError):
+        seed = -1
+    if seed < 0 or seed > 2147483647:
+        errors.append("Surface gore overlay variation seed must be from 0 to 2147483647.")
+    if bool(overlay.get("goreOverlayEnabled", False)):
+        linked_region = str(overlay.get("linkedRegionId", ""))
+        linked_stamp = str(overlay.get("linkedStampId", ""))
+        if not linked_region:
+            errors.append("Enabled surface gore overlay has no linked deformation region.")
+        elif expected_region_id is not None and linked_region != expected_region_id:
+            errors.append("Enabled surface gore overlay links to a stale or incorrect deformation region.")
+        if not linked_stamp:
+            errors.append("Enabled surface gore overlay has no linked trauma stamp.")
+        elif available_stamp_ids is not None and linked_stamp not in set(available_stamp_ids):
+            errors.append("Enabled surface gore overlay links to a removed trauma stamp.")
+        if not str(overlay.get("linkedSelectionHash", "")):
+            errors.append("Enabled surface gore overlay has no usable linked capture selection.")
+        if not str(overlay.get("linkedCaptureTopologyFingerprint", "")):
+            errors.append("Enabled surface gore overlay has no linked capture topology fingerprint.")
+    return errors
+
+
+def gore_overlay_digest(overlay: Mapping[str, object]) -> str:
+    normalized = normalize_gore_overlay(overlay)
+    normalized.pop("validationStatus", None)
+    encoded = json.dumps(normalized, sort_keys=True, separators=(",", ":"), allow_nan=False).encode("utf-8")
+    return hashlib.sha256(encoded).hexdigest()
+
+
+def gore_overlay_export_metadata(overlay: Mapping[str, object]) -> dict[str, object]:
+    """Build the additive runtime-facing manifest fragment for one deformation."""
+
+    normalized = normalize_gore_overlay(overlay)
+    return {
+        "surfaceGoreOverlay": normalized,
+        "goreOverlayDigest": gore_overlay_digest(normalized),
+    }
+
+
+def _gore_hash(x: int, y: int, z: int, seed: int) -> float:
+    value = (x * 374761393 + y * 668265263 + z * 2147483647 + seed * 1274126177) & 0xFFFFFFFF
+    value = ((value ^ (value >> 13)) * 1274126177) & 0xFFFFFFFF
+    value ^= value >> 16
+    return value / 4294967295.0
+
+
+def _gore_noise(position: Sequence[float], scale: float, seed: int) -> float:
+    coordinates = [float(value) / scale for value in _vector3(position, "gore mask position")]
+    lower = [math.floor(value) for value in coordinates]
+    fractions = [value - floor for value, floor in zip(coordinates, lower)]
+    smooth = [value * value * (3.0 - 2.0 * value) for value in fractions]
+    total = 0.0
+    for dx in (0, 1):
+        for dy in (0, 1):
+            for dz in (0, 1):
+                wx = smooth[0] if dx else 1.0 - smooth[0]
+                wy = smooth[1] if dy else 1.0 - smooth[1]
+                wz = smooth[2] if dz else 1.0 - smooth[2]
+                total += _gore_hash(lower[0] + dx, lower[1] + dy, lower[2] + dz, seed) * wx * wy * wz
+    return total
+
+
+def gore_mask_value(base_weight: float, position: Sequence[float], overlay: Mapping[str, object]) -> float:
+    """Return a stable organic mask constrained by the captured stamp influence."""
+
+    recipe = normalize_gore_overlay(overlay)
+    weight = min(1.0, max(0.0, float(base_weight)))
+    if not recipe["goreOverlayEnabled"] or weight <= 0.0:
+        return 0.0
+    edge_exponent = 1.0 + 4.0 * (1.0 - float(recipe["goreEdgeFeather"]))
+    edge = weight ** edge_exponent
+    scale = float(recipe["gorePatchScale"])
+    seed = int(recipe["goreMaskSeed"])
+    coarse = _gore_noise(position, scale, seed)
+    fine = _gore_noise(position, scale * 0.43, seed + 7919)
+    noise = coarse * 0.72 + fine * 0.28
+    coverage = float(recipe["goreCoverage"])
+    softness = 0.12
+    threshold = 1.0 - coverage
+    patch = min(1.0, max(0.0, (noise - threshold + softness) / (2.0 * softness)))
+    patch = patch * patch * (3.0 - 2.0 * patch)
+    scatter = float(recipe["goreScatter"])
+    breakup = (1.0 - scatter) + scatter * patch
+    return min(1.0, max(0.0, edge * breakup))
+
+
 def normalize_stamp(stamp: Mapping[str, object]) -> dict[str, object]:
     """Return a validated, serialization-safe trauma stamp recipe."""
 
@@ -774,7 +1013,7 @@ def normalize_stamp_library(payload: Mapping[str, object]) -> dict[str, object]:
         format_version = int(payload.get("formatVersion", -1))
     except (TypeError, ValueError):
         format_version = -1
-    if format_version != STAMP_LIBRARY_FORMAT_VERSION:
+    if format_version not in SUPPORTED_STAMP_LIBRARY_FORMAT_VERSIONS:
         raise ValueError(f"Unsupported trauma stamp library format version {format_version}.")
     producer = payload.get("producer", {})
     if not isinstance(producer, Mapping):
@@ -842,7 +1081,7 @@ def normalize_stamp_library(payload: Mapping[str, object]) -> dict[str, object]:
                 raise ValueError(f"Deformation key {key_name!r} requires positive maximum influence.")
             if not math.isfinite(maximum_displacement) or maximum_displacement <= 0.0:
                 raise ValueError(f"Deformation key {key_name!r} requires positive maximum displacement.")
-            keys.append({
+            key_record = {
                 "name": key_name,
                 "family": str(raw_key.get("family", "manual")),
                 "side": str(raw_key.get("side", "configurable")),
@@ -854,7 +1093,19 @@ def normalize_stamp_library(payload: Mapping[str, object]) -> dict[str, object]:
                 "seedFalloff": float(raw_key.get("seedFalloff", 2.2)),
                 "recipeDigest": calculated_recipe_digest,
                 "stamps": stamps,
-            })
+            }
+            if "surfaceGoreOverlay" in raw_key:
+                try:
+                    gore_overlay = normalize_gore_overlay(raw_key["surfaceGoreOverlay"])  # type: ignore[arg-type]
+                except (TypeError, ValueError) as exc:
+                    raise ValueError(f"Deformation key {key_name!r} has a broken surface gore overlay recipe: {exc}") from None
+                calculated_gore_digest = gore_overlay_digest(gore_overlay)
+                stored_gore_digest = raw_key.get("goreOverlayDigest")
+                if stored_gore_digest and str(stored_gore_digest) != calculated_gore_digest:
+                    raise ValueError(f"Deformation key {key_name!r} has a mismatched surface gore overlay digest.")
+                key_record["surfaceGoreOverlay"] = gore_overlay
+                key_record["goreOverlayDigest"] = calculated_gore_digest
+            keys.append(key_record)
             total_stamps += len(stamps)
         keys.sort(key=lambda value: str(value["name"]))
         total_keys += len(keys)
@@ -871,7 +1122,7 @@ def normalize_stamp_library(payload: Mapping[str, object]) -> dict[str, object]:
     regions.sort(key=lambda value: str(value["regionId"]))
     normalized: dict[str, object] = {
         "schema": STAMP_LIBRARY_SCHEMA,
-        "formatVersion": STAMP_LIBRARY_FORMAT_VERSION,
+        "formatVersion": format_version,
         "producer": {
             "forgeVersion": str(producer.get("forgeVersion", "")),
             "deformationBuildId": str(producer.get("deformationBuildId", "")),
