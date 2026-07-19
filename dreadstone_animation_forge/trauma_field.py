@@ -45,6 +45,21 @@ DISTANCE_MODES = (
     "WORLD_DISTANCE",
 )
 
+DIRECTION_MODES = (
+    "INWARD_SURFACE_NORMAL",
+    "OUTWARD_SURFACE_NORMAL",
+    "LOCAL_X",
+    "LOCAL_NEG_X",
+    "LOCAL_Y",
+    "LOCAL_NEG_Y",
+    "LOCAL_Z",
+    "LOCAL_NEG_Z",
+    "CUSTOM_VECTOR",
+)
+
+STAMP_LIBRARY_SCHEMA = "dreadstone.trauma_stamp_library.v1"
+STAMP_LIBRARY_FORMAT_VERSION = 1
+
 GENERATED_AUTHORING_PREFIXES = (
     "DSB_BODY_CORE",
     "DSB_ATTACHED_",
@@ -193,6 +208,8 @@ def _normalized(value: Sequence[float], label: str = "direction") -> tuple[float
     length = _length(vector)
     if length <= 1e-12:
         raise ValueError(f"{label} has zero length")
+    if math.isclose(length, 1.0, rel_tol=1e-12, abs_tol=1e-15):
+        return vector
     return _scale(vector, 1.0 / length)
 
 
@@ -278,6 +295,53 @@ def build_virtual_weld_map(
         "tolerance": float(resolved_tolerance),
         "digest": digest.hexdigest(),
     }
+
+
+def match_positional_anchors(
+    target_positions: Sequence[Sequence[float]],
+    anchors: Sequence[Sequence[float]],
+    tolerance: float | None = None,
+) -> dict[str, object]:
+    """Match anchors only to analytically coincident target positions.
+
+    This deliberately has no closest-point fallback. It supports index/split
+    changes where the authored surface coordinates remain equal within the
+    conservative virtual-weld tolerance, and reports every unmatched anchor.
+    """
+
+    targets = tuple(_vector3(position, "target position") for position in target_positions)
+    normalized_anchors = tuple(_vector3(anchor, "positional anchor") for anchor in anchors)
+    combined = targets + normalized_anchors
+    weld = build_virtual_weld_map(combined, tolerance=tolerance)
+    raw_to_virtual = weld["raw_vertex_to_virtual"]
+    members = weld["virtual_members"]
+    target_count = len(targets)
+    matches = []
+    unmatched = []
+    for anchor_index in range(len(normalized_anchors)):
+        virtual_id = int(raw_to_virtual[target_count + anchor_index])
+        candidates = tuple(index for index in members[virtual_id] if index < target_count)
+        matches.append(candidates)
+        if not candidates:
+            unmatched.append(anchor_index)
+    return {
+        "matches": tuple(matches),
+        "unmatched_anchor_indices": tuple(unmatched),
+        "tolerance": weld["tolerance"],
+        "digest": weld["digest"],
+    }
+
+
+def portable_anchor_tolerance(positions: Sequence[Sequence[float]]) -> float:
+    """Allow only small coordinate quantization drift during stamp migration."""
+
+    normalized = tuple(_vector3(position, "target position") for position in positions)
+    if not normalized:
+        return 1e-6
+    minimum = tuple(min(point[axis] for point in normalized) for axis in range(3))
+    maximum = tuple(max(point[axis] for point in normalized) for axis in range(3))
+    bounds_diagonal = _length(_subtract(maximum, minimum))
+    return max(1e-6, bounds_diagonal * 2e-6)
 
 
 def virtualize_edges(
@@ -581,6 +645,15 @@ def normalize_stamp(stamp: Mapping[str, object]) -> dict[str, object]:
         "maximumDisplacement": float(stamp.get("maximumDisplacement", 0.065)),
         "orderIndex": int(stamp.get("orderIndex", 0)),
     }
+    direction_mode = stamp.get("directionMode")
+    if direction_mode is not None:
+        direction_mode = str(direction_mode)
+        if direction_mode not in DIRECTION_MODES:
+            raise ValueError(f"unsupported damage direction mode {direction_mode!r}")
+        normalized["directionMode"] = direction_mode
+    direction_local = stamp.get("directionLocal")
+    if direction_local is not None:
+        normalized["directionLocal"] = list(_normalized(direction_local, "local stamp direction"))  # type: ignore[arg-type]
     errors = validate_stamp_stack([normalized], require_contiguous_order=False)
     if errors:
         raise ValueError("; ".join(errors))
@@ -612,10 +685,17 @@ def validate_stamp_stack(
             errors.append(f"{prefix} has an invalid influence mode.")
         if str(stamp.get("distanceMode", "")) not in DISTANCE_MODES:
             errors.append(f"{prefix} has an invalid distance mode.")
+        if "directionMode" in stamp and str(stamp.get("directionMode", "")) not in DIRECTION_MODES:
+            errors.append(f"{prefix} has an invalid damage direction mode.")
         try:
             _normalized(stamp.get("direction", ()), "stamp direction")  # type: ignore[arg-type]
         except (TypeError, ValueError) as exc:
             errors.append(f"{prefix}: {exc}.")
+        if "directionLocal" in stamp:
+            try:
+                _normalized(stamp.get("directionLocal", ()), "local stamp direction")  # type: ignore[arg-type]
+            except (TypeError, ValueError) as exc:
+                errors.append(f"{prefix}: {exc}.")
         numeric_rules = (
             ("radius", True, False),
             ("depth", False, False),
@@ -669,6 +749,190 @@ def duplicate_stamp(stamp: Mapping[str, object], stamp_id: str | None = None) ->
     duplicate["stampId"] = stamp_id or new_stamp_id()
     duplicate["displayName"] = str(stamp.get("displayName") or "Trauma Stamp") + " Copy"
     return normalize_stamp(duplicate)
+
+
+def _stamp_library_digest(payload: Mapping[str, object]) -> str:
+    digest_payload = copy.deepcopy(dict(payload))
+    digest_payload.pop("libraryDigest", None)
+    encoded = json.dumps(
+        digest_payload,
+        sort_keys=True,
+        separators=(",", ":"),
+        allow_nan=False,
+    ).encode("utf-8")
+    return hashlib.sha256(encoded).hexdigest()
+
+
+def normalize_stamp_library(payload: Mapping[str, object]) -> dict[str, object]:
+    """Validate and canonicalize a portable, topology-bound stamp library."""
+
+    if not isinstance(payload, Mapping):
+        raise ValueError("Trauma stamp library root must be a JSON object.")
+    if payload.get("schema") != STAMP_LIBRARY_SCHEMA:
+        raise ValueError(f"Unsupported trauma stamp library schema {payload.get('schema')!r}.")
+    try:
+        format_version = int(payload.get("formatVersion", -1))
+    except (TypeError, ValueError):
+        format_version = -1
+    if format_version != STAMP_LIBRARY_FORMAT_VERSION:
+        raise ValueError(f"Unsupported trauma stamp library format version {format_version}.")
+    producer = payload.get("producer", {})
+    if not isinstance(producer, Mapping):
+        raise ValueError("Trauma stamp library producer metadata must be an object.")
+    raw_regions = payload.get("regions", [])
+    if not isinstance(raw_regions, Sequence) or isinstance(raw_regions, (str, bytes)) or not raw_regions:
+        raise ValueError("Trauma stamp library must contain at least one authored region.")
+
+    regions: list[dict[str, object]] = []
+    seen_regions: set[str] = set()
+    total_keys = 0
+    total_stamps = 0
+    for raw_region in raw_regions:
+        if not isinstance(raw_region, Mapping):
+            raise ValueError("Every trauma stamp library region must be an object.")
+        region_id = str(raw_region.get("regionId", "")).strip()
+        if not region_id:
+            raise ValueError("A trauma stamp library region has no region ID.")
+        if region_id in seen_regions:
+            raise ValueError(f"Duplicate trauma stamp library region {region_id!r}.")
+        seen_regions.add(region_id)
+        topology = str(raw_region.get("topologyFingerprint", ""))
+        if len(topology) != 64 or any(character not in "0123456789abcdef" for character in topology.lower()):
+            raise ValueError(f"Region {region_id!r} has an invalid topology fingerprint.")
+        try:
+            vertex_count = int(raw_region.get("vertexCount", -1))
+            polygon_count = int(raw_region.get("polygonCount", -1))
+        except (TypeError, ValueError):
+            vertex_count = polygon_count = -1
+        if vertex_count <= 0 or polygon_count <= 0:
+            raise ValueError(f"Region {region_id!r} requires positive vertex and polygon counts.")
+        raw_keys = raw_region.get("keys", [])
+        if not isinstance(raw_keys, Sequence) or isinstance(raw_keys, (str, bytes)) or not raw_keys:
+            raise ValueError(f"Region {region_id!r} contains no trauma-stamp keys.")
+        keys: list[dict[str, object]] = []
+        seen_keys: set[str] = set()
+        for raw_key in raw_keys:
+            if not isinstance(raw_key, Mapping):
+                raise ValueError(f"Region {region_id!r} contains a non-object key record.")
+            key_name = str(raw_key.get("name", "")).strip()
+            if not key_name or key_name == "Basis":
+                raise ValueError(f"Region {region_id!r} contains an invalid deformation key name.")
+            if key_name in seen_keys:
+                raise ValueError(f"Region {region_id!r} contains duplicate key {key_name!r}.")
+            seen_keys.add(key_name)
+            raw_stamps = raw_key.get("stamps", [])
+            if not isinstance(raw_stamps, Sequence) or isinstance(raw_stamps, (str, bytes)) or not raw_stamps:
+                raise ValueError(f"Deformation key {key_name!r} contains no trauma stamps.")
+            stamps = [normalize_stamp(stamp) for stamp in raw_stamps if isinstance(stamp, Mapping)]
+            if len(stamps) != len(raw_stamps):
+                raise ValueError(f"Deformation key {key_name!r} contains a non-object trauma stamp.")
+            stamp_errors = validate_stamp_stack(stamps)
+            if stamp_errors:
+                raise ValueError(f"Deformation key {key_name!r}: {' '.join(stamp_errors)}")
+            calculated_recipe_digest = recipe_digest(stamps)
+            stored_recipe_digest = raw_key.get("recipeDigest")
+            if stored_recipe_digest and str(stored_recipe_digest) != calculated_recipe_digest:
+                raise ValueError(f"Deformation key {key_name!r} has a mismatched recipe digest.")
+            try:
+                maximum_influence = float(raw_key.get("maximumInfluence", 1.0))
+                maximum_displacement = float(raw_key.get("maximumDisplacement", 0.045))
+            except (TypeError, ValueError):
+                maximum_influence = maximum_displacement = math.nan
+            if not math.isfinite(maximum_influence) or maximum_influence <= 0.0:
+                raise ValueError(f"Deformation key {key_name!r} requires positive maximum influence.")
+            if not math.isfinite(maximum_displacement) or maximum_displacement <= 0.0:
+                raise ValueError(f"Deformation key {key_name!r} requires positive maximum displacement.")
+            keys.append({
+                "name": key_name,
+                "family": str(raw_key.get("family", "manual")),
+                "side": str(raw_key.get("side", "configurable")),
+                "mirrorPartner": str(raw_key.get("mirrorPartner", "")),
+                "maximumInfluence": maximum_influence,
+                "maximumDisplacement": maximum_displacement,
+                "seedRadius": float(raw_key.get("seedRadius", 0.055)),
+                "seedDepth": float(raw_key.get("seedDepth", 0.016)),
+                "seedFalloff": float(raw_key.get("seedFalloff", 2.2)),
+                "recipeDigest": calculated_recipe_digest,
+                "stamps": stamps,
+            })
+            total_stamps += len(stamps)
+        keys.sort(key=lambda value: str(value["name"]))
+        total_keys += len(keys)
+        regions.append({
+            "regionId": region_id,
+            "sourceAttachedObject": str(raw_region.get("sourceAttachedObject", "")),
+            "sourceDetachedObject": str(raw_region.get("sourceDetachedObject", "")),
+            "topologyFingerprint": topology,
+            "vertexCount": vertex_count,
+            "polygonCount": polygon_count,
+            "relatedSeamId": str(raw_region.get("relatedSeamId", "")),
+            "keys": keys,
+        })
+    regions.sort(key=lambda value: str(value["regionId"]))
+    normalized: dict[str, object] = {
+        "schema": STAMP_LIBRARY_SCHEMA,
+        "formatVersion": STAMP_LIBRARY_FORMAT_VERSION,
+        "producer": {
+            "forgeVersion": str(producer.get("forgeVersion", "")),
+            "deformationBuildId": str(producer.get("deformationBuildId", "")),
+        },
+        "regionCount": len(regions),
+        "keyCount": total_keys,
+        "stampCount": total_stamps,
+        "regions": regions,
+    }
+    calculated_library_digest = _stamp_library_digest(normalized)
+    stored_library_digest = payload.get("libraryDigest")
+    if stored_library_digest and str(stored_library_digest) != calculated_library_digest:
+        raise ValueError("Trauma stamp library digest does not match its contents.")
+    normalized["libraryDigest"] = calculated_library_digest
+    return normalized
+
+
+def build_stamp_library(
+    regions: Sequence[Mapping[str, object]],
+    producer_version: str,
+    producer_build_id: str,
+) -> dict[str, object]:
+    """Build a deterministic, versioned library from authored region records."""
+
+    return normalize_stamp_library({
+        "schema": STAMP_LIBRARY_SCHEMA,
+        "formatVersion": STAMP_LIBRARY_FORMAT_VERSION,
+        "producer": {
+            "forgeVersion": str(producer_version),
+            "deformationBuildId": str(producer_build_id),
+        },
+        "regions": list(regions),
+    })
+
+
+def stamp_library_compatibility_errors(
+    library: Mapping[str, object],
+    target_regions: Mapping[str, Mapping[str, object]],
+) -> list[str]:
+    """Require exact topology/count compatibility before applying captures."""
+
+    normalized = normalize_stamp_library(library)
+    errors: list[str] = []
+    for region in normalized["regions"]:  # type: ignore[assignment]
+        region_id = str(region["regionId"])
+        target = target_regions.get(region_id)
+        if target is None:
+            errors.append(f"Stamp library region {region_id!r} is not registered in this scene.")
+            continue
+        if str(target.get("topologyFingerprint", "")) != region["topologyFingerprint"]:
+            errors.append(f"Stamp library region {region_id!r} topology does not match the current attached mesh.")
+        try:
+            vertex_matches = int(target.get("vertexCount", -1)) == int(region["vertexCount"])
+            polygon_matches = int(target.get("polygonCount", -1)) == int(region["polygonCount"])
+        except (TypeError, ValueError):
+            vertex_matches = polygon_matches = False
+        if not vertex_matches:
+            errors.append(f"Stamp library region {region_id!r} vertex count does not match.")
+        if not polygon_matches:
+            errors.append(f"Stamp library region {region_id!r} polygon count does not match.")
+    return errors
 
 
 def stamp_displacement(

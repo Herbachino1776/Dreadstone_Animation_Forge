@@ -29,13 +29,13 @@ MODULE_NAMES = (
 )
 MODULE_PATHS = tuple(PACKAGE / name for name in MODULE_NAMES)
 
-EXPECTED_VERSION = (3, 10, 2)
+EXPECTED_VERSION = (3, 11, 0)
 EXPECTED_READINESS_BUILD = "2026-07-18.source-contract.1"
 EXPECTED_AUTHORING_BUILD = "2026-07-18.source-contract.1"
-EXPECTED_DEFORMATION_BUILD = "2026-07-18.source-contract.1"
+EXPECTED_DEFORMATION_BUILD = "2026-07-18.stamp-library.1"
 
 REQUIRED_GUIDE_HEADINGS = (
-    "## 1. Install Dreadstone Animation Forge 3.10.2",
+    "## 1. Install Dreadstone Animation Forge 3.11.0",
     "## 2. Open the Dreadstone panel",
     "## 3. Import and prepare a source GLB",
     "## 5. Author and approve animation drafts",
@@ -81,6 +81,8 @@ REQUIRED_GUIDE_UI_LABELS = {
     "**Add Stamp**",
     "**Update Active Stamp**",
     "**Enable / Disable**",
+    "**Save Stamp Library...**",
+    "**Load Stamp Library...**",
     "**Compact Dent**",
     "**Broad Cave**",
     "**Flat Compression**",
@@ -106,6 +108,7 @@ REQUIRED_SCHEMAS = {
     "dreadstone.source_readiness.v1",
     "dreadstone.damage_authoring.v1",
     "dreadstone.damage_deformation.v1",
+    "dreadstone.trauma_stamp_library.v1",
 }
 
 REQUIRED_OBJECT_NAMES = {
@@ -180,12 +183,14 @@ REQUIRED_OPERATORS = {
     "daf.preview_active_trauma_stamp": "Preview Active Stamp",
     "daf.rebuild_active_deformation": "Rebuild Active Deformation",
     "daf.repair_legacy_pair_sync": "Repair Legacy Pair Sync",
+    "daf.save_trauma_stamp_library": "Save Trauma Stamp Library",
+    "daf.load_trauma_stamp_library": "Load Trauma Stamp Library",
 }
 
 REQUIRED_UI_TEXT = {
     "Source Damage Readiness",
     "Damage Segment & Stump Authoring v3.9",
-    "Trauma Field Authoring v3.10.2",
+    "Trauma Field Authoring v3.11.0",
     "Restore Reimported GLB Intact Preview",
     "Validate Complete Damage Asset",
     "BUILD ACTIVE PRESET",
@@ -362,7 +367,7 @@ def check_extension_manifest() -> None:
         (
             'schema_version = "1.0.0"',
             'id = "dreadstone_animation_forge"',
-            'version = "3.10.2"',
+            'version = "3.11.0"',
             'name = "Dreadstone Animation Forge"',
             'type = "add-on"',
             'blender_version_min = "4.2.0"',
@@ -512,6 +517,9 @@ def check_trauma_field_contracts(sources: dict[str, str], trees: dict[str, ast.M
             "def surface_mask_weights(",
             "def validate_stamp_stack(",
             "def evaluate_stamp_stack(",
+            "def normalize_stamp_library(",
+            "def match_positional_anchors(",
+            "def portable_anchor_tolerance(",
             "heapq.heappop",
             '"virtualWeldDigest"',
             '"virtualWeldTolerance"',
@@ -529,6 +537,8 @@ def check_trauma_field_contracts(sources: dict[str, str], trees: dict[str, ast.M
             'bl_idname = "daf.preview_active_trauma_stamp"',
             'bl_idname = "daf.rebuild_active_deformation"',
             'bl_idname = "daf.repair_legacy_pair_sync"',
+            'bl_idname = "daf.save_trauma_stamp_library"',
+            'bl_idname = "daf.load_trauma_stamp_library"',
             "trauma_field.evaluate_stamp_stack",
             "trauma_field.build_virtual_weld_map",
             "trauma_field.virtual_face_components",
@@ -539,6 +549,11 @@ def check_trauma_field_contracts(sources: dict[str, str], trees: dict[str, ast.M
             '"legacySyncErrorAfter"',
             '"legacySyncRepairApplied"',
             'text="REPAIR LEGACY PAIR SYNC"',
+            'text="Save Stamp Library..."',
+            'text="Load Stamp Library..."',
+            '"ANALYTICAL_POSITIONAL_ANCHORS"',
+            '"portableVertexAnchorsLocal"',
+            '"portableFaceAnchorsLocal"',
             '"registeredRegions"',
             '"orderedStamps"',
             '"activeRegionId"',
@@ -664,14 +679,14 @@ def check_repository_hygiene() -> None:
 
 
 def main() -> int:
-    print("DREADSTONE ANIMATION FORGE v3.10.2 STATIC VALIDATION")
+    print("DREADSTONE ANIMATION FORGE v3.11.0 STATIC VALIDATION")
     print("Blender is not imported; runtime acceptance remains separate.")
 
     sources: dict[str, str] = {}
     trees: dict[str, ast.Module] = {}
     checks: list[tuple[str, Callable[[], None]]] = [
         ("all five package modules exist", check_module_files),
-        ("Blender extension manifest exists and matches v3.10.2", check_extension_manifest),
+        ("Blender extension manifest exists and matches v3.11.0", check_extension_manifest),
         ("all Python modules parse with ast.parse", lambda: check_parse(sources)),
         ("all Python modules compile with py_compile", check_compile),
         ("add-on/deformation version and build contracts", lambda: check_versions(trees)),

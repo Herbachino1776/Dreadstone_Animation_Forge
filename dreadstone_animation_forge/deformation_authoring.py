@@ -1,4 +1,4 @@
-"""Dreadstone Animation Forge v3.10.2 trauma-field authoring.
+"""Dreadstone Animation Forge v3.11.0 trauma-field authoring.
 
 The workbench edits only registered attached/detached regions on the generated
 protected Damage Asset. Paired morph targets remain exact-index synchronized in
@@ -7,19 +7,22 @@ world space even when object scales differ. Imported source data is never edited
 
 import bmesh
 import bpy
+import copy
 import hashlib
 import json
 import math
 import re
+from pathlib import Path
 from mathutils import Vector
 from bpy.props import BoolProperty, EnumProperty, IntProperty, StringProperty
 from bpy.types import Operator
+from bpy_extras.io_utils import ExportHelper, ImportHelper
 
 from . import trauma_field
 
 DEFORMATION_SCHEMA = "dreadstone.damage_deformation.v1"
-DEFORMATION_VERSION = (3, 10, 2)
-DEFORMATION_BUILD_ID = "2026-07-18.source-contract.1"
+DEFORMATION_VERSION = (3, 11, 0)
+DEFORMATION_BUILD_ID = "2026-07-18.stamp-library.1"
 ATTACHED_HEAD_NAME = "DSB_ATTACHED_HEAD"
 DETACHED_HEAD_NAME = "DSB_SEGMENT_HEAD"
 PREVIEW_KEY_NAME = "__DSB_DEFORMATION_SEED_PREVIEW"
@@ -1222,6 +1225,7 @@ def _stamp_from_settings(context, stamp_id=None, order_index=0):
     errors = _capture_errors(capture, region, attached)
     if errors:
         raise RuntimeError(" ".join(errors))
+    direction_local = _direction(settings)
     return trauma_field.normalize_stamp({
         "stampId": stamp_id or trauma_field.new_stamp_id(),
         "displayName": settings.deformation_stamp_name.strip() or settings.deformation_stamp_family.replace("_", " ").title(),
@@ -1231,6 +1235,8 @@ def _stamp_from_settings(context, stamp_id=None, order_index=0):
         "capture": capture,
         "center": capture.get("centerWorld", (0.0, 0.0, 0.0)),
         "direction": list(_seed_direction_world(settings, attached)),
+        "directionMode": settings.deformation_seed_direction_mode,
+        "directionLocal": list(direction_local),
         "radius": float(settings.deformation_seed_radius),
         "depth": float(settings.deformation_seed_depth),
         "falloff": float(settings.deformation_seed_falloff),
@@ -1260,6 +1266,11 @@ def _load_stamp_into_settings(settings, stamp):
         settings.deformation_seed_falloff = float(stamp.get("falloff", 2.0))
         settings.deformation_seed_seam_protection = float(stamp.get("seamProtection", 0.025))
         settings.deformation_stamp_strength = float(stamp.get("strength", 1.0))
+        direction_mode = str(stamp.get("directionMode", ""))
+        if direction_mode in trauma_field.DIRECTION_MODES:
+            settings.deformation_seed_direction_mode = direction_mode
+            if direction_mode == 'CUSTOM_VECTOR' and stamp.get("directionLocal"):
+                settings.deformation_seed_custom_direction = tuple(stamp["directionLocal"])
         capture = stamp.get("capture", {})
         if capture:
             settings.deformation_capture_json = json.dumps(capture, sort_keys=True, separators=(",", ":"))
@@ -1358,9 +1369,10 @@ def _stamp_weights(attached, region, stamp):
     return tuple(weights), dict(distances)
 
 
-def _stamp_local_coordinates(attached, stamps):
+def _stamp_local_coordinates(attached, stamps, region=None):
     basis_world = _basis_world_positions(attached)
-    _registry, region, _active, _detached = _resolve_active_region()
+    if region is None:
+        _registry, region, _active, _detached = _resolve_active_region()
     weights_by_stamp = {}
     distances_by_stamp = {}
     for stamp in stamps:
@@ -1370,6 +1382,476 @@ def _stamp_local_coordinates(attached, stamps):
     final_world = trauma_field.evaluate_stamp_stack(basis_world, stamps, weights_by_stamp, distances_by_stamp)
     inverse_world = attached.matrix_world.inverted()
     return [inverse_world @ Vector(position) for position in final_world]
+
+
+def _portable_direction_fields(attached, stamp):
+    capture = stamp.get("capture", {})
+    mode = str(stamp.get("directionMode", ""))
+    local = stamp.get("directionLocal")
+    if mode in trauma_field.DIRECTION_MODES and local:
+        direction_local = Vector(local)
+        if direction_local.length_squared > 1e-12:
+            return mode, direction_local.normalized()
+
+    direction_world = Vector(stamp.get("direction", (0.0, 0.0, -1.0)))
+    if direction_world.length_squared <= 1e-12:
+        raise RuntimeError(f"Stamp {stamp.get('displayName', stamp.get('stampId'))} has no usable direction.")
+    direction_world.normalize()
+    normal_world = Vector(capture.get("normalWorld", (0.0, 0.0, 0.0)))
+    normal_local = Vector(capture.get("normalLocal", (0.0, 0.0, 0.0)))
+    if normal_world.length_squared > 1e-12 and normal_local.length_squared > 1e-12:
+        normal_world.normalize()
+        normal_local.normalize()
+        alignment = direction_world.dot(normal_world)
+        if alignment >= 1.0 - 1e-5:
+            return 'OUTWARD_SURFACE_NORMAL', normal_local
+        if alignment <= -1.0 + 1e-5:
+            return 'INWARD_SURFACE_NORMAL', -normal_local
+    direction_local = _world_delta_to_local(attached, direction_world)
+    if direction_local.length_squared <= 1e-12:
+        raise RuntimeError(f"Stamp {stamp.get('displayName', stamp.get('stampId'))} has no usable local direction.")
+    return 'CUSTOM_VECTOR', direction_local.normalized()
+
+
+def _portable_stamp(attached, stamp):
+    portable = copy.deepcopy(dict(stamp))
+    capture = copy.deepcopy(dict(portable.get("capture", {})))
+    vertex_indices = sorted({int(index) for index in capture.get("vertexIndices", [])})
+    face_indices = sorted({int(index) for index in capture.get("faceIndices", [])})
+    if any(index < 0 or index >= len(attached.data.vertices) for index in vertex_indices):
+        raise RuntimeError("A trauma stamp contains a vertex outside the current attached mesh.")
+    if any(index < 0 or index >= len(attached.data.polygons) for index in face_indices):
+        raise RuntimeError("A trauma stamp contains a face outside the current attached mesh.")
+    capture["portableVertexAnchorsLocal"] = [
+        list(attached.data.vertices[index].co) for index in vertex_indices
+    ]
+    capture["portableVertexAnchorsWorld"] = [
+        list(attached.matrix_world @ attached.data.vertices[index].co) for index in vertex_indices
+    ]
+    capture["portableFaceAnchorsLocal"] = [
+        [list(attached.data.vertices[index].co) for index in attached.data.polygons[face_index].vertices]
+        for face_index in face_indices
+    ]
+    capture["portableFaceAnchorsWorld"] = [
+        [list(attached.matrix_world @ attached.data.vertices[index].co) for index in attached.data.polygons[face_index].vertices]
+        for face_index in face_indices
+    ]
+    capture["portableSourceTopologyFingerprint"] = _topology_fingerprint(attached)
+    capture["portableSourceVertexCount"] = len(attached.data.vertices)
+    capture["portableSourcePolygonCount"] = len(attached.data.polygons)
+    portable["capture"] = capture
+    mode, direction_local = _portable_direction_fields(attached, portable)
+    portable["directionMode"] = mode
+    portable["directionLocal"] = list(direction_local)
+    return trauma_field.normalize_stamp(portable)
+
+
+def _map_capture_indices_from_anchors(attached, capture):
+    placement = str(capture.get("placementMode", ""))
+    anchor_spaces = (
+        (
+            "LOCAL",
+            [tuple(vertex.co) for vertex in attached.data.vertices],
+            capture.get("portableVertexAnchorsLocal", []),
+            capture.get("portableFaceAnchorsLocal", []),
+        ),
+        (
+            "WORLD",
+            [tuple(attached.matrix_world @ vertex.co) for vertex in attached.data.vertices],
+            capture.get("portableVertexAnchorsWorld", []),
+            capture.get("portableFaceAnchorsWorld", []),
+        ),
+    )
+    attempts = []
+    selected_space = None
+    target_positions = []
+    vertex_anchors = []
+    face_anchors = []
+    vertex_match = None
+    for space, positions, saved_vertices, saved_faces in anchor_spaces:
+        if not saved_vertices:
+            continue
+        tolerance = trauma_field.portable_anchor_tolerance(positions)
+        candidate = trauma_field.match_positional_anchors(positions, saved_vertices, tolerance=tolerance)
+        attempts.append((space, candidate))
+        if not candidate["unmatched_anchor_indices"]:
+            selected_space = space
+            target_positions = positions
+            vertex_anchors = saved_vertices
+            face_anchors = saved_faces
+            vertex_match = candidate
+            break
+    if not attempts:
+        raise RuntimeError(
+            "The saved capture uses different topology and has no analytical positional anchors. "
+            "Recapture it on the current attached mesh."
+        )
+    if vertex_match is None:
+        _space, best_match = min(attempts, key=lambda item: len(item[1]["unmatched_anchor_indices"]))
+        raise RuntimeError(
+            "The saved capture does not analytically match this mesh: "
+            f"{len(best_match['unmatched_anchor_indices'])} vertex anchors are outside the conservative "
+            f"{float(best_match['tolerance']):.9g} quantization tolerance."
+        )
+
+    if placement not in {'SINGLE_FACE', 'SELECTED_FACE_PATCH'}:
+        mapped_vertices = sorted({
+            int(index)
+            for candidates in vertex_match["matches"]
+            for index in candidates
+        })
+        if not mapped_vertices:
+            raise RuntimeError("The saved capture has no analytically matching vertices on the current mesh.")
+        return [], mapped_vertices, float(vertex_match["tolerance"]), selected_space
+
+    if not face_anchors:
+        raise RuntimeError("The saved face capture has no analytical face anchors.")
+    mapped_faces = set()
+    for saved_face_index, saved_face in enumerate(face_anchors):
+        face_match = trauma_field.match_positional_anchors(
+            target_positions,
+            saved_face,
+            tolerance=float(vertex_match["tolerance"]),
+        )
+        if face_match["unmatched_anchor_indices"]:
+            raise RuntimeError(
+                f"Saved face anchor {saved_face_index} does not analytically match the current mesh."
+            )
+        anchor_groups = [set(int(index) for index in candidates) for candidates in face_match["matches"]]
+        candidates = []
+        for polygon in attached.data.polygons:
+            polygon_vertices = set(int(index) for index in polygon.vertices)
+            if len(polygon.vertices) != len(anchor_groups):
+                continue
+            if all(polygon_vertices & group for group in anchor_groups) and all(
+                any(vertex_index in group for group in anchor_groups)
+                for vertex_index in polygon_vertices
+            ):
+                candidates.append(int(polygon.index))
+        if not candidates:
+            raise RuntimeError(
+                f"Saved face anchor {saved_face_index} has no exact positional face on the current mesh."
+            )
+        mapped_faces.update(candidates)
+    mapped_vertices = sorted({
+        int(index)
+        for face_index in mapped_faces
+        for index in attached.data.polygons[face_index].vertices
+    })
+    return sorted(mapped_faces), mapped_vertices, float(vertex_match["tolerance"]), selected_space
+
+
+def _rebind_library_capture(attached, region, capture):
+    rebound = copy.deepcopy(dict(capture))
+    placement = str(rebound.get("placementMode", ""))
+    selection_kind = "FACE" if placement in {'SINGLE_FACE', 'SELECTED_FACE_PATCH'} else "VERTEX"
+    face_indices = sorted({int(index) for index in rebound.get("faceIndices", [])})
+    vertex_indices = sorted({int(index) for index in rebound.get("vertexIndices", [])})
+    topology = _topology_fingerprint(attached)
+    source_topology = str(rebound.get("topologyFingerprint", ""))
+    indices_valid = (
+        all(0 <= index < len(attached.data.vertices) for index in vertex_indices)
+        and all(0 <= index < len(attached.data.polygons) for index in face_indices)
+    )
+    if source_topology != topology or not indices_valid:
+        face_indices, vertex_indices, anchor_tolerance, anchor_space = _map_capture_indices_from_anchors(attached, rebound)
+        rebound["portableBindingMode"] = "ANALYTICAL_POSITIONAL_ANCHORS"
+        rebound["portableAnchorTolerance"] = anchor_tolerance
+        rebound["portableAnchorSpace"] = anchor_space
+        rebound["portableSourceTopologyFingerprint"] = source_topology
+    else:
+        rebound["portableBindingMode"] = "EXACT_TOPOLOGY"
+    rebound["regionId"] = region.get("regionId", "")
+    rebound["attachedObject"] = attached.name
+    rebound["topologyFingerprint"] = topology
+    rebound["selectionKind"] = selection_kind
+    rebound["faceIndices"] = face_indices
+    rebound["vertexIndices"] = vertex_indices
+    selected_indices = face_indices if selection_kind == "FACE" else vertex_indices
+    rebound["selectionHash"] = trauma_field.selection_hash(selected_indices, topology, selection_kind)
+
+    center_local = Vector(rebound.get("centerLocal", (0.0, 0.0, 0.0)))
+    normal_local = Vector(rebound.get("normalLocal", (0.0, 0.0, 1.0)))
+    if normal_local.length_squared <= 1e-12:
+        raise RuntimeError("A saved stamp capture has no usable local surface normal.")
+    normal_local.normalize()
+    center_world, bounds_world, estimated_radius = _capture_bounds_and_radius(attached, vertex_indices, center_local)
+    rebound["centerLocal"] = list(center_local)
+    rebound["centerWorld"] = list(center_world)
+    rebound["normalLocal"] = list(normal_local)
+    rebound["normalWorld"] = list(_normal_local_to_world(attached, normal_local))
+    rebound["boundsWorld"] = bounds_world
+    rebound["estimatedRadius"] = estimated_radius
+
+    if placement in {'SINGLE_FACE', 'SELECTED_FACE_PATCH'}:
+        _positions, virtual_weld = _virtual_weld_context(attached)
+        component_count = _captured_face_component_count(attached, face_indices, virtual_weld)
+        rebound["connectedComponentCount"] = component_count
+        rebound["virtualWeldTolerance"] = virtual_weld["tolerance"]
+        rebound["virtualWeldDigest"] = virtual_weld["digest"]
+        rebound["virtualWeldMemberCount"] = sum(
+            len(group) for group in virtual_weld["virtual_members"] if len(group) > 1
+        )
+        rebound["virtualConnectedComponentCount"] = component_count
+    else:
+        for field in (
+            "virtualWeldTolerance", "virtualWeldDigest", "virtualWeldMemberCount",
+            "virtualConnectedComponentCount",
+        ):
+            rebound.pop(field, None)
+    return rebound
+
+
+def _rebind_library_stamp(attached, region, stamp):
+    rebound = copy.deepcopy(dict(stamp))
+    capture = _rebind_library_capture(attached, region, rebound.get("capture", {}))
+    rebound["capture"] = capture
+    rebound["placementMode"] = capture.get("placementMode")
+    rebound["center"] = list(capture.get("centerWorld", (0.0, 0.0, 0.0)))
+    mode, direction_local = _portable_direction_fields(attached, rebound)
+    rebound["directionMode"] = mode
+    rebound["directionLocal"] = list(direction_local)
+    if mode == 'INWARD_SURFACE_NORMAL':
+        rebound["direction"] = list(-Vector(capture["normalWorld"]))
+        rebound["directionLocal"] = list(-Vector(capture["normalLocal"]))
+    elif mode == 'OUTWARD_SURFACE_NORMAL':
+        rebound["direction"] = list(Vector(capture["normalWorld"]))
+        rebound["directionLocal"] = list(Vector(capture["normalLocal"]))
+    else:
+        direction_world = _linear_world_matrix(attached) @ direction_local
+        if direction_world.length_squared <= 1e-12:
+            raise RuntimeError("A saved stamp direction cannot be transformed onto the current attached mesh.")
+        rebound["direction"] = list(direction_world.normalized())
+    normalized = trauma_field.normalize_stamp(rebound)
+    errors = _capture_errors(normalized.get("capture", {}), region, attached)
+    if errors:
+        raise RuntimeError(" ".join(errors))
+    return normalized
+
+
+def build_current_stamp_library():
+    """Collect every procedural stamp stack without requiring the source mesh."""
+
+    registry = _load_registry()
+    region_records = []
+    for region in registry.get("regions", []):
+        attached, detached = _resolve_region_pair(region)
+        pair = validate_topology_pair(attached, detached)
+        if pair["status"] != "PASS":
+            raise RuntimeError(f"Region {region.get('regionId')}: {' '.join(pair['errors'])}")
+        payload = _metadata(attached)
+        key_records = []
+        for name, entry in sorted(payload.get("keys", {}).items()):
+            raw_stamps = entry.get("stamps", [])
+            if not raw_stamps:
+                continue
+            portable_stamps = [
+                _rebind_library_stamp(attached, region, _portable_stamp(attached, stamp))
+                for stamp in trauma_field.ordered_stamps(raw_stamps)
+            ]
+            key_records.append({
+                "name": name,
+                "family": entry.get("family", "manual"),
+                "side": entry.get("side", "configurable"),
+                "mirrorPartner": entry.get("mirrorPartner", ""),
+                "maximumInfluence": entry.get("maximumInfluence", 1.0),
+                "maximumDisplacement": entry.get("maximumDisplacement", 0.045),
+                "seedRadius": entry.get("seedRadius", 0.055),
+                "seedDepth": entry.get("seedDepth", 0.016),
+                "seedFalloff": entry.get("seedFalloff", 2.2),
+                "recipeDigest": trauma_field.recipe_digest(portable_stamps),
+                "stamps": portable_stamps,
+            })
+        if key_records:
+            region_records.append({
+                "regionId": region.get("regionId", ""),
+                "sourceAttachedObject": attached.name,
+                "sourceDetachedObject": detached.name,
+                "topologyFingerprint": pair["topologyFingerprint"],
+                "vertexCount": pair["attachedVertexCount"],
+                "polygonCount": pair["attachedPolygonCount"],
+                "relatedSeamId": region.get("relatedSeamId", ""),
+                "keys": key_records,
+            })
+    if not region_records:
+        raise RuntimeError("No authored trauma stamps were found. Add at least one stamp before saving a library.")
+    return trauma_field.build_stamp_library(region_records, _version_string(), DEFORMATION_BUILD_ID)
+
+
+def save_stamp_library(filepath):
+    path = Path(filepath)
+    if not str(path).lower().endswith(".dsbstamps.json"):
+        path = Path(str(path) + ".dsbstamps.json")
+    library = build_current_stamp_library()
+    path.parent.mkdir(parents=True, exist_ok=True)
+    temporary = path.with_name(path.name + ".tmp")
+    try:
+        temporary.write_text(
+            json.dumps(library, indent=2, sort_keys=True, ensure_ascii=False) + "\n",
+            encoding="utf-8",
+        )
+        temporary.replace(path)
+    finally:
+        if temporary.exists():
+            temporary.unlink()
+    return path, library
+
+
+def load_stamp_library(filepath, context):
+    """Load by exact topology or conservative positional anchors; never overwrite work."""
+
+    path = Path(filepath)
+    try:
+        raw_library = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, UnicodeError, json.JSONDecodeError) as exc:
+        raise RuntimeError(f"Could not read trauma stamp library: {exc}")
+    try:
+        library = trauma_field.normalize_stamp_library(raw_library)
+    except (TypeError, ValueError) as exc:
+        raise RuntimeError(str(exc))
+
+    registry = _load_registry()
+    region_by_id = {str(region.get("regionId", "")): region for region in registry.get("regions", [])}
+    target_contracts = {}
+    for region_id, region in region_by_id.items():
+        attached, detached = _resolve_region_pair(region)
+        pair = validate_topology_pair(attached, detached)
+        if pair["status"] == "PASS":
+            target_contracts[region_id] = {
+                "topologyFingerprint": pair["topologyFingerprint"],
+                "vertexCount": pair["attachedVertexCount"],
+                "polygonCount": pair["attachedPolygonCount"],
+            }
+    missing_regions = [
+        str(region["regionId"])
+        for region in library["regions"]
+        if str(region["regionId"]) not in target_contracts
+    ]
+    if missing_regions:
+        raise RuntimeError(
+            "These saved deformation regions are not registered as valid exact-index pairs: "
+            + ", ".join(missing_regions)
+        )
+
+    plans = []
+    skipped = []
+    conflicts = []
+    remapped_capture_count = 0
+    for library_region in library["regions"]:
+        region_id = str(library_region["regionId"])
+        region = region_by_id[region_id]
+        attached, detached = _resolve_region_pair(region)
+        payload = _metadata(attached)
+        for key_record in library_region["keys"]:
+            name = str(key_record["name"])
+            stamps = [
+                _rebind_library_stamp(attached, region, stamp)
+                for stamp in key_record["stamps"]
+            ]
+            existing_entry = payload.get("keys", {}).get(name)
+            attached_key = _key(attached, name)
+            detached_key = _key(detached, name)
+            imported_digest = trauma_field.recipe_digest(stamps)
+            existing_digest = ""
+            if existing_entry and existing_entry.get("stamps"):
+                try:
+                    existing_digest = trauma_field.recipe_digest(existing_entry["stamps"])
+                except (TypeError, ValueError):
+                    existing_digest = "INVALID"
+            if existing_entry is not None or attached_key is not None or detached_key is not None:
+                if existing_digest == imported_digest and attached_key is not None and detached_key is not None:
+                    skipped.append(f"{region_id}/{name}")
+                    continue
+                conflicts.append(f"{region_id}/{name}")
+                continue
+            remapped_capture_count += sum(
+                stamp.get("capture", {}).get("portableBindingMode") == "ANALYTICAL_POSITIONAL_ANCHORS"
+                for stamp in stamps
+            )
+            coordinates = _stamp_local_coordinates(attached, stamps, region)
+            plans.append({
+                "regionId": region_id,
+                "region": region,
+                "attached": attached,
+                "detached": detached,
+                "key": copy.deepcopy(dict(key_record)),
+                "stamps": stamps,
+                "coordinates": coordinates,
+            })
+    if conflicts:
+        raise RuntimeError(
+            "Stamp library was not loaded because these deformation keys already contain different work: "
+            + ", ".join(conflicts)
+            + ". Delete or rename those keys first; Forge never overwrites authored stamp stacks."
+        )
+
+    previous_region_id = registry.get("activeRegionId", "")
+    metadata_backups = {
+        plan["regionId"]: copy.deepcopy(_metadata(plan["attached"]))
+        for plan in plans
+    }
+    created = []
+    try:
+        clear_seed_preview(all_regions=True)
+        for plan in plans:
+            _set_active_region(plan["regionId"], context)
+            key_record = plan["key"]
+            metadata_entry = {
+                **key_record,
+                "stamps": plan["stamps"],
+                "status": "TRAUMA_REBUILT",
+                "recipeStatus": "PROCEDURAL_STACK",
+                "legacy": False,
+            }
+            attached, detached, attached_key, detached_key = _ensure_key_pair(
+                str(key_record["name"]),
+                metadata_entry=metadata_entry,
+            )
+            created.append((attached, detached, str(key_record["name"]), plan["regionId"]))
+            _set_key_coordinates(attached_key, plan["coordinates"])
+            sync_key_to_detached(str(key_record["name"]), plan["regionId"])
+            _link_detached_value(attached, detached, str(key_record["name"]))
+            attached_key.value = 0.0
+            detached_key.value = 0.0
+            payload = _metadata(attached)
+            entry = payload["keys"][str(key_record["name"])]
+            entry.update(metadata_entry)
+            entry["region"] = plan["regionId"]
+            entry["regionId"] = plan["regionId"]
+            entry["recipeDigest"] = trauma_field.recipe_digest(plan["stamps"])
+            _store_metadata(attached, detached, payload)
+    except Exception:
+        for attached, detached, name, _region_id in reversed(created):
+            _remove_key(attached, name)
+            _remove_key(detached, name)
+        for plan in plans:
+            backup = metadata_backups.get(plan["regionId"])
+            if backup is not None:
+                _store_metadata(plan["attached"], plan["detached"], backup)
+        if previous_region_id and _region_record(_load_registry(), previous_region_id) is not None:
+            _set_active_region(previous_region_id, context)
+        raise
+
+    _invalidate_geodesic_cache()
+    if plans:
+        first = plans[0]
+        _set_active_region(first["regionId"], context)
+        _select_key(context.scene.daf_settings, str(first["key"]["name"]))
+    elif previous_region_id and _region_record(_load_registry(), previous_region_id) is not None:
+        _set_active_region(previous_region_id, context)
+    validation = validate_deformations(require_keys=True)
+    context.scene.daf_settings.last_deformation_validation = validation["status"]
+    context.scene.daf_settings.deformation_status = (
+        f"STAMP LIBRARY LOADED — {len(plans)} keys / {int(library['stampCount'])} stamps"
+    )
+    return {
+        "path": str(path),
+        "importedKeyCount": len(plans),
+        "skippedKeyCount": len(skipped),
+        "stampCount": int(library["stampCount"]),
+        "remappedCaptureCount": remapped_capture_count,
+        "validation": validation,
+    }
 
 
 def preview_active_stamp(context, quiet=False):
@@ -1985,6 +2467,60 @@ class DAF_OT_capture_deformation_selected_vertices(Operator):
             capture = _capture_vertex_selection(context)
             context.scene.daf_settings.deformation_status = f"VERTICES CAPTURED — {len(capture['vertexIndices'])} vertices"
             refresh_live_seed_preview(context)
+            return {'FINISHED'}
+        except Exception as exc:
+            self.report({'ERROR'}, str(exc))
+            return {'CANCELLED'}
+
+
+class DAF_OT_save_trauma_stamp_library(Operator, ExportHelper):
+    bl_idname = "daf.save_trauma_stamp_library"
+    bl_label = "Save Trauma Stamp Library"
+    bl_description = "Save every procedural trauma stamp stack to a portable, topology-bound JSON library"
+    filename_ext = ".dsbstamps.json"
+    filter_glob: StringProperty(default="*.dsbstamps.json", options={'HIDDEN'})
+
+    def execute(self, context):
+        try:
+            path, library = save_stamp_library(self.filepath)
+            context.scene.daf_settings.deformation_status = (
+                f"STAMP LIBRARY SAVED — {int(library['keyCount'])} keys / {int(library['stampCount'])} stamps"
+            )
+            self.report(
+                {'INFO'},
+                f"Saved {int(library['stampCount'])} trauma stamps to {path.name}.",
+            )
+            return {'FINISHED'}
+        except Exception as exc:
+            self.report({'ERROR'}, str(exc))
+            return {'CANCELLED'}
+
+
+class DAF_OT_load_trauma_stamp_library(Operator, ImportHelper):
+    bl_idname = "daf.load_trauma_stamp_library"
+    bl_label = "Load Trauma Stamp Library"
+    bl_description = "Create and rebuild saved trauma-stamp keys on matching registered regions without overwriting existing work"
+    filename_ext = ".dsbstamps.json"
+    filter_glob: StringProperty(default="*.dsbstamps.json;*.json", options={'HIDDEN'})
+
+    def execute(self, context):
+        try:
+            result = load_stamp_library(self.filepath, context)
+            validation = result["validation"]
+            message = (
+                f"Loaded {result['importedKeyCount']} deformation keys and {result['stampCount']} trauma stamps"
+            )
+            if result["skippedKeyCount"]:
+                message += f"; {result['skippedKeyCount']} identical keys skipped"
+            if result["remappedCaptureCount"]:
+                message += f"; {result['remappedCaptureCount']} captures rebound by exact positional anchors"
+            if validation["status"] == "PASS":
+                self.report({'INFO'}, message + ". Validation passed.")
+            else:
+                self.report(
+                    {'WARNING'},
+                    message + ". Validation needs review: " + "; ".join(validation.get("errors", [])[:2]),
+                )
             return {'FINISHED'}
         except Exception as exc:
             self.report({'ERROR'}, str(exc))
@@ -2810,6 +3346,10 @@ def draw_panel(box, context, settings):
     row.operator("daf.move_trauma_stamp_up", text="Move Up", icon='TRIA_UP')
     row.operator("daf.move_trauma_stamp_down", text="Move Down", icon='TRIA_DOWN')
     row.operator("daf.toggle_trauma_stamp", text="Enable / Disable")
+    row = stamps_box.row(align=True)
+    row.operator("daf.save_trauma_stamp_library", text="Save Stamp Library...", icon='EXPORT')
+    row.operator("daf.load_trauma_stamp_library", text="Load Stamp Library...", icon='IMPORT')
+    stamps_box.label(text="Libraries save every procedural stack across registered regions", icon='INFO')
     stamps_box.prop(settings, "deformation_stamp_name")
     stamps_box.prop(settings, "deformation_stamp_family")
     stamps_box.prop(settings, "deformation_seed_radius")
@@ -2876,6 +3416,8 @@ CLASSES = (
     DAF_OT_capture_deformation_selected_patch,
     DAF_OT_capture_deformation_selected_vertices,
     DAF_OT_capture_deformation_cursor,
+    DAF_OT_save_trauma_stamp_library,
+    DAF_OT_load_trauma_stamp_library,
     DAF_OT_add_trauma_stamp,
     DAF_OT_select_trauma_stamp,
     DAF_OT_update_trauma_stamp,

@@ -1,8 +1,8 @@
 # Dreadstone Animation Forge user workflow guide
 
-- **Current Forge version:** `3.10.2`
+- **Current Forge version:** `3.11.0`
 - **Supported Blender version:** Blender `5.1.2`
-- **Current release ZIP:** `Dreadstone_Animation_Forge_v3_10_2.zip`
+- **Current release ZIP:** `Dreadstone_Animation_Forge_v3_11_0.zip`
 - **Last updated:** 2026-07-18
 
 This is the authoritative user how-to for the current Forge release. It follows the labels and behavior implemented in the add-on. If an older note, video, or README disagrees with this guide, use this guide.
@@ -20,9 +20,9 @@ Save a working copy of the `.blend` before authoring. Forge protects the importe
 > **WARNING**
 > Never apply the scale of a Forge safe wrapper such as `DSB_SIZE_ROOT_ADOPTED`. Never animate bone scale. Those operations can invalidate sizing, animation, and exact-index deformation contracts.
 
-## 1. Install Dreadstone Animation Forge 3.10.2
+## 1. Install Dreadstone Animation Forge 3.11.0
 
-1. Obtain `Dreadstone_Animation_Forge_v3_10_2.zip`.
+1. Obtain `Dreadstone_Animation_Forge_v3_11_0.zip`.
 2. Do not extract the ZIP. It is a Blender extension package whose `blender_manifest.toml` and `__init__.py` are at the ZIP root.
 3. Open Blender 5.1.2.
 4. Choose **Edit > Preferences > Add-ons**.
@@ -31,7 +31,7 @@ Save a working copy of the `.blend` before authoring. Forge protects the importe
 7. Close Preferences. Restart Blender if an older Forge version was loaded in this session.
 
 > **EXPECTED RESULT**
-> Blender lists Dreadstone Animation Forge version 3.10.2 and the add-on enables without a registration error.
+> Blender lists Dreadstone Animation Forge version 3.11.0 and the add-on enables without a registration error.
 
 > **TROUBLESHOOTING**
 > If Blender says the package is invalid, confirm that you selected the original ZIP without extracting or rezipping it. If old labels remain after upgrading, restart Blender so no stale add-on module remains loaded.
@@ -43,7 +43,7 @@ Save a working copy of the `.blend` before authoring. Forge protects the importe
 3. Click the **Dreadstone** tab.
 4. Expand the sections you need by clicking their headings.
 
-The one panel is titled **Dreadstone Animation Forge**. Its major sections are **Character Setup**, **Ground Preview**, **Rig Mapping & Direction**, **Source Damage Readiness**, **Damage Segment & Stump Authoring v3.9**, **Trauma Field Authoring v3.10.2**, **Arm & Hand Pose Polish**, **Walk Draft**, **Death / Collapse Draft**, **Flank Hurt Drafts**, **Approved Animation Pack**, and **Action Cleanup & Safety**.
+The one panel is titled **Dreadstone Animation Forge**. Its major sections are **Character Setup**, **Ground Preview**, **Rig Mapping & Direction**, **Source Damage Readiness**, **Damage Segment & Stump Authoring v3.9**, **Trauma Field Authoring v3.11.0**, **Arm & Hand Pose Polish**, **Walk Draft**, **Death / Collapse Draft**, **Flank Hurt Drafts**, **Approved Animation Pack**, and **Action Cleanup & Safety**.
 
 ## 3. Import and prepare a source GLB
 
@@ -292,7 +292,7 @@ Trauma Field authoring always works through an explicit pair: an attached mesh u
 1. In Object Mode, select exactly two mesh objects.
 2. Select the detached object first.
 3. Shift-select the attached object last so the attached object is active (brighter outline).
-4. Expand **Trauma Field Authoring v3.10.2**.
+4. Expand **Trauma Field Authoring v3.11.0**.
 5. In **New Region ID**, enter a unique semantic name such as `head`, `forearm_left`, or `forearm_right`.
 6. In **Related Seam ID**, enter the matching seam ID: `head_neck`, `left_elbow`, `right_elbow`, or `lower_spine`.
 7. Click **Register Selected Pair**.
@@ -409,6 +409,36 @@ Choose these before **Add Stamp** or **Update Active Stamp**; they become part o
 6. Use **Duplicate** to copy it with a new stable ID, **Move Up** or **Move Down** to change evaluation order, **Enable / Disable** to keep it in the recipe without applying it, and **Remove** to delete it from the stack.
 
 Order can matter because each enabled stamp is applied to the result of the previous stamp. IDs survive reordering; duplication intentionally creates a new ID.
+
+### Save stamps for a rebuild or Forge upgrade
+
+**Save Stamp Library...** writes every procedural stamp stack in every registered deformation region to one portable `.dsbstamps.json` file. It preserves deformation-key names, stamp names and stable IDs, order, enabled state, trauma family, surface capture, influence and distance modes, radius, depth, falloff, strength, seam protection, displacement limit, and damage direction. It saves recipes rather than source geometry, generated meshes, or Source Readiness reports.
+
+1. Save the current `.blend` as a backup.
+2. In **Trauma Field Authoring v3.11.0**, click **Save Stamp Library...**.
+3. Choose a project folder and filename. Forge adds `.dsbstamps.json` when needed.
+4. Keep this small JSON file beside the source GLB or in source control.
+
+This save operation works from a generated or cleanly reimported Forge Damage GLB as long as its procedural stamp metadata and exact attached/detached pair remain present. The original imported source objects and Source Readiness contract are not required merely to save the stamp library.
+
+> **EXPECTED RESULT**
+> Forge reports the number of saved deformation keys and stamps. For four one-stamp head impacts, it reports four keys and four stamps.
+
+### Load stamps into a fresh authoring rebuild
+
+First import the same source GLB, run Source Damage Readiness, build the Damage Authoring asset, and register the same deformation regions. Do not manually recreate the saved deformation keys.
+
+1. Confirm each destination pair passes **Validate Pair**.
+2. Click **Load Stamp Library...** and select the saved `.dsbstamps.json` file.
+3. Forge first looks for the same region ID and exact topology. If GLB export/import or a compatible Forge rebuild changed only split vertices or indices, it can rebind the saved capture through analytical local-space or world-space positional anchors. Every anchor must match within `max(0.000001, local_bounds_diagonal × 0.000002)`; saved faces must still resolve as exact positional faces.
+4. Forge creates the missing deformation keys, rebinds captures to the current attached object, rebuilds every enabled stack from `Basis`, synchronizes its detached partner by exact vertex index in world space, and runs **Validate Morph Targets**.
+5. Select each restored key, click **Solo**, and compare **Attached**, **Detached**, and **Both**.
+
+> **WARNING**
+> A stamp capture remains surface-bound. Forge accepts exact topology or conservatively coincident positional anchors; it deliberately refuses closest-point, nearest-neighbor, or guessed remapping when the actual surface changed. It also never overwrites a different existing key or stamp stack. Delete or rename a conflicting destination key only after confirming it is disposable.
+
+> **TROUBLESHOOTING**
+> “Does not analytically match” means at least one saved vertex/face anchor moved beyond the conservative tolerance. Rebuild from the same source and compatible Damage Authoring settings/version, or recapture the stamp manually. “Keys already contain different work” means the destination is not clean; save that work separately before deleting or renaming it.
 
 ### The six trauma families
 
@@ -534,6 +564,17 @@ The restore button enables Mesh visibility in open 3D Views, unhides the importe
 5. Optionally layer a small **Compact Dent**.
 6. Click **REBUILD ACTIVE DEFORMATION**, compare **Attached**, **Detached**, and **Both**, then run **Validate Morph Targets**.
 
+### Recipe: carry four head stamps into a clean source rebuild
+
+1. Open the old generated/reimported Damage `.blend` that still contains the four head-impact keys and stamps.
+2. Expand **Trauma Field Authoring v3.11.0** and click **Save Stamp Library...**. Confirm the message says four keys and four stamps.
+3. Start a new `.blend`, import the same original source GLB, and run **Analyze Source Damage Readiness**.
+4. Run **Load READY Handoff** and **Build Authoring Asset**.
+5. Register `DSB_ATTACHED_HEAD` with `DSB_SEGMENT_HEAD` as region `head`, then require **Validate Pair** to pass.
+6. Do not create the old impact keys manually. Click **Load Stamp Library...** and choose the saved file.
+7. Require the load report and **Validate Morph Targets** to pass.
+8. Inspect all four restored keys with **Solo**, **Attached**, **Detached**, and **Both** before continuing authoring or export.
+
 ### Recipe: repair a stale legacy deformation pair
 
 1. Open the accepted legacy authoring `.blend` as a disposable copy.
@@ -582,6 +623,9 @@ The restore button enables Mesh visibility in open 3D Views, unhides the importe
 | Capture is stale | Region, object, topology, selection hash, or virtual-weld state changed | Activate the intended region and recapture on the current attached mesh. |
 | Patch reports disconnected islands | Selection includes a real separate component or corner-only contact | Deselect the island. Select one component connected by full edges. |
 | Stamp edits appear ignored after rebuild | Stored stamp was not updated | Select the stamp and click **Update Active Stamp**, then rebuild. |
+| Stamp library says the capture does not analytically match | Destination surface positions changed beyond the conservative anchor tolerance | Rebuild from the same original source and compatible authoring settings. Forge handles split/index changes but will not guess a changed surface mapping. |
+| Stamp library says existing keys contain different work | A destination key or stack would be overwritten | Save the destination work, then explicitly delete or rename only the disposable conflicting key and load again. |
+| Old generated `.blend` cannot run Source Readiness | It contains exported `DSB_*` pieces but no original protected source | You can still use **Save Stamp Library...** to preserve procedural stamps. Start over from the original source GLB, build/register the matching pair, then use **Load Stamp Library...**. |
 | Export says a deformation key has no enabled trauma stamp | A procedural stack exists but every stamp is disabled | Enable at least one intended stamp, rebuild the key, run **Validate Morph Targets**, and export again. |
 | Preview crosses through a head/limb | **World Distance** uses straight 3D proximity | Switch to **Surface Distance** and recapture/rebuild. |
 | Rebuild says no trauma stamps | Key is legacy/manual or stamp was not added | Add a captured stamp, or use the displayed legacy preset/sculpt workflow without overwriting it. |
@@ -600,7 +644,7 @@ Use this inventory during release acceptance to make sure no public operation ha
 - **Source Damage Readiness:** **Analyze Source Damage Readiness**, **Repair Source Readiness Contract**, **Preview Candidate Seam**, **Clear Preview**, **Open Report Folder**, **Open Markdown**.
 - **Damage Segment & Stump Authoring v3.9:** **Load READY Handoff**, **Build Authoring Asset**, **Clear Generated Asset / Restore Source**, **Preview Intact**, **Preview Detached**, **Restore Reimported GLB Intact Preview**, **Validate Complete Damage Asset**, **Export Damage GLB + Manifest**, **Open Damage Export Folder**.
 - **Trauma Field — regions and keys:** **Use Selected Region**, **Validate Pair**, **Register Selected Pair**, **Remove Registration**, **Create Damage Shape Key**, **Create Standard Head Set**, each managed key button, **Solo**, **Zero All**, **Delete Active**, **Mirror Active**.
-- **Trauma Field — capture and stamps:** **Capture Single Face**, **Capture Connected Face Patch**, **Capture Selected Vertices**, **Capture 3D Cursor**, each numbered stamp button, **Add Stamp**, **Duplicate**, **Remove**, **Move Up**, **Move Down**, **Enable / Disable**, **Update Active Stamp**.
+- **Trauma Field — capture and stamps:** **Capture Single Face**, **Capture Connected Face Patch**, **Capture Selected Vertices**, **Capture 3D Cursor**, each numbered stamp button, **Add Stamp**, **Duplicate**, **Remove**, **Move Up**, **Move Down**, **Enable / Disable**, **Save Stamp Library...**, **Load Stamp Library...**, **Update Active Stamp**.
 - **Trauma Field — preview, sculpt, and validation:** **Attached**, **Detached**, **Both**, **Preview Active Stamp**, **Clear Temporary Preview**, **REBUILD ACTIVE DEFORMATION**, conditional **BUILD ACTIVE PRESET**, **Preview Legacy Seed**, **Commit Legacy Seed**, **Begin Sculpt**, **Finish Sculpt & Sync**, **Validate Morph Targets**, **REPAIR LEGACY PAIR SYNC**.
 - **Arm & Hand Pose Polish:** **Zero Arm & Hand Polish**.
 - **Walk Draft:** **Generate / Refresh Walk Draft**, **Version / Approve Walk Draft**.

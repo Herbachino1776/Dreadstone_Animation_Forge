@@ -56,7 +56,7 @@ class StaticContractTests(unittest.TestCase):
         manifest = contracts.MANIFEST_PATH.read_text(encoding="utf-8")
         self.assertIn('schema_version = "1.0.0"', manifest)
         self.assertIn('id = "dreadstone_animation_forge"', manifest)
-        self.assertIn('version = "3.10.2"', manifest)
+        self.assertIn('version = "3.11.0"', manifest)
         builder = (ROOT / "scripts" / "build_release.py").read_text(encoding="utf-8")
         self.assertIn('"blender_manifest.toml",\n    "__init__.py",', builder)
         self.assertNotIn('"dreadstone_animation_forge/__init__.py"', builder)
@@ -77,7 +77,7 @@ class StaticContractTests(unittest.TestCase):
         version = contracts.EXPECTED_VERSION
         self.assertEqual(
             f"Dreadstone_Animation_Forge_v{'_'.join(map(str, version))}.zip",
-            "Dreadstone_Animation_Forge_v3_10_2.zip",
+            "Dreadstone_Animation_Forge_v3_11_0.zip",
         )
 
     def test_authoritative_user_workflow_guide_contract(self) -> None:
@@ -95,8 +95,8 @@ class StaticContractTests(unittest.TestCase):
     def test_release_readme_contains_install_quick_start_and_guide_reference(self) -> None:
         readme = (ROOT / "README.md").read_text(encoding="utf-8")
         for marker in (
-            "3.10.2",
-            "Dreadstone_Animation_Forge_v3_10_2.zip",
+            "3.11.0",
+            "Dreadstone_Animation_Forge_v3_11_0.zip",
             "Install from Disk",
             "## Quick start",
             "docs/USER_WORKFLOW_GUIDE.md",
@@ -253,8 +253,27 @@ class StaticContractTests(unittest.TestCase):
             "daf.select_trauma_stamp",
             "daf.preview_active_trauma_stamp",
             "daf.rebuild_active_deformation",
+            "daf.save_trauma_stamp_library",
+            "daf.load_trauma_stamp_library",
         }
         self.assertTrue(required <= set(operators))
+
+    def test_portable_stamp_library_is_analytically_rebound_and_non_destructive(self) -> None:
+        self.assertIn('STAMP_LIBRARY_SCHEMA = "dreadstone.trauma_stamp_library.v1"', self.trauma)
+        self.assertIn("def normalize_stamp_library(", self.trauma)
+        self.assertIn("def stamp_library_compatibility_errors(", self.trauma)
+        self.assertIn("def match_positional_anchors(", self.trauma)
+        self.assertIn("def portable_anchor_tolerance(", self.trauma)
+        self.assertIn("def build_current_stamp_library():", self.deformation)
+        self.assertIn("def save_stamp_library(filepath):", self.deformation)
+        self.assertIn("def load_stamp_library(filepath, context):", self.deformation)
+        self.assertIn("topology does not match the current attached mesh", self.trauma)
+        self.assertIn('"ANALYTICAL_POSITIONAL_ANCHORS"', self.deformation)
+        self.assertIn('"portableVertexAnchorsLocal"', self.deformation)
+        self.assertIn('"portableFaceAnchorsLocal"', self.deformation)
+        self.assertIn("Forge never overwrites authored stamp stacks", self.deformation)
+        self.assertIn('text="Save Stamp Library..."', self.deformation)
+        self.assertIn('text="Load Stamp Library..."', self.deformation)
 
     def test_preview_and_rebuild_are_separate_operations(self) -> None:
         self.assertIn("def preview_active_stamp(context, quiet=False):", self.deformation)

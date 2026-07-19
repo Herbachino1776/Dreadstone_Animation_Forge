@@ -1,5 +1,14 @@
 # Changelog
 
+## 3.11.0
+
+- Add **Save Stamp Library...** to preserve every procedural stamp stack across all registered deformation regions in a portable `.dsbstamps.json` file.
+- Add **Load Stamp Library...** to recreate missing deformation keys, rebind captures to current registered objects, rebuild paired morph geometry from `Basis`, and validate the result.
+- Prefer exact region topology and add deterministic positional anchors that survive GLB split-vertex/index changes when the same surface coordinates match within a conservative quantization tolerance; incompatible targets are rejected without nearest-neighbor or guessed remapping.
+- Preserve stamp IDs, names, order, enabled state, family, captures, masks, distance modes, parameters, and portable local damage direction metadata.
+- Never overwrite a different existing deformation key or stamp stack; identical already-loaded recipes are skipped safely.
+- Support saving stamps from a generated/reimported Damage GLB without requiring the missing original source-readiness objects.
+
 ## 3.10.2
 
 - Separate Source Readiness, Generated Authoring Validation, and Export Validation so intentional authored cut boundaries can never invalidate the original source contract.

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import ast
 import importlib.util
+import json
 import math
 import unittest
 from pathlib import Path
@@ -59,6 +60,39 @@ def split_seam_surface():
     return positions, faces, edges
 
 
+def four_key_stamp_library() -> dict[str, object]:
+    keys = []
+    for index, name in enumerate((
+        "Head_Impact_Left",
+        "Head_Impact_Right",
+        "Head_Impact_Front",
+        "Head_Impact_Back",
+    )):
+        recipe = stamp(f"head_{index}", 0)
+        recipe["directionMode"] = "INWARD_SURFACE_NORMAL"
+        recipe["directionLocal"] = [0.0, 0.0, -1.0]
+        keys.append({
+            "name": name,
+            "maximumInfluence": 1.0,
+            "maximumDisplacement": 1.0,
+            "stamps": [recipe],
+        })
+    return trauma_field.build_stamp_library(
+        [{
+            "regionId": "head",
+            "sourceAttachedObject": "DSB_ATTACHED_HEAD",
+            "sourceDetachedObject": "DSB_SEGMENT_HEAD",
+            "topologyFingerprint": "a" * 64,
+            "vertexCount": 128,
+            "polygonCount": 96,
+            "relatedSeamId": "head_neck",
+            "keys": keys,
+        }],
+        "3.11.0",
+        "test-build",
+    )
+
+
 class TraumaFieldTests(unittest.TestCase):
     def test_virtual_weld_mapping_collapses_only_split_seam_members(self) -> None:
         positions, _faces, _edges = split_seam_surface()
@@ -80,6 +114,35 @@ class TraumaFieldTests(unittest.TestCase):
         second = trauma_field.build_virtual_weld_map(positions)
         self.assertEqual(first, second)
         self.assertEqual(first["digest"], second["digest"])
+
+    def test_positional_anchors_survive_split_vertex_index_changes(self) -> None:
+        old_positions, _faces, _edges = split_seam_surface()
+        target_positions = (
+            (0.0, 0.0, 0.0),
+            (1.0, 0.0, 0.0),
+            (1.0, 1.0, 0.0),
+            (0.0, 1.0, 0.0),
+            (2.0, 0.0, 0.0),
+            (2.0, 1.0, 0.0),
+        )
+        result = trauma_field.match_positional_anchors(target_positions, old_positions)
+        self.assertEqual(result["unmatched_anchor_indices"], ())
+        self.assertEqual(result["matches"][1], (1,))
+        self.assertEqual(result["matches"][4], (1,))
+        self.assertEqual(result["matches"][2], (2,))
+        self.assertEqual(result["matches"][7], (2,))
+
+    def test_positional_anchor_matching_has_no_outside_tolerance_fallback(self) -> None:
+        targets = ((0.0, 0.0, 0.0), (1.0, 0.0, 0.0))
+        tolerance = trauma_field.portable_anchor_tolerance(targets)
+        result = trauma_field.match_positional_anchors(
+            targets,
+            ((1.0 + tolerance * 1.01, 0.0, 0.0),),
+            tolerance=tolerance,
+        )
+        self.assertEqual(result["matches"], ((),))
+        self.assertEqual(result["unmatched_anchor_indices"], (0,))
+        self.assertEqual(tolerance, max(1e-6, 2e-6))
 
     def test_virtualized_edge_construction_is_sorted_and_unique(self) -> None:
         positions, _faces, _edges = split_seam_surface()
@@ -240,6 +303,55 @@ class TraumaFieldTests(unittest.TestCase):
     def test_duplicate_stamp_ids_are_rejected(self) -> None:
         errors = trauma_field.validate_stamp_stack((stamp("same", 0), stamp("same", 1)))
         self.assertTrue(any("Duplicate stamp ID" in error for error in errors))
+
+    def test_portable_direction_metadata_is_normalized(self) -> None:
+        recipe = stamp("portable", 0)
+        recipe["directionMode"] = "CUSTOM_VECTOR"
+        recipe["directionLocal"] = [2.0, 0.0, 0.0]
+        normalized = trauma_field.normalize_stamp(recipe)
+        self.assertEqual(normalized["directionMode"], "CUSTOM_VECTOR")
+        self.assertEqual(normalized["directionLocal"], [1.0, 0.0, 0.0])
+
+    def test_stamp_library_preserves_four_keys_and_stamps_through_json(self) -> None:
+        library = four_key_stamp_library()
+        decoded = json.loads(json.dumps(library))
+        normalized = trauma_field.normalize_stamp_library(decoded)
+        self.assertEqual(normalized["schema"], "dreadstone.trauma_stamp_library.v1")
+        self.assertEqual(normalized["regionCount"], 1)
+        self.assertEqual(normalized["keyCount"], 4)
+        self.assertEqual(normalized["stampCount"], 4)
+        self.assertEqual(
+            [key["name"] for key in normalized["regions"][0]["keys"]],
+            ["Head_Impact_Back", "Head_Impact_Front", "Head_Impact_Left", "Head_Impact_Right"],
+        )
+
+    def test_stamp_library_build_and_digest_are_deterministic(self) -> None:
+        first = four_key_stamp_library()
+        second = four_key_stamp_library()
+        self.assertEqual(first, second)
+        self.assertEqual(first["libraryDigest"], second["libraryDigest"])
+
+    def test_stamp_library_detects_content_tampering(self) -> None:
+        library = four_key_stamp_library()
+        library["regions"][0]["keys"][0]["stamps"][0]["depth"] = 0.5
+        with self.assertRaisesRegex(ValueError, "recipe digest|library digest"):
+            trauma_field.normalize_stamp_library(library)
+
+    def test_stamp_library_requires_exact_target_topology(self) -> None:
+        library = four_key_stamp_library()
+        self.assertEqual(
+            trauma_field.stamp_library_compatibility_errors(
+                library,
+                {"head": {"topologyFingerprint": "a" * 64, "vertexCount": 128, "polygonCount": 96}},
+            ),
+            [],
+        )
+        errors = trauma_field.stamp_library_compatibility_errors(
+            library,
+            {"head": {"topologyFingerprint": "b" * 64, "vertexCount": 127, "polygonCount": 95}},
+        )
+        self.assertEqual(len(errors), 3)
+        self.assertTrue(any("topology" in error for error in errors))
 
     def test_invalid_direction_and_negative_values_are_rejected(self) -> None:
         invalid = stamp("invalid", 0)

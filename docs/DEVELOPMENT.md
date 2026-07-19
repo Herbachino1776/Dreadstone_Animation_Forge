@@ -28,7 +28,7 @@ Static success does not prove Blender registration, UI behavior, mesh operations
 
 ## Build the installable ZIP
 
-Run `python scripts/build_release.py`. It validates first and writes `dist/Dreadstone_Animation_Forge_v3_10_2.zip` with deterministic timestamps and ordering. Its exact root layout is:
+Run `python scripts/build_release.py`. It validates first and writes `dist/Dreadstone_Animation_Forge_v3_11_0.zip` with deterministic timestamps and ordering. Its exact root layout is:
 
 ```text
 blender_manifest.toml
@@ -53,8 +53,9 @@ Use the current [user workflow guide](USER_WORKFLOW_GUIDE.md) as the acceptance 
 4. Require Source Readiness, **Validate Morph Targets**, **Validate Complete Damage Asset** (Authoring Validation), Export Validation, and exported validation JSON to pass.
 5. After building authoring assets, explicitly rerun Source Readiness and confirm its analyzed inventory is still the original source rather than `DSB_BODY_CORE` or `DSB_ATTACHED_*`.
 6. On a disposable affected 3.8 file, run **Repair Source Readiness Contract** and confirm generated topology, keys, and stamps are byte-for-byte/metadata unchanged.
-7. Confirm virtual welding remains analytical only, missing legacy keys are not recreated, unrepairable attached keys are not overwritten, and Trauma Field views do not rewrite render/export visibility.
-8. Record Blender version, source commit, ZIP SHA-256, assets, validation outputs, and visual observations.
+7. Save a multi-key **Stamp Library**, load it into a clean authoring rebuild from the same source, and confirm names, stable IDs, order, enabled state, captures, rebuilt geometry, exact-index pairing, and validation survive the round trip. Exercise both exact-topology loading and analytical positional-anchor rebinding across GLB split/index changes; confirm unmatched anchors and conflicting existing keys are rejected without mutation.
+8. Confirm virtual welding remains analytical only, missing legacy keys are not recreated, unrepairable attached keys are not overwritten, and Trauma Field views do not rewrite render/export visibility.
+9. Record Blender version, source commit, ZIP SHA-256, assets, validation outputs, and visual observations.
 
 GitHub Actions runs static checks and packaging; it is not Blender runtime testing.
 
