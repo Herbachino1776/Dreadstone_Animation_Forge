@@ -115,11 +115,13 @@ class TraumaFieldTests(unittest.TestCase):
                 "Gore_Smear_Heavy",
                 "Gore_Speckled_Impact",
                 "Gore_Crush_Bloodied",
+                "Gore_Crush_Heavy_Clotted",
             ),
         )
         overlay = trauma_field.default_gore_overlay()
         self.assertFalse(overlay["goreOverlayEnabled"])
-        self.assertEqual(overlay["gorePresetId"], "Gore_Ooze_Wet")
+        self.assertEqual(overlay["gorePresetId"], "Gore_Crush_Heavy_Clotted")
+        self.assertTrue(overlay["goreRaisedEnabled"])
 
     def test_surface_gore_metadata_serializes_without_loss(self) -> None:
         overlay = valid_gore_overlay()
@@ -200,7 +202,7 @@ class TraumaFieldTests(unittest.TestCase):
 
     def test_deformation_without_surface_gore_has_no_new_key_field(self) -> None:
         library = four_key_stamp_library()
-        self.assertEqual(library["formatVersion"], 2)
+        self.assertEqual(library["formatVersion"], 3)
         for key in library["regions"][0]["keys"]:
             self.assertNotIn("surfaceGoreOverlay", key)
             self.assertNotIn("goreOverlayDigest", key)

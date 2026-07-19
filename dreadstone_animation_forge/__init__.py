@@ -1,7 +1,7 @@
 bl_info = {
     "name": "Dreadstone Animation Forge",
     "author": "Dreadstone Black",
-    "version": (3, 12, 0),
+    "version": (3, 13, 0),
     "blender": (3, 6, 0),
     "location": "3D Viewport > Sidebar > Dreadstone",
     "description": "Animation authoring, protected damage assets, and registered-region trauma-field shape-key authoring.",
@@ -1192,7 +1192,7 @@ class DAFSettings(PropertyGroup):
     last_damage_manifest_path: StringProperty(default="", options={'HIDDEN'})
     last_damage_validation_path: StringProperty(default="", options={'HIDDEN'})
 
-    # Trauma Field Authoring v3.12.0.
+    # Trauma Field Authoring v3.13.0.
     deformation_region: EnumProperty(
         name="Active Region",
         items=_deformation_region_items,
@@ -1314,6 +1314,11 @@ class DAFSettings(PropertyGroup):
         description="Author a procedural blunt-trauma coating on the linked captured outer surface",
         default=False,
     )
+    deformation_default_heavy_gore: BoolProperty(
+        name="Default New Impacts to High-Intensity Gore",
+        description="Link the heavy-clotted recipe when the first valid stamp is added to a new deformation",
+        default=True,
+    )
     deformation_gore_preset: EnumProperty(
         name="Gore Preset",
         items=[
@@ -1322,8 +1327,9 @@ class DAFSettings(PropertyGroup):
             ('Gore_Smear_Heavy', "Smear Heavy", "Broad heavy smear with soft edges"),
             ('Gore_Speckled_Impact', "Speckled Impact", "Sparse fine impact breakup"),
             ('Gore_Crush_Bloodied', "Crush Bloodied", "Dense dark wet coverage for a crushed surface"),
+            ('Gore_Crush_Heavy_Clotted', "Crush Heavy Clotted", "High-intensity raised clots, broken islands, dark recesses, and wet crimson highlights"),
         ],
-        default='Gore_Ooze_Wet',
+        default='Gore_Crush_Heavy_Clotted',
     )
     deformation_gore_coverage: FloatProperty(name="Coverage", default=0.72, min=0.0, max=1.0, precision=2)
     deformation_gore_scatter: FloatProperty(name="Scatter / Breakup", default=0.48, min=0.0, max=1.0, precision=2)
@@ -1338,6 +1344,35 @@ class DAFSettings(PropertyGroup):
         min=0.0,
         max=1.0,
         subtype='COLOR',
+    )
+    deformation_gore_raised_enabled: BoolProperty(
+        name="Enable Raised Gore",
+        description="Generate ordinary exportable gore shell meshes above the intact deformed surface",
+        default=True,
+    )
+    deformation_gore_clot_coverage: FloatProperty(name="Clot Coverage", default=0.82, min=0.0, max=1.0, precision=2)
+    deformation_gore_core_density: FloatProperty(name="Core Density", default=0.94, min=0.0, max=1.0, precision=2)
+    deformation_gore_clot_thickness: FloatProperty(
+        name="Clot Thickness", default=0.0048, min=0.0001, max=0.05, precision=4, unit='LENGTH'
+    )
+    deformation_gore_thickness_variation: FloatProperty(name="Thickness Variation", default=0.88, min=0.0, max=1.0, precision=2)
+    deformation_gore_island_breakup: FloatProperty(name="Island Breakup", default=0.86, min=0.0, max=1.0, precision=2)
+    deformation_gore_peripheral_fragments: FloatProperty(name="Peripheral Fragments", default=0.58, min=0.0, max=1.0, precision=2)
+    deformation_gore_surface_offset: FloatProperty(
+        name="Surface Offset", default=0.00065, min=0.00015, max=0.012, precision=5, unit='LENGTH'
+    )
+    deformation_gore_geometry_density: FloatProperty(name="Geometry Density", default=0.72, min=0.0, max=1.0, precision=2)
+    deformation_gore_wetness_variation: FloatProperty(name="Wetness Variation", default=0.84, min=0.0, max=1.0, precision=2)
+    deformation_gore_dark_clot_bias: FloatProperty(name="Dark-Clot Bias", default=0.72, min=0.0, max=1.0, precision=2)
+    deformation_gore_rough_edge_bias: FloatProperty(name="Rough-Edge Bias", default=0.56, min=0.0, max=1.0, precision=2)
+    deformation_gore_color_intensity: FloatProperty(name="Color Intensity", default=1.0, min=0.0, max=1.0, precision=2)
+    deformation_gore_maximum_triangles: IntProperty(
+        name="Maximum Triangles", default=12000, min=128, max=100000
+    )
+    deformation_gore_user_customized: BoolProperty(
+        name="Preserve as User-Customized",
+        description="Prevent Apply Heavy Gore to All Deformations from replacing this key's recipe",
+        default=False,
     )
     deformation_gore_mask_seed: IntProperty(
         name="Variation Seed",
@@ -3356,7 +3391,7 @@ class DAF_PT_panel(Panel):
             layout,
             s,
             "ui_deformation_authoring_open",
-            "Trauma Field Authoring v3.12.0",
+            "Trauma Field Authoring v3.13.0",
         )
         if opened:
             configure_property_box(box)

@@ -2,7 +2,7 @@
 
 ## User documentation boundary
 
-The authoritative beginner-facing installation, authoring, validation, export, and reimport procedure is [USER_WORKFLOW_GUIDE.md](USER_WORKFLOW_GUIDE.md). Keep this file developer-focused. Do not duplicate the complete user workflow here.
+The authoritative beginner-facing installation, authoring, validation, export, and reimport procedure is [USER_WORKFLOW_GUIDE.md](USER_WORKFLOW_GUIDE.md). The runtime-facing node/manifest rules are in [RAISED_GORE_EXPORT_CONTRACT.md](RAISED_GORE_EXPORT_CONTRACT.md). Keep this file developer-focused. Do not duplicate the complete user workflow here.
 
 When implementation and documentation disagree, inspect the current registered panels, operators, properties, generated names, validation contracts, and export code; then correct the user guide and any stale user-facing source text together.
 
@@ -28,7 +28,7 @@ Static success does not prove Blender registration, UI behavior, mesh operations
 
 ## Build the installable ZIP
 
-Run `python scripts/build_release.py`. It validates first and writes `dist/Dreadstone_Animation_Forge_v3_12_0.zip` with deterministic timestamps and ordering. Its exact root layout is:
+Run `python scripts/build_release.py`. It validates first and writes `dist/Dreadstone_Animation_Forge_v3_13_0.zip` with deterministic timestamps and ordering. Its exact root layout is:
 
 ```text
 blender_manifest.toml
@@ -53,11 +53,11 @@ Use the current [user workflow guide](USER_WORKFLOW_GUIDE.md) as the acceptance 
 4. Require Source Readiness, **Validate Morph Targets**, **Validate Complete Damage Asset** (Authoring Validation), Export Validation, and exported validation JSON to pass.
 5. After building authoring assets, explicitly rerun Source Readiness and confirm its analyzed inventory is still the original source rather than `DSB_BODY_CORE` or `DSB_ATTACHED_*`.
 6. On a disposable affected 3.8 file, run **Repair Source Readiness Contract** and confirm generated topology, keys, and stamps are byte-for-byte/metadata unchanged.
-7. Build `Head_Impact_Left_v001`, `Head_Impact_Right_v001`, `Head_Impact_Front_v001`, and `Head_Impact_Back_v001`; link one enabled surface-gore overlay to each key's stamp capture and verify localized patchy wet coverage on both attached and detached previews without holes, exposed tissue, or loss of recognizable skin/scalp/hair.
-8. Clear every gore preview and confirm original material slots return exactly. Rebuild previews, then export and confirm managed preview materials/attributes are removed while additive semantic overlay metadata remains in the manifest.
+7. Build `Head_Impact_Left_v001`, `Head_Impact_Right_v001`, `Head_Impact_Front_v001`, and `Head_Impact_Back_v001`; apply `Gore_Crush_Heavy_Clotted`, rebuild each raised shell, and verify dense irregular thickness, multiple disconnected islands, clean exterior gaps, three material roles, and correct attached/detached placement without holes or exposed tissue.
+8. Clear every stain preview and confirm original material slots return exactly. Rebuild raised gore, then export and confirm temporary stain materials/attributes are removed while ordinary gore nodes, glTF-safe materials, ownership/digest extras, triangle counts, and inactive activation semantics remain in the GLB/manifest.
 9. Save a multi-key **Stamp Library**, load it into a clean authoring rebuild from the same source, and confirm names, stable IDs, order, enabled state, captures, gore settings/seeds/digests, rebuilt geometry, exact-index pairing, and validation survive the round trip. Exercise both exact-topology loading and analytical positional-anchor rebinding across GLB split/index changes; confirm unmatched anchors and conflicting existing keys are rejected without mutation.
 10. Confirm virtual welding remains analytical only, missing legacy keys are not recreated, unrepairable attached keys are not overwritten, and Trauma Field views do not rewrite render/export visibility.
-11. Record Blender version, source commit, ZIP SHA-256, assets, validation outputs, surface-gore/material observations, and reimported manifest observations.
+11. Run `blender prepared.blend --background --python tests/blender_raised_gore_acceptance.py -- --output <folder>` where possible; record Blender version, source commit, ZIP SHA-256, per-head attached/detached triangle counts, validation outputs, surface-gore/material observations, and clean-reimport manifest observations.
 
 GitHub Actions runs static checks and packaging; it is not Blender runtime testing.
 

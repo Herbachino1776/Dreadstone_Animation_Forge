@@ -1,7 +1,7 @@
 schema_version = "1.0.0"
 
 id = "dreadstone_animation_forge"
-version = "3.12.0"
+version = "3.13.0"
 name = "Dreadstone Animation Forge"
 tagline = "Author animations and protected damage trauma fields"
 maintainer = "Herbachino1776"

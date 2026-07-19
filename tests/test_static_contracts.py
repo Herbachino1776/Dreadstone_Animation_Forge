@@ -22,6 +22,7 @@ class StaticContractTests(unittest.TestCase):
             "Gore_Smear_Heavy",
             "Gore_Speckled_Impact",
             "Gore_Crush_Bloodied",
+            "Gore_Crush_Heavy_Clotted",
         ):
             self.assertIn(preset, self.trauma)
         for helper in (
@@ -30,6 +31,9 @@ class StaticContractTests(unittest.TestCase):
             "def gore_mask_value(",
             "def preview_surface_gore(",
             "def clear_surface_gore_preview(",
+            "def raised_gore_face_records(",
+            "def rebuild_raised_gore_for_key(",
+            "def _raised_gore_errors(",
         ):
             self.assertIn(helper, self.trauma + self.deformation)
         for operator in (
@@ -37,6 +41,10 @@ class StaticContractTests(unittest.TestCase):
             "daf.preview_surface_gore_overlay",
             "daf.clear_surface_gore_overlay_preview",
             "daf.create_blunt_gore_head_deformations",
+            "daf.apply_heavy_gore_all_deformations",
+            "daf.clear_current_generated_gore",
+            "daf.rebuild_all_generated_gore",
+            "daf.validate_gore_geometry",
         ):
             self.assertIn(operator, self.deformation)
         for key_name in (
@@ -51,6 +59,16 @@ class StaticContractTests(unittest.TestCase):
         self.assertIn('GORE_PREVIEW_ATTRIBUTE = "DSB_Surface_Gore_Mask"', self.deformation)
         self.assertIn('material = source.copy()', self.deformation)
         self.assertIn('clear_surface_gore_preview(all_regions=True)', self.deformation)
+        self.assertIn('"generatedGoreMeshes"', self.deformation)
+        self.assertIn('"goreActivationContract"', self.deformation)
+        self.assertIn('obj["dsb_gore_default_visible"] = False', self.deformation)
+        self.assertIn('obj["dsb_preview_only"] = False', self.deformation)
+        self.assertIn('and obj.get("dsb_generated_role") == "raised_gore"', self.sources["damage_authoring.py"])
+        self.assertIn('if not bool(obj.get("dsb_gore_owned", False)):', self.deformation)
+        self.assertIn('if existing_recipe and existing_recipe.get("goreUserCustomized", False):', self.deformation)
+        self.assertIn('for source, role in ((attached, "ATTACHED"), (detached, "DETACHED")):', self.deformation)
+        self.assertIn("allowed = {'ShaderNodeOutputMaterial', 'ShaderNodeBsdfPrincipled'}", self.deformation)
+        self.assertIn('entry["raisedGoreStatus"] = "STALE_REBUILD_REQUIRED"', self.deformation)
 
     @classmethod
     def setUpClass(cls) -> None:
@@ -93,7 +111,7 @@ class StaticContractTests(unittest.TestCase):
         manifest = contracts.MANIFEST_PATH.read_text(encoding="utf-8")
         self.assertIn('schema_version = "1.0.0"', manifest)
         self.assertIn('id = "dreadstone_animation_forge"', manifest)
-        self.assertIn('version = "3.12.0"', manifest)
+        self.assertIn('version = "3.13.0"', manifest)
         builder = (ROOT / "scripts" / "build_release.py").read_text(encoding="utf-8")
         self.assertIn('"blender_manifest.toml",\n    "__init__.py",', builder)
         self.assertNotIn('"dreadstone_animation_forge/__init__.py"', builder)
@@ -114,7 +132,7 @@ class StaticContractTests(unittest.TestCase):
         version = contracts.EXPECTED_VERSION
         self.assertEqual(
             f"Dreadstone_Animation_Forge_v{'_'.join(map(str, version))}.zip",
-            "Dreadstone_Animation_Forge_v3_12_0.zip",
+            "Dreadstone_Animation_Forge_v3_13_0.zip",
         )
 
     def test_authoritative_user_workflow_guide_contract(self) -> None:
@@ -132,8 +150,8 @@ class StaticContractTests(unittest.TestCase):
     def test_release_readme_contains_install_quick_start_and_guide_reference(self) -> None:
         readme = (ROOT / "README.md").read_text(encoding="utf-8")
         for marker in (
-            "3.12.0",
-            "Dreadstone_Animation_Forge_v3_12_0.zip",
+            "3.13.0",
+            "Dreadstone_Animation_Forge_v3_13_0.zip",
             "Install from Disk",
             "## Quick start",
             "docs/USER_WORKFLOW_GUIDE.md",

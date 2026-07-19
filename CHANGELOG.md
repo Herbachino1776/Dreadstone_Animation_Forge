@@ -1,5 +1,18 @@
 # Changelog
 
+## 3.13.0
+
+- Add `Gore_Crush_Heavy_Clotted` as the recommended high-intensity preset for all Trauma Field regions, with dense core clots, broken rim islands, peripheral fragments, strong thickness variation, and clean gaps over the intact exterior.
+- Upgrade Surface Gore Overlay to a hybrid stain plus deterministic ordinary-mesh shell. Shells follow each fully deformed target, use stamp influence and deformation magnitude, remain region-independent, and are generated once for matching attached/detached exact-index variants.
+- Add three glTF-safe Principled material roles: wet crimson, dark clot, and rough clot edge. Metallic and emission remain zero; the temporary stain material is still removed before export.
+- Add stable `DSB_GORE_ATTACHED_*` / `DSB_GORE_DETACHED_*` nodes, mesh IDs, ownership/source metadata, recipe/generation/geometry digests, source-vertex attributes, copied skinning, inactive-by-default extras, activation weight, material IDs, and triangle counts.
+- Export raised gore meshes in the Damage GLB and record per-deformation node mappings plus the runtime activation contract in the manifest. Runtime activation itself remains intentionally outside Forge.
+- Add **Apply Heavy Gore to All Deformations**, default-new-impact preference, custom-recipe preservation, **Clear Current Generated Gore**, **Rebuild All Generated Gore**, and separate **Validate Gore Geometry** actions.
+- Extend portable stamp libraries to format v3 for raised recipes while retaining deterministic v1/v2 and Forge 3.12 stain-only migration. Generated mesh bytes are never serialized.
+- Detect missing, stale, altered, incorrectly owned, preview-only, floating, empty, degenerate, duplicate, non-manifold, over-budget, unskinned, wrongly paired, wrongly visible, or non-glTF-safe raised gore.
+- Add Blender runtime acceptance automation for four head impacts, paired previews, export, clean reimport, material preservation, node mappings, activation metadata, and recorded triangle counts.
+- Add 29 focused Blender-independent raised-gore tests while retaining all readiness, deformation, stamp, legacy no-gore, and packaging contracts.
+
 ## 3.12.0
 
 - Add optional **Surface Gore Overlay** authoring per deformation key for blunt trauma without exposed tissue, cavities, holes, or runtime game-side shader playback.

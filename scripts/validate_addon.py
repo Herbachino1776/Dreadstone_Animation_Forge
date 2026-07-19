@@ -29,13 +29,13 @@ MODULE_NAMES = (
 )
 MODULE_PATHS = tuple(PACKAGE / name for name in MODULE_NAMES)
 
-EXPECTED_VERSION = (3, 12, 0)
+EXPECTED_VERSION = (3, 13, 0)
 EXPECTED_READINESS_BUILD = "2026-07-18.source-contract.1"
 EXPECTED_AUTHORING_BUILD = "2026-07-18.source-contract.1"
-EXPECTED_DEFORMATION_BUILD = "2026-07-19.surface-gore.1"
+EXPECTED_DEFORMATION_BUILD = "2026-07-19.raised-gore.1"
 
 REQUIRED_GUIDE_HEADINGS = (
-    "## 1. Install Dreadstone Animation Forge 3.12.0",
+    "## 1. Install Dreadstone Animation Forge 3.13.0",
     "## 2. Open the Dreadstone panel",
     "## 3. Import and prepare a source GLB",
     "## 5. Author and approve animation drafts",
@@ -88,8 +88,12 @@ REQUIRED_GUIDE_UI_LABELS = {
     "**Enable Surface Gore Overlay**",
     "**Use Preset Defaults**",
     "**Apply Gore Overlay Settings**",
-    "**Preview / Refresh Overlay**",
-    "**Clear Overlay Preview**",
+    "**Preview / Rebuild Current Gore**",
+    "**Clear Stain Preview**",
+    "**Apply Heavy Gore to All Deformations**",
+    "**Clear Current Generated Gore**",
+    "**Rebuild All Generated Gore**",
+    "**Validate Gore Geometry**",
     "**Compact Dent**",
     "**Broad Cave**",
     "**Flat Compression**",
@@ -195,14 +199,18 @@ REQUIRED_OPERATORS = {
     "daf.create_blunt_gore_head_deformations": "Create Blunt Gore Head Set",
     "daf.apply_surface_gore_preset": "Use Gore Preset Defaults",
     "daf.update_surface_gore_overlay": "Apply Gore Overlay Settings",
-    "daf.preview_surface_gore_overlay": "Preview / Refresh Overlay",
-    "daf.clear_surface_gore_overlay_preview": "Clear Overlay Preview",
+    "daf.preview_surface_gore_overlay": "Preview / Rebuild Current Gore",
+    "daf.clear_surface_gore_overlay_preview": "Clear Stain Preview",
+    "daf.apply_heavy_gore_all_deformations": "Apply Heavy Gore to All Deformations",
+    "daf.clear_current_generated_gore": "Clear Current Generated Gore",
+    "daf.rebuild_all_generated_gore": "Rebuild All Generated Gore",
+    "daf.validate_gore_geometry": "Validate Gore Geometry",
 }
 
 REQUIRED_UI_TEXT = {
     "Source Damage Readiness",
     "Damage Segment & Stump Authoring v3.9",
-    "Trauma Field Authoring v3.12.0",
+    "Trauma Field Authoring v3.13.0",
     "5. Surface Gore Overlay",
     "Restore Reimported GLB Intact Preview",
     "Validate Complete Damage Asset",
@@ -380,7 +388,7 @@ def check_extension_manifest() -> None:
         (
             'schema_version = "1.0.0"',
             'id = "dreadstone_animation_forge"',
-            'version = "3.12.0"',
+            'version = "3.13.0"',
             'name = "Dreadstone Animation Forge"',
             'type = "add-on"',
             'blender_version_min = "4.2.0"',
@@ -437,7 +445,7 @@ def check_surface_gore_contracts(sources: dict[str, str], trees: dict[str, ast.M
     require(
         set(presets) == {
             "Gore_Ooze_Wet", "Gore_Clot_Dark", "Gore_Smear_Heavy",
-            "Gore_Speckled_Impact", "Gore_Crush_Bloodied",
+            "Gore_Speckled_Impact", "Gore_Crush_Bloodied", "Gore_Crush_Heavy_Clotted",
         },
         "surface gore built-in preset family changed",
     )
@@ -447,9 +455,14 @@ def check_surface_gore_contracts(sources: dict[str, str], trees: dict[str, ast.M
             "def default_gore_overlay(", "def normalize_gore_overlay(",
             "def validate_gore_overlay(", "def gore_overlay_digest(",
             "def gore_overlay_export_metadata(", "def gore_mask_value(",
+            "def raised_gore_face_records(", "def raised_gore_geometry_digest(",
+            "def raised_gore_stale_reasons(", "def raised_gore_budget_errors(",
+            "def gore_generated_object_name(", "def mesh_geometry_digest(",
             '"goreOverlayEnabled"', '"gorePresetId"', '"goreCoverage"', '"goreScatter"',
             '"goreEdgeFeather"', '"goreWetness"', '"goreDarkness"', '"goreColorBias"',
             '"goreMaskSeed"', '"linkedRegionId"', '"linkedStampId"',
+            '"goreRaisedEnabled"', '"goreClotThickness"', '"goreGeometryDensity"',
+            '"goreDefaultVisible"', '"goreActivationWeight"',
         ),
         "surface gore logic",
     )
@@ -458,10 +471,15 @@ def check_surface_gore_contracts(sources: dict[str, str], trees: dict[str, ast.M
         (
             'GORE_PREVIEW_ATTRIBUTE = "DSB_Surface_Gore_Mask"',
             "def preview_surface_gore(", "def clear_surface_gore_preview(",
+            "def rebuild_raised_gore_for_key(", "def generated_gore_objects(",
+            "def apply_heavy_gore_to_all_deformations(", "def _raised_gore_errors(",
             "material = source.copy()", "clear_surface_gore_preview(all_regions=True)",
             '"surfaceGoreOverlay"', '"goreOverlayDigest"',
-            '"goreOverlayValidationStatus"', '"exportValidationStatus"',
+            '"goreOverlayValidationStatus"', '"raisedGoreValidationStatus"', '"exportValidationStatus"',
+            '"generatedGoreMeshes"', '"goreActivationContract"',
             "daf.preview_surface_gore_overlay", "daf.clear_surface_gore_overlay_preview",
+            "daf.apply_heavy_gore_all_deformations", "daf.rebuild_all_generated_gore",
+            "daf.validate_gore_geometry",
         ),
         "surface gore Blender authoring/export",
     )
@@ -729,14 +747,14 @@ def check_repository_hygiene() -> None:
 
 
 def main() -> int:
-    print("DREADSTONE ANIMATION FORGE v3.12.0 STATIC VALIDATION")
+    print("DREADSTONE ANIMATION FORGE v3.13.0 STATIC VALIDATION")
     print("Blender is not imported; runtime acceptance remains separate.")
 
     sources: dict[str, str] = {}
     trees: dict[str, ast.Module] = {}
     checks: list[tuple[str, Callable[[], None]]] = [
         ("all five package modules exist", check_module_files),
-        ("Blender extension manifest exists and matches v3.12.0", check_extension_manifest),
+        ("Blender extension manifest exists and matches v3.13.0", check_extension_manifest),
         ("all Python modules parse with ast.parse", lambda: check_parse(sources)),
         ("all Python modules compile with py_compile", check_compile),
         ("add-on/deformation version and build contracts", lambda: check_versions(trees)),

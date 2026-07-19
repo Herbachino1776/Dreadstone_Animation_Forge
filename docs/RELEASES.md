@@ -2,7 +2,7 @@
 
 1. **Update version contracts.** Change the authorized add-on and component versions/build IDs, `docs/USER_WORKFLOW_GUIDE.md`, README, changelog, validator, tests, and release filename together. Do not silently change schemas, operator identifiers, or generated DSB names.
 2. **Run static validation.** Run `python scripts/validate_addon.py` and `python -m unittest discover -s tests -p "test_*.py"` from a clean checkout.
-3. **Run Blender runtime acceptance.** Complete and record the current procedures and recipes in `docs/USER_WORKFLOW_GUIDE.md`. Static CI is not runtime acceptance.
+3. **Run Blender runtime acceptance.** Complete and record the current procedures and recipes in `docs/USER_WORKFLOW_GUIDE.md`. For Forge 3.13 raised gore, run `tests/blender_raised_gore_acceptance.py` from a prepared authoring `.blend`, record all four head-impact triangle counts, and retain its clean-reimport JSON report. Static CI is not runtime acceptance.
 4. **Build the deterministic ZIP.** Run `python scripts/build_release.py` twice and require identical SHA-256 hashes.
 5. **Inspect archive layout.** Confirm the exact eight-entry Blender-installable layout and run a ZIP integrity check.
 6. **Tag the release.** Commit directly to `main`, push, and create an annotated `v*` tag for the accepted commit.
@@ -16,4 +16,5 @@
 - [ ] Confirm Source Readiness reruns use only the registered original inventory after authoring and never report generated cut boundaries as source defects.
 - [ ] Confirm Authoring Validation and Export Validation are distinct, and export does not rewrite the source-readiness JSON/Markdown report.
 - [ ] Confirm **Repair Source Readiness Contract** preserves generated topology, managed shape keys, and trauma stamps in an affected 3.8 file.
+- [ ] Confirm the GLB/manifest satisfies `docs/RAISED_GORE_EXPORT_CONTRACT.md`: stable paired nodes, three glTF-safe materials, inactive defaults, deformation activation mapping, geometry digests, and clean reimport.
 - [ ] Remove stale instructions from the previous version.

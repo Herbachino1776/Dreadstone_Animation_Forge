@@ -1360,6 +1360,12 @@ def _object(name):
 def _all_generated_objects(state):
     names = set(state.get("objects", {}).values())
     names.add(state.get("authoring_rig"))
+    names.update(
+        obj.name for obj in bpy.data.objects
+        if bool(obj.get("dsb_gore_owned", False))
+        and obj.get("dsb_generated_role") == "raised_gore"
+        and not bool(obj.get("dsb_preview_only", True))
+    )
     return [obj for name in names if name and (obj := bpy.data.objects.get(name))]
 
 
