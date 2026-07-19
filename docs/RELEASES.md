@@ -13,4 +13,7 @@
 - [ ] Inspect the current implementation and update `docs/USER_WORKFLOW_GUIDE.md` when the workflow, UI, feature set, installation method, object names, validation process, or export process has changed.
 - [ ] Confirm the guide's version number and ZIP name match the current release.
 - [ ] Confirm every public user-facing operator and major workflow section is represented in the guide.
+- [ ] Confirm Source Readiness reruns use only the registered original inventory after authoring and never report generated cut boundaries as source defects.
+- [ ] Confirm Authoring Validation and Export Validation are distinct, and export does not rewrite the source-readiness JSON/Markdown report.
+- [ ] Confirm **Repair Source Readiness Contract** preserves generated topology, managed shape keys, and trauma stamps in an affected 3.8 file.
 - [ ] Remove stale instructions from the previous version.

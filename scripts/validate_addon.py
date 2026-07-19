@@ -29,18 +29,18 @@ MODULE_NAMES = (
 )
 MODULE_PATHS = tuple(PACKAGE / name for name in MODULE_NAMES)
 
-EXPECTED_VERSION = (3, 10, 1)
-EXPECTED_READINESS_BUILD = "2026-07-15.virtual-weld.1"
-EXPECTED_AUTHORING_BUILD = "2026-07-16.segment-stump-deform.1"
-EXPECTED_DEFORMATION_BUILD = "2026-07-18.trauma-hotfix.1"
+EXPECTED_VERSION = (3, 10, 2)
+EXPECTED_READINESS_BUILD = "2026-07-18.source-contract.1"
+EXPECTED_AUTHORING_BUILD = "2026-07-18.source-contract.1"
+EXPECTED_DEFORMATION_BUILD = "2026-07-18.source-contract.1"
 
 REQUIRED_GUIDE_HEADINGS = (
-    "## 1. Install Dreadstone Animation Forge 3.10.1",
+    "## 1. Install Dreadstone Animation Forge 3.10.2",
     "## 2. Open the Dreadstone panel",
     "## 3. Import and prepare a source GLB",
     "## 5. Author and approve animation drafts",
     "## 6. Build and validate an approved animation pack",
-    "## 7. Run Damage Readiness",
+    "## 7. Run Source Damage Readiness",
     "## 8. Build Damage Segment and Stump Authoring assets",
     "## 9. Preview intact and detached states",
     "## 10. Register and validate deformation pairs",
@@ -60,7 +60,8 @@ REQUIRED_GUIDE_UI_LABELS = {
     "**Adopt Imported Animation Pack**",
     "**Safe Resize**",
     "**Analyze Rig**",
-    "**Analyze Damage Readiness**",
+    "**Analyze Source Damage Readiness**",
+    "**Repair Source Readiness Contract**",
     "**Preview Candidate Seam**",
     "**Load READY Handoff**",
     "**Build Authoring Asset**",
@@ -102,6 +103,7 @@ REQUIRED_GUIDE_UI_LABELS = {
 REQUIRED_SCHEMAS = {
     "dreadstone.animation_pack.v1",
     "dreadstone.damage_readiness.v1",
+    "dreadstone.source_readiness.v1",
     "dreadstone.damage_authoring.v1",
     "dreadstone.damage_deformation.v1",
 }
@@ -138,6 +140,8 @@ REQUIRED_DEFORMATION_KEYS = {
 }
 
 REQUIRED_OPERATORS = {
+    "daf.analyze_damage_readiness": "Analyze Source Damage Readiness",
+    "daf.repair_source_readiness_contract": "Repair Source Readiness Contract",
     "daf.restore_imported_damage_intact_preview": "Restore Imported GLB Intact Preview",
     "daf.export_damage_asset": "Export Damage GLB + Manifest",
     "daf.create_damage_shape_key": "Create Damage Shape Key",
@@ -179,9 +183,9 @@ REQUIRED_OPERATORS = {
 }
 
 REQUIRED_UI_TEXT = {
-    "Damage Readiness Analyzer",
+    "Source Damage Readiness",
     "Damage Segment & Stump Authoring v3.9",
-    "Trauma Field Authoring v3.10.1",
+    "Trauma Field Authoring v3.10.2",
     "Restore Reimported GLB Intact Preview",
     "Validate Complete Damage Asset",
     "BUILD ACTIVE PRESET",
@@ -358,7 +362,7 @@ def check_extension_manifest() -> None:
         (
             'schema_version = "1.0.0"',
             'id = "dreadstone_animation_forge"',
-            'version = "3.10.1"',
+            'version = "3.10.2"',
             'name = "Dreadstone Animation Forge"',
             'type = "add-on"',
             'blender_version_min = "4.2.0"',
@@ -546,6 +550,68 @@ def check_trauma_field_contracts(sources: dict[str, str], trees: dict[str, ast.M
     )
 
 
+def check_source_readiness_contracts(sources: dict[str, str], trees: dict[str, ast.Module]) -> None:
+    require_markers(
+        sources["damage_readiness.py"],
+        (
+            'SOURCE_CONTRACT_SCHEMA = "dreadstone.source_readiness.v1"',
+            'SOURCE_CONTRACT_TEXT_NAME = "DSB_SOURCE_READINESS_CONTRACT.json"',
+            'SOURCE_OBJECT_ID_PROPERTY = "dsb_source_readiness_object_id"',
+            'SOURCE_DATA_ID_PROPERTY = "dsb_source_readiness_data_id"',
+            'SOURCE_COLLECTION_ID_PROPERTY = "dsb_source_readiness_collection_id"',
+            "def resolve_source_readiness_inputs(context):",
+            "load_source_readiness_contract()",
+            "return _resolve_authoring_state_objects(context, authoring_state)",
+            "def validate_source_readiness_contract(contract, context):",
+            "def persist_source_readiness_contract(report, json_path, markdown_path):",
+            'bl_idname = "daf.repair_source_readiness_contract"',
+            'bl_label = "Repair Source Readiness Contract"',
+            "generated DSB_* meshes cannot replace it",
+        ),
+        "source-readiness identity and recovery",
+    )
+    require_markers(
+        sources["damage_authoring.py"],
+        (
+            '"source_readiness_contract": source_contract',
+            "validate_source_readiness_contract(contract, bpy.context)",
+            '"source_readiness": {',
+            '"Export validation failed: Authoring validation failed: "',
+        ),
+        "separate authoring/export validation",
+    )
+    require_markers(
+        sources["trauma_field.py"],
+        (
+            "def is_generated_authoring_role(",
+            "def source_readiness_stale_reasons(",
+            "def enabled_stamp_contract_errors(",
+            '"DSB_BODY_CORE"',
+            '"DSB_ATTACHED_"',
+            '"DSB_DETACHED_"',
+            '"DSB_STUMP_"',
+            '"DSB_DAMAGE_"',
+        ),
+        "pure source-readiness contract rules",
+    )
+    export = next(
+        node for node in trees["damage_authoring.py"].body
+        if isinstance(node, ast.FunctionDef) and node.name == "_export_asset"
+    )
+    called = {
+        node.func.attr if isinstance(node.func, ast.Attribute) else node.func.id
+        for node in ast.walk(export)
+        if isinstance(node, ast.Call) and isinstance(node.func, (ast.Attribute, ast.Name))
+    }
+    forbidden = {
+        "build_damage_readiness_report",
+        "write_damage_readiness_reports",
+        "persist_source_readiness_contract",
+    }
+    require(not (called & forbidden), "export reruns or overwrites source readiness")
+    require("_validate_authoring" in called, "export does not run generated authoring validation")
+
+
 def check_glb_morph_hooks(tree: ast.Module) -> None:
     pairs = dict_literal_pairs(tree)
     required = {
@@ -598,14 +664,14 @@ def check_repository_hygiene() -> None:
 
 
 def main() -> int:
-    print("DREADSTONE ANIMATION FORGE v3.10.1 STATIC VALIDATION")
+    print("DREADSTONE ANIMATION FORGE v3.10.2 STATIC VALIDATION")
     print("Blender is not imported; runtime acceptance remains separate.")
 
     sources: dict[str, str] = {}
     trees: dict[str, ast.Module] = {}
     checks: list[tuple[str, Callable[[], None]]] = [
         ("all five package modules exist", check_module_files),
-        ("Blender extension manifest exists and matches v3.10.1", check_extension_manifest),
+        ("Blender extension manifest exists and matches v3.10.2", check_extension_manifest),
         ("all Python modules parse with ast.parse", lambda: check_parse(sources)),
         ("all Python modules compile with py_compile", check_compile),
         ("add-on/deformation version and build contracts", lambda: check_versions(trees)),
@@ -615,6 +681,7 @@ def main() -> int:
         ("world-space exact-index deformation synchronization", lambda: check_world_space_and_exact_index(sources["deformation_authoring.py"])),
         ("attached/detached preview, preset, and optional sculpt contracts", lambda: check_preview_and_presets(sources["deformation_authoring.py"])),
         ("trauma-field algorithms, registry, stamps, rebuild, and additive manifest contracts", lambda: check_trauma_field_contracts(sources, trees)),
+        ("source-readiness identity, staleness, repair, and export separation", lambda: check_source_readiness_contracts(sources, trees)),
         ("GLB morph target and morph normal export hooks", lambda: check_glb_morph_hooks(trees["damage_authoring.py"])),
         ("no nearest-neighbor deformation transfer implementation", lambda: check_no_nearest_neighbor((trees["deformation_authoring.py"], trees["trauma_field.py"]))),
         ("no unresolved source merge markers", lambda: check_merge_markers(sources)),

@@ -1,7 +1,7 @@
 bl_info = {
     "name": "Dreadstone Animation Forge",
     "author": "Dreadstone Black",
-    "version": (3, 10, 1),
+    "version": (3, 10, 2),
     "blender": (3, 6, 0),
     "location": "3D Viewport > Sidebar > Dreadstone",
     "description": "Animation authoring, protected damage assets, and registered-region trauma-field shape-key authoring.",
@@ -1118,8 +1118,8 @@ class DAFSettings(PropertyGroup):
         max=1
     )
 
-    # Damage Readiness Analyzer v3.7.2. These values are report/UI state only;
-    # the analyzer never mutates the selected character.
+    # Source Damage Readiness v3.8.1. The analyzer writes report/UI state and
+    # stable identity metadata, but never edits source geometry or weights.
     ui_damage_readiness_open: BoolProperty(default=False)
     damage_readiness_output_directory: StringProperty(
         name="Report Output Folder",
@@ -1140,6 +1140,7 @@ class DAFSettings(PropertyGroup):
     last_damage_readiness_json_path: StringProperty(default="", options={'HIDDEN'})
     last_damage_readiness_markdown_path: StringProperty(default="", options={'HIDDEN'})
     damage_readiness_overall_status: StringProperty(default="NOT ANALYZED", options={'HIDDEN'})
+    source_readiness_contract_status: StringProperty(default="NOT ANALYZED", options={'HIDDEN'})
     damage_readiness_head_neck_status: StringProperty(default="NOT ANALYZED", options={'HIDDEN'})
     damage_readiness_left_elbow_status: StringProperty(default="NOT ANALYZED", options={'HIDDEN'})
     damage_readiness_right_elbow_status: StringProperty(default="NOT ANALYZED", options={'HIDDEN'})
@@ -1185,11 +1186,12 @@ class DAFSettings(PropertyGroup):
     )
     damage_authoring_status: StringProperty(default="NOT BUILT", options={'HIDDEN'})
     last_damage_authoring_validation: StringProperty(default="NOT VALIDATED", options={'HIDDEN'})
+    last_damage_export_validation: StringProperty(default="NOT VALIDATED", options={'HIDDEN'})
     last_damage_glb_path: StringProperty(default="", options={'HIDDEN'})
     last_damage_manifest_path: StringProperty(default="", options={'HIDDEN'})
     last_damage_validation_path: StringProperty(default="", options={'HIDDEN'})
 
-    # Trauma Field Authoring v3.10.1.
+    # Trauma Field Authoring v3.10.2.
     deformation_region: EnumProperty(
         name="Active Region",
         items=_deformation_region_items,
@@ -3167,7 +3169,7 @@ class DAF_PT_panel(Panel):
             layout,
             s,
             "ui_damage_readiness_open",
-            "Damage Readiness Analyzer",
+            "Source Damage Readiness",
         )
         if opened:
             configure_property_box(box)
@@ -3178,12 +3180,18 @@ class DAF_PT_panel(Panel):
                 box.label(text="Unsaved .blend: choose an explicit folder", icon='ERROR')
             box.operator(
                 "daf.analyze_damage_readiness",
-                text="Analyze Damage Readiness",
+                text="Analyze Source Damage Readiness",
                 icon='VIEWZOOM',
+            )
+            box.operator(
+                "daf.repair_source_readiness_contract",
+                text="Repair Source Readiness Contract",
+                icon='FILE_REFRESH',
             )
 
             results = box.box()
-            results.label(text="Last Results", icon='INFO')
+            results.label(text="Source Readiness Results", icon='INFO')
+            results.label(text="Contract: " + s.source_readiness_contract_status)
             results.label(text="Overall: " + s.damage_readiness_overall_status)
             results.label(text="Head–Neck: " + s.damage_readiness_head_neck_status)
             results.label(text="Left Elbow: " + s.damage_readiness_left_elbow_status)
@@ -3219,7 +3227,8 @@ class DAF_PT_panel(Panel):
                     text="JSON: " + os.path.basename(s.last_damage_readiness_json_path),
                     icon='FILE_TICK',
                 )
-            box.label(text="Analysis-only: character data is never edited", icon='LOCKED')
+            box.label(text="Source geometry and weights are never edited", icon='LOCKED')
+            box.label(text="Stable source identity metadata is stored", icon='CHECKMARK')
             box.label(text="Reports are fingerprinted for the v3.8 handoff", icon='CHECKMARK')
 
         # Damage segment and stump authoring -------------------------------
@@ -3251,7 +3260,9 @@ class DAF_PT_panel(Panel):
 
             status = box.box()
             status.label(text="Status: " + s.damage_authoring_status, icon='INFO')
-            status.label(text="Validation: " + s.last_damage_authoring_validation)
+            status.label(text="Source Readiness: " + s.source_readiness_contract_status)
+            status.label(text="Authoring Validation: " + s.last_damage_authoring_validation)
+            status.label(text="Export Validation: " + s.last_damage_export_validation)
 
             box.prop(s, "damage_authoring_seam")
             row = box.row(align=True)
@@ -3307,7 +3318,7 @@ class DAF_PT_panel(Panel):
             layout,
             s,
             "ui_deformation_authoring_open",
-            "Trauma Field Authoring v3.10.1",
+            "Trauma Field Authoring v3.10.2",
         )
         if opened:
             configure_property_box(box)

@@ -1,5 +1,16 @@
 # Changelog
 
+## 3.10.2
+
+- Separate Source Readiness, Generated Authoring Validation, and Export Validation so intentional authored cut boundaries can never invalidate the original source contract.
+- Persist stable source armature, mesh-object, mesh-datablock, collection, mapping, topology, weight, analyzer, and report identity in `DSB_SOURCE_READINESS_CONTRACT.json`.
+- Resolve explicit source-readiness reruns from the stored original inventory and reject missing originals instead of falling back to generated `DSB_*` authoring meshes.
+- Verify the existing source contract during export without rerunning or overwriting the full readiness report.
+- Add **Repair Source Readiness Contract** for affected 3.8 files; repair rebuilds only the source report/contract and preserves segment topology, deformation keys, and trauma stamps.
+- Define staleness around original topology, relevant weights, armature/mapping, compatible analyzer revision, object/datablock identity, and source collection identity while ignoring generated authoring and preview/export state.
+- Reject a procedural deformation stack with no enabled trauma stamp as a genuine authoring/export validation error.
+- Add focused source-contract regression coverage and retain the exact Blender 5.1 extension ZIP layout.
+
 ## 3.10.1
 
 - Add `docs/USER_WORKFLOW_GUIDE.md` as the release-controlled, beginner-facing source of truth for every current Forge workflow, public operator, validation path, and export/reimport recipe.

@@ -1,4 +1,4 @@
-"""Dreadstone Animation Forge v3.10.1 trauma-field authoring.
+"""Dreadstone Animation Forge v3.10.2 trauma-field authoring.
 
 The workbench edits only registered attached/detached regions on the generated
 protected Damage Asset. Paired morph targets remain exact-index synchronized in
@@ -18,8 +18,8 @@ from bpy.types import Operator
 from . import trauma_field
 
 DEFORMATION_SCHEMA = "dreadstone.damage_deformation.v1"
-DEFORMATION_VERSION = (3, 10, 1)
-DEFORMATION_BUILD_ID = "2026-07-18.trauma-hotfix.1"
+DEFORMATION_VERSION = (3, 10, 2)
+DEFORMATION_BUILD_ID = "2026-07-18.source-contract.1"
 ATTACHED_HEAD_NAME = "DSB_ATTACHED_HEAD"
 DETACHED_HEAD_NAME = "DSB_SEGMENT_HEAD"
 PREVIEW_KEY_NAME = "__DSB_DEFORMATION_SEED_PREVIEW"
@@ -1541,6 +1541,7 @@ def validate_deformations(require_keys=False):
                 region_errors.append(f"Managed deformation {name} exceeds its maximum displacement: {measured:.6f} m > {maximum:.6f} m.")
             stamps = entry.get("stamps", [])
             stamp_errors = trauma_field.validate_stamp_stack(stamps) if stamps else []
+            stamp_errors.extend(trauma_field.enabled_stamp_contract_errors(stamps, name))
             region_errors.extend(f"Managed deformation {name}: {message}" for message in stamp_errors)
             for stamp in stamps:
                 region_errors.extend(

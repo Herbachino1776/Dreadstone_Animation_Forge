@@ -1,8 +1,8 @@
-"""Dreadstone Animation Forge v3.9 damage segment, stump, and morph export authoring.
+"""Dreadstone Animation Forge v3.9.1 damage segment, stump, and morph export authoring.
 
-Consumes a READY virtual-weld v3.7.4 report, validates source fingerprints,
+Consumes a READY source-readiness contract, validates original-source identity,
 and creates copied, materially cut segment meshes. The imported source mesh and
-armature datablocks are never edited.
+armature datablocks are never edited beyond stable identity metadata.
 """
 
 import bpy
@@ -17,11 +17,11 @@ from mathutils import Matrix, Vector
 from mathutils.kdtree import KDTree
 from bpy.types import Operator
 
-from . import damage_readiness
+from . import damage_readiness, trauma_field
 
 AUTHORING_SCHEMA = "dreadstone.damage_authoring.v1"
-AUTHORING_VERSION = (3, 9, 0)
-AUTHORING_BUILD_ID = "2026-07-16.segment-stump-deform.1"
+AUTHORING_VERSION = (3, 9, 1)
+AUTHORING_BUILD_ID = "2026-07-18.source-contract.1"
 READINESS_SCHEMA = "dreadstone.damage_readiness.v1"
 READINESS_REVISION_REQUIRED = "virtual_weld_v3.7.4"
 STATE_TEXT_NAME = "DSB_DAMAGE_AUTHORING_STATE.json"
@@ -361,7 +361,23 @@ def _validate_report_structure(report):
     if report.get("analyzer_revision") != READINESS_REVISION_REQUIRED:
         raise RuntimeError("Forge v3.8 requires a virtual-weld v3.7.4 readiness report.")
     if not report.get("overall_readiness", {}).get("ready_for_v3_8_segment_authoring", False):
-        raise RuntimeError("The selected readiness report is not READY for v3.8 authoring.")
+        raise RuntimeError("Source readiness is not READY for authoring.")
+    source_contract = report.get("source_contract") or {}
+    if source_contract.get("schema") != damage_readiness.SOURCE_CONTRACT_SCHEMA:
+        raise RuntimeError(
+            "Source readiness contract is missing or predates v3.8.1. "
+            "Run Repair Source Readiness Contract before authoring or export."
+        )
+    generated_inventory = [
+        name for name in source_contract.get("analyzedObjectNames", [])
+        if trauma_field.is_generated_authoring_role(name)
+    ]
+    if generated_inventory:
+        raise RuntimeError(
+            "Source readiness contract incorrectly contains generated authoring meshes: "
+            + ", ".join(generated_inventory)
+            + ". Run Repair Source Readiness Contract."
+        )
     seams = {entry.get("id"): entry for entry in report.get("seam_reports", [])}
     for seam_id, spec in SEAM_SPECS.items():
         seam = seams.get(seam_id)
@@ -378,22 +394,19 @@ def _source_mesh_from_report(context, report):
     mesh_reports = report.get("mesh_reports", [])
     if not mesh_reports:
         raise RuntimeError("The report contains no mesh fingerprint.")
-    expected = mesh_reports[0]
-    candidates = []
-    named = bpy.data.objects.get(expected.get("object_name", ""))
-    if named and named.type == 'MESH' and not named.get("dsb_damage_generated", False):
-        candidates.append(named)
-    for obj in context.selected_objects:
-        if obj.type == 'MESH' and obj not in candidates and not obj.get("dsb_damage_generated", False):
-            candidates.append(obj)
-    for obj in context.scene.objects:
-        if obj.type == 'MESH' and obj not in candidates and not obj.get("dsb_damage_generated", False):
-            if obj.data.name == expected.get("mesh_datablock_name"):
-                candidates.append(obj)
+    _armature, candidates = damage_readiness._resolve_contract_objects(
+        report.get("source_contract") or {}
+    )
     relevant_groups = sorted(set((report.get("semantic_bone_mapping") or {}).values()))
-    expected_fp = expected.get("fingerprints", {})
     checked = []
     for obj in candidates:
+        expected = next(
+            (entry for entry in mesh_reports if entry.get("object_name") == obj.name),
+            None,
+        )
+        if expected is None:
+            continue
+        expected_fp = expected.get("fingerprints", {})
         checked.append(obj.name)
         try:
             analyzed, topology = damage_readiness.analyze_mesh_object(obj, relevant_groups)
@@ -406,12 +419,16 @@ def _source_mesh_from_report(context, report):
         ):
             return obj, analyzed, topology
     raise RuntimeError(
-        "No current mesh matches the readiness topology and weight fingerprints. Checked: "
+        "Source readiness stale: no registered original source mesh matches the topology and weight fingerprints. Checked: "
         + ", ".join(checked or ["none"])
     )
 
 
 def _source_armature(source_mesh, report):
+    contract = report.get("source_contract") or {}
+    if contract:
+        armature, _meshes = damage_readiness._resolve_contract_objects(contract)
+        return armature
     named = bpy.data.objects.get(report.get("armature_name", ""))
     if named and named.type == 'ARMATURE':
         return named
@@ -433,6 +450,14 @@ def _copy_object_to_collection(source, collection, name, copy_data=True):
         obj.data = source.data.copy()
     obj.name = name
     collection.objects.link(obj)
+    for key in (
+        damage_readiness.SOURCE_OBJECT_ID_PROPERTY,
+        damage_readiness.SOURCE_ROLE_PROPERTY,
+    ):
+        if key in obj:
+            del obj[key]
+    if getattr(obj, "data", None) is not None and damage_readiness.SOURCE_DATA_ID_PROPERTY in obj.data:
+        del obj.data[damage_readiness.SOURCE_DATA_ID_PROPERTY]
     obj.parent = None
     obj.matrix_world = world
     obj["dsb_damage_generated"] = True
@@ -1238,6 +1263,14 @@ def _build_authoring_asset_impl(context, report_path, report, seams, source_mesh
     _parent_preserve_world(socket, upper)
     objects[socket.name] = socket
 
+    source_contract = report.get("source_contract") or {}
+    source_contract_record = next(
+        (
+            record for record in source_contract.get("sourceMeshes", [])
+            if record.get("objectName") == source_mesh.name
+        ),
+        {},
+    )
     state = {
         "schema": AUTHORING_SCHEMA,
         "authoring_version": _version_string(),
@@ -1246,12 +1279,17 @@ def _build_authoring_asset_impl(context, report_path, report, seams, source_mesh
         "readiness_report_path": report_path,
         "readiness_analyzer_revision": report.get("analyzer_revision"),
         "readiness_analyzer_build_id": report.get("analyzer_build_id"),
+        "source_readiness_contract": source_contract,
         "source_object_name": source_mesh.name,
         "source_mesh_datablock_name": source_mesh.data.name,
         "source_armature_name": source_armature.name,
         "source_object_matrix_world": [list(row) for row in source_mesh.matrix_world],
         "source_object_scale": [float(value) for value in source_mesh.matrix_world.to_scale()],
         "source_fingerprints": source_analysis.get("fingerprints", {}),
+        "source_contract_fingerprints": {
+            "topology_sha256": source_contract_record.get("topologySha256"),
+            "vertex_group_sha256": source_contract_record.get("weightSha256"),
+        },
         "relevant_vertex_groups": relevant_groups,
         "virtual_weld_tolerance": float(topology["virtual_weld_tolerance"]),
         "raw_vertex_count": len(protected.data.vertices),
@@ -1359,15 +1397,22 @@ def _preview_detached(state, seam_id):
 
 
 def _validate_current_source(state):
-    source = bpy.data.objects.get(state.get("source_object_name", ""))
-    if source is None or source.type != 'MESH':
-        raise RuntimeError("The original source mesh is missing from this Blend file.")
-    analyzed, _topology = damage_readiness.analyze_mesh_object(source, state.get("relevant_vertex_groups") or None)
-    current, expected = analyzed.get("fingerprints", {}), state.get("source_fingerprints", {})
-    if current.get("topology_sha256") != expected.get("topology_sha256"):
-        raise RuntimeError("Source topology changed after v3.8 authoring.")
-    if current.get("vertex_group_sha256") != expected.get("vertex_group_sha256"):
-        raise RuntimeError("Source seam weights changed after v3.8 authoring.")
+    contract = state.get("source_readiness_contract")
+    validation = damage_readiness.validate_source_readiness_contract(contract, bpy.context)
+    if validation["status"] != "PASS":
+        label = "Source readiness stale" if validation["status"] == "STALE" else "Source readiness invalid"
+        raise RuntimeError(label + ": " + "; ".join(validation["reasons"][:4]))
+    source = next(
+        (
+            bpy.data.objects.get(name) for name in validation["sourceObjects"]
+            if bpy.data.objects.get(name) is not None and bpy.data.objects.get(name).type == 'MESH'
+        ),
+        None,
+    )
+    if source is None:
+        raise RuntimeError(
+            f"Source readiness stale: original source mesh {state.get('source_object_name', '<unknown>')} is missing or replaced."
+        )
     return source
 
 
@@ -1567,6 +1612,11 @@ def _validate_authoring(state, gap_tolerance=0.0005):
         "errors": errors,
         "warnings": warnings,
         "generated_object_count": len(_all_generated_objects(state)),
+        "source_readiness": {
+            "status": "PASS",
+            "contract_schema": (state.get("source_readiness_contract") or {}).get("schema"),
+            "source_objects": (state.get("source_readiness_contract") or {}).get("analyzedObjectNames", []),
+        },
         "deformation": deformation_validation,
     }
 
@@ -1634,6 +1684,25 @@ def _manifest(state, validation, glb_filename):
         "source": {
             "object": state["source_object_name"],
             "armature": state["source_armature_name"],
+            "readinessContractSchema": (state.get("source_readiness_contract") or {}).get("schema"),
+            "objectId": next(
+                (
+                    record.get("objectId")
+                    for record in (state.get("source_readiness_contract") or {}).get("sourceMeshes", [])
+                    if record.get("objectName") == state["source_object_name"]
+                ),
+                None,
+            ),
+            "meshDataId": next(
+                (
+                    record.get("dataId")
+                    for record in (state.get("source_readiness_contract") or {}).get("sourceMeshes", [])
+                    if record.get("objectName") == state["source_object_name"]
+                ),
+                None,
+            ),
+            "armatureObjectId": ((state.get("source_readiness_contract") or {}).get("sourceArmature") or {}).get("objectId"),
+            "armatureDataId": ((state.get("source_readiness_contract") or {}).get("sourceArmature") or {}).get("dataId"),
             "topologyFingerprint": state["source_fingerprints"]["topology_sha256"],
             "weightFingerprint": state["source_fingerprints"]["vertex_group_sha256"],
             "readinessAnalyzerRevision": state["readiness_analyzer_revision"],
@@ -1664,10 +1733,17 @@ def _export_asset(context, settings, state):
     if getattr(context, "mode", "OBJECT") != 'OBJECT':
         raise RuntimeError("Switch Blender to Object Mode before exporting the Damage GLB.")
     from . import deformation_authoring
-    deformation_authoring.prepare_for_export()
-    validation = _validate_authoring(state, settings.damage_authoring_gap_tolerance)
+    try:
+        _validate_current_source(state)
+        deformation_authoring.prepare_for_export()
+        validation = _validate_authoring(state, settings.damage_authoring_gap_tolerance)
+    except Exception as exc:
+        raise RuntimeError(f"Export validation failed: {exc}") from exc
     if validation["status"] != "PASS":
-        raise RuntimeError("Damage asset validation failed: " + "; ".join(validation["errors"][:4]))
+        raise RuntimeError(
+            "Export validation failed: Authoring validation failed: "
+            + "; ".join(validation["errors"][:4])
+        )
     output_dir = _resolve_export_directory(settings)
     base = re.sub(r"[^A-Za-z0-9._-]+", "_", settings.damage_authoring_filename.strip() or "testman_damage_v001")
     glb_path = os.path.join(output_dir, base + ".glb")
@@ -1746,7 +1822,10 @@ class DAF_OT_load_damage_readiness_handoff(Operator):
             source, _analysis, _topology = _source_mesh_from_report(context, report)
             settings.damage_authoring_report_path = path
             settings.damage_authoring_status = "READY HANDOFF LOADED"
-            self.report({'INFO'}, f"READY handoff loaded for {source.name}.")
+            settings.source_readiness_contract_status = "VALID"
+            settings.last_damage_authoring_validation = "NOT VALIDATED"
+            settings.last_damage_export_validation = "NOT VALIDATED"
+            self.report({'INFO'}, f"Source readiness valid for {source.name}; READY handoff loaded.")
             return {'FINISHED'}
         except Exception as exc:
             self.report({'ERROR'}, str(exc))
@@ -1771,7 +1850,9 @@ class DAF_OT_build_damage_authoring_asset(Operator):
             state = _build_authoring_asset(context, path, report, seams, source, analysis)
             settings.damage_authoring_report_path = path
             settings.damage_authoring_status = "BUILT — INTACT PREVIEW"
+            settings.source_readiness_contract_status = "VALID"
             settings.last_damage_authoring_validation = "NOT VALIDATED"
+            settings.last_damage_export_validation = "NOT VALIDATED"
             self.report({'INFO'}, f"Forge v3.9 built {len(_all_generated_objects(state))} authoring objects.")
             return {'FINISHED'}
         except Exception as exc:
@@ -1791,6 +1872,7 @@ class DAF_OT_clear_damage_authoring_asset(Operator):
             settings = context.scene.daf_settings
             settings.damage_authoring_status = "NOT BUILT"
             settings.last_damage_authoring_validation = "NOT VALIDATED"
+            settings.last_damage_export_validation = "NOT VALIDATED"
             self.report({'INFO'}, "Removed the generated damage authoring asset and restored the source.")
             return {'FINISHED'}
         except Exception as exc:
@@ -1871,14 +1953,23 @@ class DAF_OT_validate_damage_authoring_asset(Operator):
             settings = context.scene.daf_settings
             result = _validate_authoring(_load_state(), settings.damage_authoring_gap_tolerance)
             settings.last_damage_authoring_validation = result["status"]
-            settings.damage_authoring_status = "VALIDATION " + result["status"]
+            settings.last_damage_export_validation = "NOT VALIDATED"
+            settings.source_readiness_contract_status = result["source_readiness"]["status"]
+            settings.damage_authoring_status = "AUTHORING VALIDATION " + result["status"]
             if result["status"] == "PASS":
-                self.report({'INFO'}, "Damage asset validation passed.")
+                self.report({'INFO'}, "Authoring validation passed.")
                 return {'FINISHED'}
-            self.report({'ERROR'}, "; ".join(result["errors"][:4]))
+            self.report({'ERROR'}, "Authoring validation failed: " + "; ".join(result["errors"][:4]))
             return {'CANCELLED'}
         except Exception as exc:
-            self.report({'ERROR'}, str(exc))
+            settings = context.scene.daf_settings
+            settings.last_damage_authoring_validation = "FAIL"
+            settings.last_damage_export_validation = "NOT VALIDATED"
+            if "Source readiness stale" in str(exc):
+                settings.source_readiness_contract_status = "STALE"
+            elif "Source readiness invalid" in str(exc):
+                settings.source_readiness_contract_status = "INVALID"
+            self.report({'ERROR'}, "Authoring validation failed: " + str(exc))
             return {'CANCELLED'}
 
 
@@ -1897,9 +1988,17 @@ class DAF_OT_export_damage_asset(Operator):
             settings.last_damage_validation_path = validation_path
             settings.damage_authoring_status = "EXPORTED"
             settings.last_damage_authoring_validation = "PASS"
+            settings.last_damage_export_validation = "PASS"
+            settings.source_readiness_contract_status = "VALID"
             self.report({'INFO'}, f"Exported {os.path.basename(glb_path)} and validated manifest.")
             return {'FINISHED'}
         except Exception as exc:
+            settings = context.scene.daf_settings
+            settings.last_damage_export_validation = "FAIL"
+            if "Source readiness stale" in str(exc):
+                settings.source_readiness_contract_status = "STALE"
+            elif "Source readiness invalid" in str(exc):
+                settings.source_readiness_contract_status = "INVALID"
             self.report({'ERROR'}, str(exc))
             return {'CANCELLED'}
 

@@ -1,9 +1,10 @@
-"""Dreadstone Animation Forge v3.8 damage-readiness diagnostics.
+"""Dreadstone Animation Forge v3.8.1 source-readiness diagnostics.
 
 The analyzer is deliberately non-destructive. It reads source mesh datablocks,
 builds shell-aware seam candidates, exports fingerprinted reports, and creates
 temporary viewport-only preview helpers. It never edits source geometry, weights,
-modifiers, armatures, actions, shape keys, or transforms.
+modifiers, actions, shape keys, or transforms. It stores stable source identity
+as custom metadata so generated authoring meshes can never replace the source.
 """
 
 import bpy
@@ -12,15 +13,25 @@ import json
 import math
 import os
 import re
+import uuid
 from collections import Counter, defaultdict, deque
 from datetime import datetime, timezone
 from mathutils import Vector
 from bpy.types import Operator
 
+from . import trauma_field
+
 REPORT_SCHEMA = "dreadstone.damage_readiness.v1"
 ANALYZER_REVISION = "virtual_weld_v3.7.4"
-ANALYZER_BUILD_ID = "2026-07-15.virtual-weld.1"
-ADDON_VERSION = (3, 8, 0)
+ANALYZER_BUILD_ID = "2026-07-18.source-contract.1"
+ADDON_VERSION = (3, 8, 1)
+SOURCE_CONTRACT_SCHEMA = "dreadstone.source_readiness.v1"
+SOURCE_CONTRACT_TEXT_NAME = "DSB_SOURCE_READINESS_CONTRACT.json"
+SOURCE_OBJECT_ID_PROPERTY = "dsb_source_readiness_object_id"
+SOURCE_DATA_ID_PROPERTY = "dsb_source_readiness_data_id"
+SOURCE_COLLECTION_ID_PROPERTY = "dsb_source_readiness_collection_id"
+SOURCE_ROLE_PROPERTY = "dsb_source_readiness_role"
+AUTHORING_STATE_TEXT_NAME = "DSB_DAMAGE_AUTHORING_STATE.json"
 WEIGHT_SUM_TOLERANCE = 0.01
 CROSSOVER_WEIGHT_THRESHOLD = 0.15
 MIN_COMBINED_SEAM_WEIGHT = 0.20
@@ -125,13 +136,186 @@ def _restore_context_state(context, state):
             pass
 
 
-def _related_helpers(context):
-    from . import character_meshes, detect_animate_anything_profile, find_armature, map_bones
-    armature = find_armature(context)
-    meshes = character_meshes(context)
+def _is_generated_authoring_object(obj):
+    return trauma_field.is_generated_authoring_role(
+        getattr(obj, "name", ""),
+        generated=bool(obj.get("dsb_damage_generated", False)),
+        damage_role=str(obj.get("dsb_damage_role", "")),
+    )
+
+
+def _stable_id(id_block, property_name):
+    value = str(id_block.get(property_name, "")).strip()
+    if not value:
+        value = uuid.uuid4().hex
+        id_block[property_name] = value
+    return value
+
+
+def _armature_contract_fingerprint(armature):
+    digest = hashlib.sha256()
+    bones = sorted(armature.data.bones, key=lambda bone: bone.name.lower())
+    digest.update(f"bones:{len(bones)}\n".encode("utf-8"))
+    for bone in bones:
+        matrix = ",".join(
+            f"{float(bone.matrix_local[row][column]):.8f}"
+            for row in range(4) for column in range(4)
+        )
+        digest.update(
+            f"{bone.name}|{bone.parent.name if bone.parent else ''}|{int(bone.use_deform)}|{matrix}\n".encode("utf-8")
+        )
+    return digest.hexdigest()
+
+
+def _load_json_text(name):
+    text = bpy.data.texts.get(name)
+    if text is None:
+        return None
+    try:
+        value = json.loads(text.as_string())
+    except Exception as exc:
+        raise RuntimeError(f"Stored {name} metadata is invalid.") from exc
+    return value if isinstance(value, dict) else None
+
+
+def _store_json_text(name, payload):
+    text = bpy.data.texts.get(name) or bpy.data.texts.new(name)
+    text.clear()
+    text.write(json.dumps(payload, indent=2, ensure_ascii=False))
+
+
+def load_source_readiness_contract():
+    contract = _load_json_text(SOURCE_CONTRACT_TEXT_NAME)
+    if contract and contract.get("schema") == SOURCE_CONTRACT_SCHEMA:
+        return contract
+    return None
+
+
+def _object_from_contract(record, expected_type, label):
+    object_id = str(record.get("objectId", ""))
+    candidates = [
+        obj for obj in bpy.data.objects
+        if str(obj.get(SOURCE_OBJECT_ID_PROPERTY, "")) == object_id
+        and not _is_generated_authoring_object(obj)
+    ] if object_id else []
+    if not candidates and not object_id:
+        named = bpy.data.objects.get(str(record.get("objectName", "")))
+        if named is not None:
+            candidates = [named]
+    if len(candidates) != 1:
+        raise RuntimeError(
+            f"Source readiness stale: {label} identity was lost or replaced. "
+            "Restore the original source object; Forge will not fall back to generated authoring meshes."
+        )
+    obj = candidates[0]
+    if obj.type != expected_type or _is_generated_authoring_object(obj):
+        raise RuntimeError(
+            f"Source readiness stale: {label} resolved to generated or incompatible object {obj.name}."
+        )
+    expected_data_id = str(record.get("dataId", ""))
+    current_data_id = str(getattr(obj, "data", None).get(SOURCE_DATA_ID_PROPERTY, "")) if getattr(obj, "data", None) else ""
+    if expected_data_id and expected_data_id != current_data_id:
+        raise RuntimeError(
+            f"Source readiness stale: {obj.name} datablock identity was lost or replaced."
+        )
+    return obj
+
+
+def _resolve_contract_objects(contract):
+    armature = _object_from_contract(
+        contract.get("sourceArmature") or {}, 'ARMATURE', "source armature"
+    )
+    records = contract.get("sourceMeshes") or []
+    if not records:
+        raise RuntimeError("Source readiness stale: the stored source mesh inventory is empty.")
+    meshes = [
+        _object_from_contract(record, 'MESH', f"source mesh {record.get('objectName', '<unknown>')}")
+        for record in records
+    ]
+    return armature, meshes
+
+
+def _resolve_authoring_state_objects(context, state):
+    from . import detect_animate_anything_profile, map_bones
+
+    source_name = str(state.get("source_object_name", ""))
+    source = bpy.data.objects.get(source_name)
+    if source is None or source.type != 'MESH' or _is_generated_authoring_object(source):
+        raise RuntimeError(
+            f"Source readiness stale: original source mesh {source_name or '<unknown>'} is missing. "
+            "Restore the original source object; generated DSB_* meshes cannot replace it."
+        )
+    armature_name = str(state.get("source_armature_name", ""))
+    armature = bpy.data.objects.get(armature_name)
+    if armature is None or armature.type != 'ARMATURE' or _is_generated_authoring_object(armature):
+        raise RuntimeError(
+            f"Source readiness stale: original source armature {armature_name or '<unknown>'} is missing."
+        )
+    linked_armatures = {
+        modifier.object for modifier in source.modifiers
+        if modifier.type == 'ARMATURE' and modifier.object is not None
+    }
+    if armature not in linked_armatures:
+        raise RuntimeError(
+            f"Source readiness stale: {source.name} no longer references original armature {armature.name}."
+        )
+    analyzed, _topology = analyze_mesh_object(
+        source, state.get("relevant_vertex_groups") or None
+    )
+    current = analyzed.get("fingerprints") or {}
+    expected = state.get("source_fingerprints") or {}
+    if expected.get("topology_sha256") != current.get("topology_sha256"):
+        raise RuntimeError(
+            f"Source readiness stale: {source.name} topology fingerprint changed "
+            f"(expected {expected.get('topology_sha256')}, current {current.get('topology_sha256')})."
+        )
+    if expected.get("vertex_group_sha256") != current.get("vertex_group_sha256"):
+        raise RuntimeError(
+            f"Source readiness stale: {source.name} relevant-weight fingerprint changed "
+            f"(expected {expected.get('vertex_group_sha256')}, current {current.get('vertex_group_sha256')})."
+        )
     mapping = map_bones(armature, context.scene.daf_settings)
     profile = "animate_anything_testman" if detect_animate_anything_profile(armature) else "generic_humanoid"
-    return armature, meshes, mapping, profile
+    return armature, [source], mapping, profile, "authoring_state_recovery"
+
+
+def resolve_source_readiness_inputs(context):
+    """Resolve preserved source objects before considering current selection."""
+
+    from . import detect_animate_anything_profile, map_bones, related
+
+    contract = load_source_readiness_contract()
+    if contract is not None:
+        armature, meshes = _resolve_contract_objects(contract)
+        mapping = map_bones(armature, context.scene.daf_settings)
+        profile = "animate_anything_testman" if detect_animate_anything_profile(armature) else "generic_humanoid"
+        return armature, meshes, mapping, profile, "stored_source_contract"
+
+    authoring_state = _load_json_text(AUTHORING_STATE_TEXT_NAME)
+    if authoring_state is not None:
+        return _resolve_authoring_state_objects(context, authoring_state)
+
+    objects = [obj for obj in related(context) if not _is_generated_authoring_object(obj)]
+    meshes = sorted(
+        [obj for obj in objects if obj.type == 'MESH' and obj.name != "DSB_PREVIEW_FLOOR"],
+        key=lambda obj: obj.name.lower(),
+    )
+    if not meshes:
+        raise RuntimeError(
+            "Source Damage Readiness found only generated authoring objects. "
+            "Select the original imported source, or use Repair Source Readiness Contract."
+        )
+    armatures = {obj for obj in objects if obj.type == 'ARMATURE'}
+    for mesh in meshes:
+        for modifier in mesh.modifiers:
+            if modifier.type == 'ARMATURE' and modifier.object and not _is_generated_authoring_object(modifier.object):
+                armatures.add(modifier.object)
+    if not armatures:
+        raise RuntimeError("No original source armature was found for Source Damage Readiness.")
+    armature = max(armatures, key=lambda obj: len(obj.data.bones))
+    mapping = map_bones(armature, context.scene.daf_settings)
+    profile = "animate_anything_testman" if detect_animate_anything_profile(armature) else "generic_humanoid"
+    return armature, meshes, mapping, profile, "source_selection"
 
 
 def _edge_key(a, b):
@@ -485,20 +669,30 @@ def _mesh_fingerprints(obj, topology, relevant_groups=None):
     mesh = obj.data
     topology_hash = hashlib.sha256()
     topology_hash.update(f"{obj.name}|{mesh.name}|{len(mesh.vertices)}|{len(mesh.edges)}|{len(mesh.polygons)}\n".encode("utf-8"))
+    contract_topology_hash = hashlib.sha256()
+    contract_topology_hash.update(f"{len(mesh.vertices)}|{len(mesh.edges)}|{len(mesh.polygons)}\n".encode("utf-8"))
     for vertex in mesh.vertices:
-        topology_hash.update(("v:%d:%.8f,%.8f,%.8f\n" % (
+        record = ("v:%d:%.8f,%.8f,%.8f\n" % (
             vertex.index, vertex.co.x, vertex.co.y, vertex.co.z,
-        )).encode("utf-8"))
+        )).encode("utf-8")
+        topology_hash.update(record)
+        contract_topology_hash.update(record)
     for edge in mesh.edges:
-        topology_hash.update(f"e:{edge.index}:{int(edge.vertices[0])},{int(edge.vertices[1])}\n".encode("utf-8"))
+        record = f"e:{edge.index}:{int(edge.vertices[0])},{int(edge.vertices[1])}\n".encode("utf-8")
+        topology_hash.update(record)
+        contract_topology_hash.update(record)
     for polygon_index, vertices in enumerate(topology["polygon_vertices"]):
-        topology_hash.update(f"p:{polygon_index}:{','.join(str(value) for value in vertices)}\n".encode("utf-8"))
+        record = f"p:{polygon_index}:{','.join(str(value) for value in vertices)}\n".encode("utf-8")
+        topology_hash.update(record)
+        contract_topology_hash.update(record)
 
     weight_hash = hashlib.sha256()
+    contract_weight_hash = hashlib.sha256()
     group_names = [group.name for group in obj.vertex_groups]
     relevant = set(relevant_groups or group_names)
     group_name_by_index = {group.index: group.name for group in obj.vertex_groups}
     weight_hash.update(("groups:" + "|".join(group_names) + "\n").encode("utf-8"))
+    contract_weight_hash.update(("relevant-groups:" + "|".join(sorted(relevant)) + "\n").encode("utf-8"))
     for vertex in mesh.vertices:
         entries = []
         for membership in vertex.groups:
@@ -507,11 +701,15 @@ def _mesh_fingerprints(obj, topology, relevant_groups=None):
                 entries.append((name, round(float(membership.weight), 8)))
         entries.sort()
         if entries:
-            weight_hash.update(f"v:{vertex.index}:{entries}\n".encode("utf-8"))
+            record = f"v:{vertex.index}:{entries}\n".encode("utf-8")
+            weight_hash.update(record)
+            contract_weight_hash.update(record)
 
     return {
         "topology_sha256": topology_hash.hexdigest(),
         "vertex_group_sha256": weight_hash.hexdigest(),
+        "source_contract_topology_sha256": contract_topology_hash.hexdigest(),
+        "source_contract_weight_sha256": contract_weight_hash.hexdigest(),
     }
 
 
@@ -1224,8 +1422,101 @@ def _overall_summary(mesh_reports, seam_reports):
     }
 
 
+def _build_source_contract(armature, meshes, mapping, report, resolution, write_identity=True):
+    by_name = {entry.get("object_name"): entry for entry in report.get("mesh_reports", [])}
+    if write_identity:
+        armature[SOURCE_ROLE_PROPERTY] = "source_armature"
+    identity = _stable_id if write_identity else lambda id_block, key: str(id_block.get(key, ""))
+    armature_id = identity(armature, SOURCE_OBJECT_ID_PROPERTY)
+    armature_data_id = identity(armature.data, SOURCE_DATA_ID_PROPERTY)
+    source_collections = {}
+
+    def collection_records(obj):
+        records = []
+        for collection in sorted(obj.users_collection, key=lambda value: value.name.lower()):
+            collection_id = identity(collection, SOURCE_COLLECTION_ID_PROPERTY)
+            records.append({"name": collection.name, "id": collection_id})
+            source_collections[collection_id] = collection.name
+        return records
+
+    mesh_records = []
+    for obj in sorted(meshes, key=lambda value: value.name.lower()):
+        if write_identity:
+            obj[SOURCE_ROLE_PROPERTY] = "source_mesh"
+        analysis = by_name.get(obj.name) or {}
+        fingerprints = analysis.get("fingerprints") or {}
+        mesh_records.append({
+            "objectName": obj.name,
+            "objectId": identity(obj, SOURCE_OBJECT_ID_PROPERTY),
+            "dataName": obj.data.name,
+            "dataId": identity(obj.data, SOURCE_DATA_ID_PROPERTY),
+            "collections": collection_records(obj),
+            "topologySha256": fingerprints.get("source_contract_topology_sha256", fingerprints.get("topology_sha256")),
+            "weightSha256": fingerprints.get("source_contract_weight_sha256", fingerprints.get("vertex_group_sha256")),
+        })
+    return {
+        "schema": SOURCE_CONTRACT_SCHEMA,
+        "contractVersion": 1,
+        "reportSchema": REPORT_SCHEMA,
+        "analyzerRevision": ANALYZER_REVISION,
+        "analyzerBuildId": ANALYZER_BUILD_ID,
+        "generatedAtUtc": report.get("generated_at_utc"),
+        "resolution": resolution,
+        "ready": bool(report.get("overall_readiness", {}).get("ready_for_v3_8_segment_authoring")),
+        "sourceArmature": {
+            "objectName": armature.name,
+            "objectId": armature_id,
+            "dataName": armature.data.name,
+            "dataId": armature_data_id,
+            "armatureSha256": _armature_contract_fingerprint(armature),
+            "semanticBoneMapping": dict(sorted(mapping.items())),
+            "collections": collection_records(armature),
+        },
+        "sourceMeshes": mesh_records,
+        "sourceCollections": [
+            {"id": collection_id, "name": source_collections[collection_id]}
+            for collection_id in sorted(source_collections)
+        ],
+        "analyzedObjectNames": [record["objectName"] for record in mesh_records],
+    }
+
+
+def validate_source_readiness_contract(contract, context):
+    if not contract or contract.get("schema") != SOURCE_CONTRACT_SCHEMA:
+        raise RuntimeError(
+            "Source readiness contract is missing or predates v3.8.1. "
+            "Run Repair Source Readiness Contract before export."
+        )
+    armature, meshes = _resolve_contract_objects(contract)
+    from . import map_bones
+    mapping = map_bones(armature, context.scene.daf_settings)
+    relevant_groups = sorted(set(mapping.values()))
+    mesh_reports = []
+    for obj in meshes:
+        analysis, _topology = analyze_mesh_object(obj, relevant_groups)
+        mesh_reports.append(analysis)
+    current_report = {
+        "generated_at_utc": _utc_timestamp(),
+        "overall_readiness": {"ready_for_v3_8_segment_authoring": bool(contract.get("ready"))},
+        "mesh_reports": mesh_reports,
+    }
+    current = _build_source_contract(
+        armature, meshes, mapping, current_report, "export_validation", write_identity=False
+    )
+    reasons = trauma_field.source_readiness_stale_reasons(contract, current)
+    if not contract.get("ready", False):
+        reasons.insert(0, "source readiness contract is not READY")
+    return {
+        "status": "PASS" if not reasons else ("INVALID" if not contract.get("ready", False) else "STALE"),
+        "reasons": reasons,
+        "expected": contract,
+        "current": current,
+        "sourceObjects": [obj.name for obj in meshes],
+    }
+
+
 def build_damage_readiness_report(context):
-    armature, meshes, mapping, profile = _related_helpers(context)
+    armature, meshes, mapping, profile, resolution = resolve_source_readiness_inputs(context)
     relevant_groups = [name for name in mapping.values() if name]
     mesh_reports = []
     mesh_reports_by_name = {}
@@ -1282,7 +1573,7 @@ def build_damage_readiness_report(context):
 
     summary = _overall_summary(mesh_reports, seam_reports)
     source_path = bpy.data.filepath or ""
-    return {
+    report = {
         "schema": REPORT_SCHEMA,
         "analyzer_revision": ANALYZER_REVISION,
         "analyzer_build_id": ANALYZER_BUILD_ID,
@@ -1304,10 +1595,15 @@ def build_damage_readiness_report(context):
         "warnings": warnings,
         "errors": errors,
     }
+    report["source_contract"] = _build_source_contract(
+        armature, meshes, mapping, report, resolution
+    )
+    return report
 
 
 def _markdown_report(report):
     overall = report["overall_readiness"]
+    source_contract = report.get("source_contract") or {}
     lines = [
         "# Dreadstone Damage Readiness Report",
         "",
@@ -1321,6 +1617,8 @@ def _markdown_report(report):
         f"- Source: `{report['source_blend_path'] or '(unsaved blend)'}`",
         f"- Armature: `{report['armature_name']}`",
         f"- Rig profile: `{report['detected_rig_profile']}`",
+        f"- Source contract: `{source_contract.get('schema', 'missing')}`",
+        f"- Source inventory: `{', '.join(source_contract.get('analyzedObjectNames', [])) or 'missing'}`",
         "",
         "## Overall Readiness",
         "",
@@ -1457,9 +1755,9 @@ def resolve_damage_readiness_output_directory(settings):
     return os.path.normpath(output_directory)
 
 
-def write_damage_readiness_reports(context, report):
+def write_damage_readiness_reports(context, report, output_directory=None):
     settings = context.scene.daf_settings
-    output_directory = resolve_damage_readiness_output_directory(settings)
+    output_directory = output_directory or resolve_damage_readiness_output_directory(settings)
     os.makedirs(output_directory, exist_ok=True)
     character_name = _safe_name(report.get("armature_name") or "character")
     json_path = os.path.join(output_directory, f"{character_name}_damage_readiness.json")
@@ -1471,10 +1769,85 @@ def write_damage_readiness_reports(context, report):
     return json_path, markdown_path
 
 
+def _update_authoring_state_source_contract(contract, json_path):
+    state = _load_json_text(AUTHORING_STATE_TEXT_NAME)
+    if state is None:
+        return False
+    source_records = contract.get("sourceMeshes") or []
+    expected = state.get("source_fingerprints") or {}
+    prior_contract = state.get("source_readiness_contract") or {}
+    prior_record = next(
+        (
+            record for record in (prior_contract.get("sourceMeshes") or [])
+            if record.get("objectName") == state.get("source_object_name")
+        ),
+        None,
+    )
+    matching = next(
+        (
+            record for record in source_records
+            if (
+                (prior_record and record.get("objectId") == prior_record.get("objectId"))
+                or record.get("objectName") == state.get("source_object_name")
+                or (
+                    record.get("topologySha256") == expected.get("topology_sha256")
+                    and record.get("weightSha256") == expected.get("vertex_group_sha256")
+                )
+            )
+        ),
+        None,
+    )
+    if matching is None:
+        return False
+    state["source_readiness_contract"] = contract
+    state["readiness_report_path"] = json_path
+    state["readiness_analyzer_revision"] = contract.get("analyzerRevision")
+    state["readiness_analyzer_build_id"] = contract.get("analyzerBuildId")
+    state["source_object_name"] = matching.get("objectName")
+    state["source_mesh_datablock_name"] = matching.get("dataName")
+    state["source_armature_name"] = (contract.get("sourceArmature") or {}).get("objectName")
+    state["source_contract_fingerprints"] = {
+        "topology_sha256": matching.get("topologySha256"),
+        "vertex_group_sha256": matching.get("weightSha256"),
+    }
+    _store_json_text(AUTHORING_STATE_TEXT_NAME, state)
+    return True
+
+
+def persist_source_readiness_contract(report, json_path, markdown_path):
+    contract = json.loads(json.dumps(report.get("source_contract") or {}))
+    if contract.get("schema") != SOURCE_CONTRACT_SCHEMA:
+        raise RuntimeError("Source Damage Readiness did not produce a valid source contract.")
+    contract["reportJsonPath"] = json_path
+    contract["reportMarkdownPath"] = markdown_path
+    _store_json_text(SOURCE_CONTRACT_TEXT_NAME, contract)
+    _update_authoring_state_source_contract(contract, json_path)
+    return contract
+
+
+def _repair_output_directory(settings):
+    raw = (settings.damage_readiness_output_directory or "").strip()
+    if raw:
+        return resolve_damage_readiness_output_directory(settings)
+    candidates = [settings.last_damage_readiness_json_path]
+    state = _load_json_text(AUTHORING_STATE_TEXT_NAME) or {}
+    candidates.append(str(state.get("readiness_report_path", "")))
+    for candidate in candidates:
+        path = os.path.abspath(bpy.path.abspath(candidate)) if candidate else ""
+        folder = os.path.dirname(path) if path else ""
+        if folder and os.path.isdir(folder) and not _is_drive_root(folder):
+            return folder
+    raise RuntimeError(
+        "Choose a Report Output Folder so Forge can restore the Source Readiness contract."
+    )
+
+
 def _set_last_results(settings, report, json_path, markdown_path):
     settings.last_damage_readiness_json_path = json_path
     settings.last_damage_readiness_markdown_path = markdown_path
-    settings.damage_readiness_overall_status = "READY" if report["overall_readiness"]["ready_for_v3_8_segment_authoring"] else "REVIEW"
+    is_ready = bool(report["overall_readiness"]["ready_for_v3_8_segment_authoring"])
+    settings.damage_readiness_overall_status = "SOURCE READY" if is_ready else "SOURCE REVIEW"
+    settings.source_readiness_contract_status = "VALID" if is_ready else "REVIEW"
     by_id = {entry["id"]: entry["recommendation"] for entry in report["seam_reports"]}
     settings.damage_readiness_head_neck_status = by_id.get("head_neck", "UNAVAILABLE")
     settings.damage_readiness_left_elbow_status = by_id.get("left_elbow", "UNAVAILABLE")
@@ -1485,7 +1858,7 @@ def _set_last_results(settings, report, json_path, markdown_path):
 def _load_last_report(settings):
     path = bpy.path.abspath(settings.last_damage_readiness_json_path)
     if not path or not os.path.isfile(path):
-        raise RuntimeError("Run Analyze Damage Readiness first; the last JSON report is unavailable.")
+        raise RuntimeError("Run Analyze Source Damage Readiness first; the last JSON report is unavailable.")
     with open(path, "r", encoding="utf-8") as handle:
         report = json.load(handle)
     if report.get("schema") != REPORT_SCHEMA:
@@ -1664,8 +2037,8 @@ def create_seam_preview(context, report, seam_id):
 
 class DAF_OT_analyze_damage_readiness(Operator):
     bl_idname = "daf.analyze_damage_readiness"
-    bl_label = "Analyze Damage Readiness"
-    bl_description = "Generate shell-aware, non-destructive mesh, weight, topology, and seam-readiness reports"
+    bl_label = "Analyze Source Damage Readiness"
+    bl_description = "Analyze only the preserved original source mesh inventory and store its identity contract"
     bl_options = {'REGISTER'}
 
     def execute(self, context):
@@ -1673,15 +2046,58 @@ class DAF_OT_analyze_damage_readiness(Operator):
         try:
             report = build_damage_readiness_report(context)
             json_path, markdown_path = write_damage_readiness_reports(context, report)
+            persist_source_readiness_contract(report, json_path, markdown_path)
             _set_last_results(context.scene.daf_settings, report, json_path, markdown_path)
-            status = report["overall_readiness"]["readiness_statement"]
-            self.report({'INFO'}, f"Damage readiness complete. {status}")
+            if report["overall_readiness"]["ready_for_v3_8_segment_authoring"]:
+                status = "Source readiness valid."
+            else:
+                status = "Source readiness requires review."
+            self.report({'INFO'}, status)
             return {'FINISHED'}
         except Exception as exc:
             self.report({'ERROR'}, str(exc))
             return {'CANCELLED'}
         finally:
             _restore_context_state(context, state)
+
+
+class DAF_OT_repair_source_readiness_contract(Operator):
+    bl_idname = "daf.repair_source_readiness_contract"
+    bl_label = "Repair Source Readiness Contract"
+    bl_description = (
+        "Recover the original source from stored authoring state, rerun source-only readiness, "
+        "and leave generated segments, shape keys, and trauma stamps untouched"
+    )
+    bl_options = {'REGISTER'}
+
+    def execute(self, context):
+        context_state = _capture_context_state(context)
+        try:
+            existing = load_source_readiness_contract()
+            if existing is not None:
+                validation = validate_source_readiness_contract(existing, context)
+                if validation["status"] != "PASS":
+                    raise RuntimeError("; ".join(validation["reasons"][:4]))
+            report = build_damage_readiness_report(context)
+            output_directory = _repair_output_directory(context.scene.daf_settings)
+            json_path, markdown_path = write_damage_readiness_reports(
+                context, report, output_directory=output_directory
+            )
+            persist_source_readiness_contract(report, json_path, markdown_path)
+            _set_last_results(context.scene.daf_settings, report, json_path, markdown_path)
+            names = ", ".join(report.get("analyzed_object_names", []))
+            self.report(
+                {'INFO'},
+                f"Source readiness contract repaired from original source: {names}. "
+                "Authoring meshes and deformations were unchanged."
+            )
+            return {'FINISHED'}
+        except Exception as exc:
+            context.scene.daf_settings.source_readiness_contract_status = "STALE"
+            self.report({'ERROR'}, f"Source readiness repair failed: {exc}")
+            return {'CANCELLED'}
+        finally:
+            _restore_context_state(context, context_state)
 
 
 class DAF_OT_preview_damage_seam(Operator):
@@ -1758,6 +2174,7 @@ class DAF_OT_open_damage_markdown_report(Operator):
 
 CLASSES = (
     DAF_OT_analyze_damage_readiness,
+    DAF_OT_repair_source_readiness_contract,
     DAF_OT_preview_damage_seam,
     DAF_OT_clear_damage_seam_preview,
     DAF_OT_open_damage_report_folder,

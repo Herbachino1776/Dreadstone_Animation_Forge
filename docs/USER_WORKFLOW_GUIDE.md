@@ -1,8 +1,8 @@
 # Dreadstone Animation Forge user workflow guide
 
-- **Current Forge version:** `3.10.1`
+- **Current Forge version:** `3.10.2`
 - **Supported Blender version:** Blender `5.1.2`
-- **Current release ZIP:** `Dreadstone_Animation_Forge_v3_10_1.zip`
+- **Current release ZIP:** `Dreadstone_Animation_Forge_v3_10_2.zip`
 - **Last updated:** 2026-07-18
 
 This is the authoritative user how-to for the current Forge release. It follows the labels and behavior implemented in the add-on. If an older note, video, or README disagrees with this guide, use this guide.
@@ -20,9 +20,9 @@ Save a working copy of the `.blend` before authoring. Forge protects the importe
 > **WARNING**
 > Never apply the scale of a Forge safe wrapper such as `DSB_SIZE_ROOT_ADOPTED`. Never animate bone scale. Those operations can invalidate sizing, animation, and exact-index deformation contracts.
 
-## 1. Install Dreadstone Animation Forge 3.10.1
+## 1. Install Dreadstone Animation Forge 3.10.2
 
-1. Obtain `Dreadstone_Animation_Forge_v3_10_1.zip`.
+1. Obtain `Dreadstone_Animation_Forge_v3_10_2.zip`.
 2. Do not extract the ZIP. It is a Blender extension package whose `blender_manifest.toml` and `__init__.py` are at the ZIP root.
 3. Open Blender 5.1.2.
 4. Choose **Edit > Preferences > Add-ons**.
@@ -31,7 +31,7 @@ Save a working copy of the `.blend` before authoring. Forge protects the importe
 7. Close Preferences. Restart Blender if an older Forge version was loaded in this session.
 
 > **EXPECTED RESULT**
-> Blender lists Dreadstone Animation Forge version 3.10.1 and the add-on enables without a registration error.
+> Blender lists Dreadstone Animation Forge version 3.10.2 and the add-on enables without a registration error.
 
 > **TROUBLESHOOTING**
 > If Blender says the package is invalid, confirm that you selected the original ZIP without extracting or rezipping it. If old labels remain after upgrading, restart Blender so no stale add-on module remains loaded.
@@ -43,7 +43,7 @@ Save a working copy of the `.blend` before authoring. Forge protects the importe
 3. Click the **Dreadstone** tab.
 4. Expand the sections you need by clicking their headings.
 
-The one panel is titled **Dreadstone Animation Forge**. Its major sections are **Character Setup**, **Ground Preview**, **Rig Mapping & Direction**, **Damage Readiness Analyzer**, **Damage Segment & Stump Authoring v3.9**, **Trauma Field Authoring v3.10.1**, **Arm & Hand Pose Polish**, **Walk Draft**, **Death / Collapse Draft**, **Flank Hurt Drafts**, **Approved Animation Pack**, and **Action Cleanup & Safety**.
+The one panel is titled **Dreadstone Animation Forge**. Its major sections are **Character Setup**, **Ground Preview**, **Rig Mapping & Direction**, **Source Damage Readiness**, **Damage Segment & Stump Authoring v3.9**, **Trauma Field Authoring v3.10.2**, **Arm & Hand Pose Polish**, **Walk Draft**, **Death / Collapse Draft**, **Flank Hurt Drafts**, **Approved Animation Pack**, and **Action Cleanup & Safety**.
 
 ## 3. Import and prepare a source GLB
 
@@ -184,19 +184,21 @@ Use **Approved Animation Pack** when you want a GLB containing approved animatio
 > **TROUBLESHOOTING**
 > “No approved Actions found” means a draft still needs its matching approve button. “No valid Last Pack Path” means no pack was built in this Blender scene or the last file was moved.
 
-## 7. Run Damage Readiness
+## 7. Run Source Damage Readiness
 
-Damage Readiness is a non-destructive inspection. It analyzes skinning, mesh health, and proposed contours for **Head–Neck**, **Left Elbow**, **Right Elbow**, and **Lower Spine**. It does not edit geometry, weights, modifiers, transforms, Actions, or shape keys.
+Source Damage Readiness is a non-destructive, pre-authoring inspection of the original imported source. It analyzes skinning, mesh health, and proposed contours for **Head–Neck**, **Left Elbow**, **Right Elbow**, and **Lower Spine**. It does not edit geometry, weights, modifiers, transforms, Actions, or shape keys; it adds only stable source identity metadata.
+
+The corrected order is: run Source Damage Readiness on the original source; build authoring assets; author keys and trauma stamps; run Authoring Validation; run Export Validation; never repair intentional generated segment boundaries to satisfy Source Readiness; and use **Repair Source Readiness Contract** for an affected 3.8 file.
 
 1. In Object Mode, select the original imported character mesh or its armature.
-2. Expand **Damage Readiness Analyzer**.
+2. Expand **Source Damage Readiness**.
 3. Choose an explicit project folder in **Report Output Folder**. A blank value is rejected. An unsaved `.blend` also cannot use a `//` relative path, and a drive root such as `C:\` is rejected.
-4. Click **Analyze Damage Readiness**.
+4. Click **Analyze Source Damage Readiness**.
 
-Forge preserves selection, active object, frame, active Actions, and Object Mode while it analyzes. It writes `<armature>_damage_readiness.json` and `<armature>_damage_readiness.md`.
+Forge preserves selection, active object, frame, active Actions, and Object Mode while it analyzes. It writes `<armature>_damage_readiness.json` and `<armature>_damage_readiness.md` and stores `DSB_SOURCE_READINESS_CONTRACT.json` in the `.blend`. The contract records the original armature, mesh objects/datablocks, source collections, bone mapping, topology and relevant-weight fingerprints, analyzer revision/build, and report time.
 
 > **EXPECTED RESULT**
-> **Last Results** changes from `NOT ANALYZED`. **Overall** becomes `READY` only when skinning is usable, no weight or confirmed topology repair remains, and all four seams are automatic candidates.
+> **Last Results** changes from `NOT ANALYZED`. **Overall** becomes `SOURCE READY` only when skinning is usable, no weight or confirmed topology repair remains, and all four seams are automatic candidates. **Contract** becomes `VALID`.
 
 ### Understand the readiness report
 
@@ -214,14 +216,16 @@ Click **Open Markdown** for the readable report or **Open Report Folder** for bo
 3. Inspect cyan selected edges, orange rejected alternatives, endpoint/branch/problem markers, and the joint plane.
 4. Click **Clear Preview** when finished.
 
-If topology or relevant weights changed after analysis, the preview is rejected. Rerun **Analyze Damage Readiness** to produce a new fingerprinted report.
+If original-source topology or relevant weights changed after analysis, the preview is rejected. Rerun **Analyze Source Damage Readiness** to produce a new fingerprinted report.
+
+After authoring begins, an explicit rerun still resolves the registered original source by stable identity. It never substitutes `DSB_BODY_CORE`, `DSB_ATTACHED_*`, `DSB_SEGMENT_*`, `DSB_STUMP_*`, or other generated role objects. If the original is missing or replaced, Forge blocks with a source-identity error instead of analyzing generated meshes.
 
 ### Virtual-weld-aware connectivity in plain language
 
 GLB files often contain duplicate vertices at UV, normal, tangent, or material borders even though the surface looks continuous. Forge does not merge or move those vertices: no Blender mesh merge operation occurs. For analysis only, it treats position-coincident copies within a very small world-space tolerance as one *virtual* vertex. Faces count as connected only when they share a complete virtual edge; touching at one corner is not enough. This lets a legitimate visible surface cross imported split seams without hiding real holes or joining nearby but separate surfaces.
 
 > **WARNING**
-> A report with **Overall: REVIEW** cannot build the protected damage asset. Correct the named weights or localized topology in the source, then rerun readiness. Do not edit the mesh after producing the READY report you intend to use.
+> A report with **Overall: SOURCE REVIEW** cannot build the protected damage asset. Correct the named weights or localized topology in the original source, then rerun Source Readiness. Do not edit the original mesh after producing the READY report you intend to use. Intentional open boundaries on generated segment meshes are authoring state; do not repair them to satisfy Source Readiness.
 
 ## 8. Build Damage Segment and Stump Authoring assets
 
@@ -234,7 +238,7 @@ This workflow consumes a current READY report and builds on copies. The imported
 5. Confirm the status is `READY HANDOFF LOADED`.
 6. Click **Build Authoring Asset**.
 
-No special object selection is needed at this stage: Forge finds the source mesh by the report's topology and weight fingerprints. The report must use schema `dreadstone.damage_readiness.v1`, revision `virtual_weld_v3.7.4`, be overall READY, and contain one closed `AUTOMATIC_CANDIDATE` for every required seam.
+No special object selection is needed at this stage: Forge resolves the exact original mesh and armature from source contract `dreadstone.source_readiness.v1`, then verifies topology and weight fingerprints. The report must use schema `dreadstone.damage_readiness.v1`, revision `virtual_weld_v3.7.4`, be overall READY, and contain one closed `AUTOMATIC_CANDIDATE` for every required seam.
 
 Forge creates these protected/generated objects:
 
@@ -249,9 +253,23 @@ They are organized beneath `DSB_DAMAGE_AUTHORING` with protected, intact, detach
 > Status becomes `BUILT — INTACT PREVIEW`, and Forge reports how many authoring objects it built. The source is hidden and the intact copied body is visible.
 
 > **TROUBLESHOOTING**
-> A fingerprint mismatch means the mesh topology or seam-related weights differ from the report. Clear the generated asset if present, select the original source, rerun readiness, and use the new JSON. If Blender is in Edit or Sculpt Mode, switch to Object Mode before building.
+> A source fingerprint mismatch means original topology or seam-related weights differ from the report. Generated cuts, keys, and stamps do not cause this mismatch. Restore or correct the named original source, rerun **Analyze Source Damage Readiness**, and use the new JSON. If Blender is in Edit or Sculpt Mode, switch to Object Mode before building.
 
 Click **Clear Generated Asset / Restore Source** to delete only Forge-generated damage objects and show the original source again. This is the safe way to abandon or rebuild the authoring asset.
+
+### Repair an affected 3.8 source contract without losing authored work
+
+Use **Repair Source Readiness Contract** when a 3.8 `.blend` already contains generated authoring meshes and deformation work, but a later bad readiness report lists `DSB_BODY_CORE` or `DSB_ATTACHED_*` as `analyzed_object_names`.
+
+1. Open a backup copy of the affected `.blend` in Object Mode. Do not clear or rebuild the authoring asset.
+2. Expand **Source Damage Readiness** and choose a valid project **Report Output Folder** if one is not already available.
+3. Click **Repair Source Readiness Contract**. No generated mesh selection is required.
+4. Confirm the message names the original imported source and says authoring meshes and deformations were unchanged.
+5. Open the repaired JSON and confirm `source_contract.analyzedObjectNames` contains the original source, never `DSB_BODY_CORE` or `DSB_ATTACHED_*`.
+6. Confirm the four head-impact keys and their trauma stamps still exist, then run **Validate Morph Targets**.
+7. Run **Validate Complete Damage Asset**, then **Export Damage GLB + Manifest**.
+
+Repair locates the preserved original from authoring-state metadata, reruns source-only analysis, and replaces only the source report/contract references. It does not delete or rebuild generated segments, cut boundaries, deformation keys, stamp recipes, preview state, or Actions. If the original source object is actually missing or its topology/weights changed, repair blocks and names the source problem.
 
 ## 9. Preview intact and detached states
 
@@ -274,7 +292,7 @@ Trauma Field authoring always works through an explicit pair: an attached mesh u
 1. In Object Mode, select exactly two mesh objects.
 2. Select the detached object first.
 3. Shift-select the attached object last so the attached object is active (brighter outline).
-4. Expand **Trauma Field Authoring v3.10.1**.
+4. Expand **Trauma Field Authoring v3.10.2**.
 5. In **New Region ID**, enter a unique semantic name such as `head`, `forearm_left`, or `forearm_right`.
 6. In **Related Seam ID**, enter the matching seam ID: `head_neck`, `left_elbow`, `right_elbow`, or `lower_spine`.
 7. Click **Register Selected Pair**.
@@ -444,20 +462,20 @@ Healthy keys keep their geometry and regain their detached value driver. Safe st
 
 ## 16. Run every validation command
 
-Run validations in this order for a complete project:
+Forge displays three different domains: **Source Readiness** describes only the original imported asset; **Authoring Validation** describes generated pieces, pairs, keys, stamps, and caps; **Export Validation** requires both contracts and verifies export preparation. Run them in this order for a complete project:
 
 1. **Analyze Rig** — confirms required humanoid roles for animation generation.
-2. **Analyze Damage Readiness** — writes the source health and four-seam handoff; all seams must be `AUTOMATIC_CANDIDATE` for protected auto-authoring.
+2. **Analyze Source Damage Readiness** — writes the original-source health, stable identity contract, and four-seam handoff; all seams must be `AUTOMATIC_CANDIDATE` for protected auto-authoring.
 3. **Load READY Handoff** — validates the schema, analyzer revision, READY state, closed contours, and current source fingerprints.
 4. **Validate Pair** — checks exact attached/detached topology for the active deformation region.
 5. **Validate Morph Targets** — checks every registered region, managed key pairs, finite coordinates, stored captures, stamp recipes, displacement limits, temporary-preview cleanup, and paired world-space delta equality.
-6. **Validate Complete Damage Asset** — checks source fingerprints, generated pieces, cap topology/material/direction, skinning/rig targets, complete non-overlapping partitions, contour gaps against **Intact Seam Tolerance**, and deformation validation.
+6. **Validate Complete Damage Asset** — runs Authoring Validation: it verifies the existing source contract, generated pieces, cap topology/material/direction, skinning/rig targets, complete non-overlapping partitions, contour gaps against **Intact Seam Tolerance**, deformation pairs, keys, and enabled stamps.
 7. **Validate Last Built Pack** — when using the animation-pack workflow, rereads the last GLB and compares its animation inventory with its manifest.
 
-**REBUILD ACTIVE DEFORMATION** validates after rebuilding. **Finish Sculpt & Sync** validates after synchronization. **Export Damage GLB + Manifest** calls deformation export preparation and complete damage validation again, so a failing asset is not exported.
+**REBUILD ACTIVE DEFORMATION** validates after rebuilding. **Finish Sculpt & Sync** validates after synchronization. **Export Damage GLB + Manifest** runs Export Validation against the saved source contract and generated authoring state, so a failing asset is not exported. Export does not rerun full Source Damage Readiness and does not overwrite its JSON or Markdown report.
 
 > **WARNING**
-> A validation error is a stop condition, not a cosmetic warning. Fix or recapture the named item and rerun the same validation before export.
+> A validation error is a stop condition, not a cosmetic warning. Fix or recapture the named item and rerun the same validation before export. A procedural deformation key whose complete stamp stack is disabled fails Authoring/Export Validation; enable at least one intended stamp or remove the invalid procedural key.
 
 ## 17. Export the damage GLB and manifest
 
@@ -473,7 +491,7 @@ Run validations in this order for a complete project:
 > **EXPECTED RESULT**
 > Forge reports “Exported `<name>.glb` and validated manifest.” The folder contains `<name>.glb`, `<name>.json`, and `<name>_validation.json`. The manifest uses `dreadstone.damage_authoring.v1` and includes `dreadstone.damage_deformation.v1` deformation data with registered regions and ordered stamp metadata.
 
-Export includes generated authoring objects but excludes the protected source copy. It enables GLB animations, extras, morph targets, and morph normals, and restores your pre-export selection and visibility afterward.
+The panel shows **Source Readiness: VALID**, **Authoring Validation: PASS**, and **Export Validation: PASS**. Export includes generated authoring objects but excludes the protected source copy. It enables GLB animations, extras, morph targets, and morph normals, and restores your pre-export selection and visibility afterward. The source-readiness JSON and Markdown timestamps/content are not rewritten by export.
 
 ## 18. Clean reimport and verification
 
@@ -536,9 +554,9 @@ The restore button enables Mesh visibility in open 3D Views, unhides the importe
 
 ### Recipe: export and reimport a completed asset
 
-1. Run **Validate Morph Targets** and **Validate Complete Damage Asset**; require two passes.
+1. Confirm **Source Readiness: VALID**, then run **Validate Morph Targets** and **Validate Complete Damage Asset**; require Authoring Validation to pass.
 2. Set a project-safe **Damage Export Folder** and **Damage Asset Filename**.
-3. In Object Mode, click **Export Damage GLB + Manifest**.
+3. In Object Mode, click **Export Damage GLB + Manifest** and require **Export Validation: PASS**.
 4. Confirm the GLB, manifest JSON, and validation JSON exist.
 5. Start a clean scene and import that GLB.
 6. Click **Restore Reimported GLB Intact Preview**.
@@ -554,13 +572,17 @@ The restore button enables Mesh visibility in open 3D Views, unhides the importe
 | Limbs bend backward | Facing or hinge sign is wrong | Correct **Character Faces**, **Invert Knees**, and **Invert Elbows**, then regenerate the draft. |
 | Readiness folder error | Blank path, unsaved `//` path, or drive root | Choose an explicit project subfolder in **Report Output Folder**. |
 | **Overall** is `REVIEW` | One or more health/seam requirements failed | Open the Markdown report, preview the named seam, fix only the cited source topology/weights, and rerun readiness. |
-| READY handoff is rejected | Old schema/revision, non-READY report, open contour, or fingerprint mismatch | Rerun current Damage Readiness on the unchanged current source. |
+| READY handoff is rejected | Old schema/revision, non-READY report, open contour, or original-source fingerprint mismatch | Rerun **Analyze Source Damage Readiness** on the unchanged original source. |
+| A bad 3.8 report lists `DSB_BODY_CORE` / `DSB_ATTACHED_*` | Older readiness discovery selected generated authoring meshes | Do not repair generated open cuts and do not clear the authored asset. Run **Repair Source Readiness Contract**, verify the original inventory, then validate/export. |
+| Source readiness is stale | Original topology, relevant weights/groups, armature/mapping, analyzer contract revision, source identity, or source collection identity changed | Restore/correct the specifically named original source item and explicitly rerun Source Readiness. Generated topology, keys, stamps, previews, Actions, and export metadata are not causes. |
+| Source identity is missing or replaced | The original imported object/datablock no longer resolves | Restore the original source from backup. Forge deliberately refuses to fall back to generated `DSB_*` meshes. |
 | Build/export says switch modes | Blender is in Edit or Sculpt Mode | Press `Tab` or choose Object Mode, then retry. |
 | Region registration is reversed | Detached object was active | Remove the registration; select detached first and attached last, then register again. |
 | Pair validation fails | Vertex/polygon/index/loop topology differs | Use a pair generated by the same Damage Authoring build. Do not use nearest-object transfer or remeshing. |
 | Capture is stale | Region, object, topology, selection hash, or virtual-weld state changed | Activate the intended region and recapture on the current attached mesh. |
 | Patch reports disconnected islands | Selection includes a real separate component or corner-only contact | Deselect the island. Select one component connected by full edges. |
 | Stamp edits appear ignored after rebuild | Stored stamp was not updated | Select the stamp and click **Update Active Stamp**, then rebuild. |
+| Export says a deformation key has no enabled trauma stamp | A procedural stack exists but every stamp is disabled | Enable at least one intended stamp, rebuild the key, run **Validate Morph Targets**, and export again. |
 | Preview crosses through a head/limb | **World Distance** uses straight 3D proximity | Switch to **Surface Distance** and recapture/rebuild. |
 | Rebuild says no trauma stamps | Key is legacy/manual or stamp was not added | Add a captured stamp, or use the displayed legacy preset/sculpt workflow without overwriting it. |
 | Deformation exceeds limit | Depth/strength/stack is above declared maximum | Reduce **Seed Depth** or **Stamp Strength**, increase the maximum only when intentional, update stamps, and rebuild. |
@@ -575,7 +597,7 @@ Use this inventory during release acceptance to make sure no public operation ha
 
 - **Character Setup:** **Adopt Imported Animation Pack**, **Safe Resize**, **Analyze Rig**.
 - **Ground Preview:** **Create Floor**, **Align Pose**.
-- **Damage Readiness Analyzer:** **Analyze Damage Readiness**, **Preview Candidate Seam**, **Clear Preview**, **Open Report Folder**, **Open Markdown**.
+- **Source Damage Readiness:** **Analyze Source Damage Readiness**, **Repair Source Readiness Contract**, **Preview Candidate Seam**, **Clear Preview**, **Open Report Folder**, **Open Markdown**.
 - **Damage Segment & Stump Authoring v3.9:** **Load READY Handoff**, **Build Authoring Asset**, **Clear Generated Asset / Restore Source**, **Preview Intact**, **Preview Detached**, **Restore Reimported GLB Intact Preview**, **Validate Complete Damage Asset**, **Export Damage GLB + Manifest**, **Open Damage Export Folder**.
 - **Trauma Field — regions and keys:** **Use Selected Region**, **Validate Pair**, **Register Selected Pair**, **Remove Registration**, **Create Damage Shape Key**, **Create Standard Head Set**, each managed key button, **Solo**, **Zero All**, **Delete Active**, **Mirror Active**.
 - **Trauma Field — capture and stamps:** **Capture Single Face**, **Capture Connected Face Patch**, **Capture Selected Vertices**, **Capture 3D Cursor**, each numbered stamp button, **Add Stamp**, **Duplicate**, **Remove**, **Move Up**, **Move Down**, **Enable / Disable**, **Update Active Stamp**.

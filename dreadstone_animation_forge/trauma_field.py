@@ -1,4 +1,4 @@
-"""Pure trauma-field algorithms for Dreadstone Animation Forge.
+"""Pure trauma-field and source-contract algorithms for Dreadstone Animation Forge.
 
 This module deliberately has no Blender imports. Mesh extraction, world/local
 coordinate conversion, shape-key writes, operators, properties, and UI remain in
@@ -44,6 +44,119 @@ DISTANCE_MODES = (
     "SURFACE_DISTANCE",
     "WORLD_DISTANCE",
 )
+
+GENERATED_AUTHORING_PREFIXES = (
+    "DSB_BODY_CORE",
+    "DSB_ATTACHED_",
+    "DSB_SEGMENT_",
+    "DSB_DETACHED_",
+    "DSB_STUMP_",
+    "DSB_DAMAGE_",
+    "DSB_SOCKET_",
+    "DSB_SOURCE_MODEL_PROTECTED",
+)
+
+
+def is_generated_authoring_role(
+    name: str,
+    *,
+    generated: bool = False,
+    damage_role: str = "",
+) -> bool:
+    """Return whether an object is authored output rather than a source mesh."""
+
+    normalized_name = str(name or "")
+    normalized_role = str(damage_role or "").strip().lower()
+    return bool(generated) or bool(normalized_role) or normalized_name.startswith(
+        GENERATED_AUTHORING_PREFIXES
+    )
+
+
+def source_readiness_stale_reasons(
+    expected: Mapping[str, object],
+    current: Mapping[str, object],
+) -> list[str]:
+    """Compare only fields that define the source-readiness contract.
+
+    Generated topology, shape keys, trauma stamps, preview state, Actions, and
+    export metadata are intentionally ignored because they are authoring state.
+    """
+
+    reasons: list[str] = []
+    expected_revision = str(expected.get("analyzerRevision", ""))
+    current_revision = str(current.get("analyzerRevision", ""))
+    if expected_revision != current_revision:
+        reasons.append(
+            "analyzer contract revision changed "
+            f"({expected_revision or '<missing>'} -> {current_revision or '<missing>'})"
+        )
+
+    expected_armature = dict(expected.get("sourceArmature") or {})  # type: ignore[arg-type]
+    current_armature = dict(current.get("sourceArmature") or {})  # type: ignore[arg-type]
+    for field, label in (
+        ("objectId", "source armature object identity"),
+        ("dataId", "source armature datablock identity"),
+    ):
+        expected_value = str(expected_armature.get(field, ""))
+        current_value = str(current_armature.get(field, ""))
+        if expected_value and expected_value != current_value:
+            reasons.append(f"{label} was lost or replaced")
+    if expected_armature.get("armatureSha256") != current_armature.get("armatureSha256"):
+        reasons.append("source armature fingerprint changed")
+    if expected_armature.get("semanticBoneMapping") != current_armature.get("semanticBoneMapping"):
+        reasons.append("source armature semantic bone mapping changed")
+
+    expected_collections = {
+        str(record.get("id")) for record in (expected.get("sourceCollections") or [])  # type: ignore[union-attr]
+    }
+    current_collections = {
+        str(record.get("id")) for record in (current.get("sourceCollections") or [])  # type: ignore[union-attr]
+    }
+    if expected_collections != current_collections:
+        reasons.append("source collection identity changed")
+
+    expected_meshes = {
+        str(record.get("objectId") or record.get("objectName")): dict(record)
+        for record in (expected.get("sourceMeshes") or [])  # type: ignore[union-attr]
+    }
+    current_meshes = {
+        str(record.get("objectId") or record.get("objectName")): dict(record)
+        for record in (current.get("sourceMeshes") or [])  # type: ignore[union-attr]
+    }
+    for identity, expected_mesh in expected_meshes.items():
+        label = str(expected_mesh.get("objectName") or identity or "<unknown source mesh>")
+        current_mesh = current_meshes.get(identity)
+        if current_mesh is None:
+            reasons.append(f"source mesh {label} identity was lost or replaced")
+            continue
+        expected_data_id = str(expected_mesh.get("dataId", ""))
+        if expected_data_id and expected_data_id != str(current_mesh.get("dataId", "")):
+            reasons.append(f"source mesh {label} datablock identity was lost or replaced")
+        if expected_mesh.get("topologySha256") != current_mesh.get("topologySha256"):
+            reasons.append(
+                f"source mesh {label} topology fingerprint changed "
+                f"(expected {expected_mesh.get('topologySha256')}, current {current_mesh.get('topologySha256')})"
+            )
+        if expected_mesh.get("weightSha256") != current_mesh.get("weightSha256"):
+            reasons.append(
+                f"source mesh {label} relevant-weight fingerprint changed "
+                f"(expected {expected_mesh.get('weightSha256')}, current {current_mesh.get('weightSha256')})"
+            )
+    unexpected = sorted(set(current_meshes) - set(expected_meshes))
+    if unexpected:
+        reasons.append("source mesh inventory changed")
+    return reasons
+
+
+def enabled_stamp_contract_errors(
+    stamps: Sequence[Mapping[str, object]],
+    key_name: str,
+) -> list[str]:
+    """Require an enabled stamp only for keys that have a procedural stack."""
+
+    if stamps and not any(bool(stamp.get("enabled", True)) for stamp in stamps):
+        return [f"deformation key {key_name} has no enabled trauma stamp"]
+    return []
 
 
 def _vector3(value: Sequence[float], label: str) -> tuple[float, float, float]:
