@@ -1,12 +1,12 @@
 # Forge Performance and Stability Acceptance
 
 Acceptance date: 2026-07-20
-Release candidate: Forge `3.15.0` / build `2026-07-20.healing.1`
+Accepted release: Forge `3.15.1` / build `2026-07-20.healing.2`
 Baseline: Forge `3.14.1`, commit `e139c4645d6529a3d81ac594e2b897698fd8c9c1`
 Runtime: Blender `5.1.2` (`ec6e62d40fa9`) on Windows
 Source: `testman_animpack_v002.glb`, SHA-256 `5849556A3EB9AFC71D1BB5C6B686EAB6870046D593675B95853E4BC88500600E`, 1,319,976 bytes
 
-This report records technical/runtime acceptance only. Technical seed faces were selected deterministically to exercise code paths; they are not anatomical choices. No visual or artistic approval is claimed.
+This report records technical/runtime acceptance only. Technical seed faces were selected deterministically to exercise code paths; they are not anatomical choices. No visual or artistic approval is claimed. The 3.15.1 patch changes only Advanced-panel dependency scope and version metadata; the recorded 3.15.0 geometry/performance implementation is unchanged.
 
 ## Result
 
@@ -135,6 +135,6 @@ The user should inspect and approve:
 - Workflow, raised-gore, core/compound/guard, diagnostics, export, and clean-reimport runners: **PASS**.
 - Preview/resource stress and memory plateau: **PASS**.
 - Registration, repeated unregister/register, save/reload, and active file reload: **PASS**.
-- Deterministic release build: **PASS**, two 930,781-byte ZIPs matched at SHA-256 `E3549B301AF2D1F98090748DE4C5DE02479C3CC32FD15268092C528D3005409D`; all 38 entries are at the extension root or expected package subpaths.
+- Deterministic release build: **PASS**, two 930,827-byte ZIPs matched at SHA-256 `9A71E7260D59B89D487B2C321F4CF319295D2A11B5ADB30CB6E089C7A8221824`; all 38 entries are at the extension root or expected package subpaths.
 - Clean-profile ZIP install: **PASS** through Blender's extension installer. Disable removed the scene properties, re-enable restored the task operator and one Forge load handler, and a new Blender process restarted enabled with Startup Self-Check PASS and no timer.
 - Visual approval: **not claimed; user action required**.

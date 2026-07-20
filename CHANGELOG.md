@@ -1,5 +1,10 @@
 # Changelog
 
+## 3.15.1
+
+- Fixed the Advanced workspace panel scope so cached diagnostics render correctly while using Preview/Rebuild Current Gore and other expert controls.
+- Added a regression contract for the Advanced helper's explicit deformation-authoring dependency and verified the exact draw path in Blender 5.1.2.
+
 ## 3.15.0
 
 - Added one managed `OFF`/`FAST`/`BALANCED`/`FINAL` preview lifecycle with a single 200 ms main-thread debounce timer, stale-generation rejection, exact preview-state restoration, and explicit Commit/Revert/Clear actions.

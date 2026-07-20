@@ -1,4 +1,4 @@
-"""Dreadstone Animation Forge v3.15.0 trauma-field authoring.
+"""Dreadstone Animation Forge v3.15.1 trauma-field authoring.
 
 The workbench edits explicitly registered paired-segment or core-single regions
 on the generated protected Damage Asset. Paired morph targets remain exact-index
@@ -33,8 +33,8 @@ from .deformation import (
 )
 
 DEFORMATION_SCHEMA = "dreadstone.damage_deformation.v1"
-DEFORMATION_VERSION = (3, 15, 0)
-DEFORMATION_BUILD_ID = "2026-07-20.healing.1"
+DEFORMATION_VERSION = (3, 15, 1)
+DEFORMATION_BUILD_ID = "2026-07-20.healing.2"
 ATTACHED_HEAD_NAME = "DSB_ATTACHED_HEAD"
 DETACHED_HEAD_NAME = "DSB_SEGMENT_HEAD"
 PREVIEW_KEY_NAME = "__DSB_DEFORMATION_SEED_PREVIEW"

@@ -138,7 +138,7 @@ class HealingArchitectureTests(unittest.TestCase):
     def test_performance_report_and_relative_gates(self):
         report = {
             "schema": self.performance.SCHEMA,
-            "blenderVersion": "5.1.2", "addonVersion": "3.15.0", "commit": "abc",
+            "blenderVersion": "5.1.2", "addonVersion": "3.15.1", "commit": "abc",
             "sourceAsset": {}, "resourceCounts": {}, "operations": [], "failures": [],
         }
         self.assertEqual(self.performance.validate_report(report), [])
@@ -177,6 +177,22 @@ class HealingArchitectureTests(unittest.TestCase):
         ):
             self.assertNotIn(forbidden, called)
         self.assertIn("cached_ui_summary", source)
+        advanced = next(
+            item for item in tree.body
+            if isinstance(item, ast.FunctionDef) and item.name == "_draw_advanced"
+        )
+        self.assertIn("deformation_authoring", [argument.arg for argument in advanced.args.args])
+        main = next(
+            item for item in tree.body
+            if isinstance(item, ast.FunctionDef) and item.name == "draw_main_panel"
+        )
+        advanced_call = next(
+            item for item in ast.walk(main)
+            if isinstance(item, ast.Call)
+            and isinstance(item.func, ast.Name)
+            and item.func.id == "_draw_advanced"
+        )
+        self.assertEqual(len(advanced_call.args), 5)
 
     def test_preview_service_has_one_debounced_timer_and_stale_guard(self):
         source = (PACKAGE / "deformation" / "preview_service.py").read_text(encoding="utf-8")

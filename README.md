@@ -1,10 +1,10 @@
 # Dreadstone Animation Forge
 
-Dreadstone Animation Forge `3.15.0` is a proprietary Blender add-on for animation drafting and compatibility-preserving damage authoring. It retains protected Source Readiness, paired and core trauma fields, compound events, exact-index morph synchronization, high-intensity raised gore, brace Actions, and GLB/manifest export. The supported release runtime is Blender `5.1.2`.
+Dreadstone Animation Forge `3.15.1` is a proprietary Blender add-on for animation drafting and compatibility-preserving damage authoring. It retains protected Source Readiness, paired and core trauma fields, compound events, exact-index morph synchronization, high-intensity raised gore, brace Actions, and GLB/manifest export. The supported release runtime is Blender `5.1.2`.
 
 ## Install and open
 
-1. Download `Dreadstone_Animation_Forge_v3_15_0.zip`.
+1. Download `Dreadstone_Animation_Forge_v3_15_1.zip`.
 2. In Blender 5.1.2 choose **Edit > Preferences > Add-ons > Install from Disk**.
 3. Select the ZIP without extracting it and enable **Dreadstone Animation Forge**.
 4. In the 3D Viewport press `N`, then open the **Dreadstone** tab.

@@ -1,7 +1,7 @@
-# Dreadstone Animation Forge 3.15.0 — User Workflow Guide
+# Dreadstone Animation Forge 3.15.1 — User Workflow Guide
 
 - **Supported Blender:** `5.1.2`
-- **Release archive:** `Dreadstone_Animation_Forge_v3_15_0.zip`
+- **Release archive:** `Dreadstone_Animation_Forge_v3_15_1.zip`
 - **Primary rule:** the artist chooses anatomical surfaces; Forge automates processing, not anatomy.
 - **Safety rule:** Source Damage Readiness and `NOT READY` behavior are unchanged and are never bypassed by an orchestrator.
 
@@ -17,9 +17,9 @@
 
 The top “Next” card derives its recommendation from current source, readiness, region, capture, key, preview, and validation state. It is guidance, not a validation override.
 
-## 1. Install Dreadstone Animation Forge 3.15.0
+## 1. Install Dreadstone Animation Forge 3.15.1
 
-In Blender 5.1.2 choose **Edit > Preferences > Add-ons > Install from Disk**, select `Dreadstone_Animation_Forge_v3_15_0.zip` without extracting it, and enable the add-on. A successful install shows version 3.15.0 without a registration error.
+In Blender 5.1.2 choose **Edit > Preferences > Add-ons > Install from Disk**, select `Dreadstone_Animation_Forge_v3_15_1.zip` without extracting it, and enable the add-on. A successful install shows version 3.15.1 without a registration error.
 
 ## 2. Open the Dreadstone panel
 

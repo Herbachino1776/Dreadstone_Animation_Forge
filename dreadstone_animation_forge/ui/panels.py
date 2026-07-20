@@ -161,7 +161,7 @@ def _draw_export(layout, settings):
     export.operator("daf.restore_imported_damage_intact_preview", text="Restore Reimported GLB Intact Preview")
 
 
-def _draw_advanced(layout, context, settings, deformation_draw):
+def _draw_advanced(layout, context, settings, deformation_draw, deformation_authoring):
     manual = layout.box()
     manual.label(text="Manual Character and Source Workflows", icon='TOOL_SETTINGS')
     manual.prop(settings, "target_height")
@@ -230,4 +230,4 @@ def draw_main_panel(layout, context, settings, deformation_draw):
     elif settings.ui_workspace == 'EXPORT':
         _draw_export(layout, settings)
     else:
-        _draw_advanced(layout, context, settings, deformation_draw)
+        _draw_advanced(layout, context, settings, deformation_draw, deformation_authoring)

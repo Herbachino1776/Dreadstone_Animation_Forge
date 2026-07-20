@@ -1,7 +1,7 @@
 bl_info = {
     "name": "Dreadstone Animation Forge",
     "author": "Dreadstone Black",
-    "version": (3, 15, 0),
+    "version": (3, 15, 1),
     "blender": (3, 6, 0),
     "location": "3D Viewport > Sidebar > Dreadstone",
     "description": "Animation authoring, protected damage assets, and registered-region trauma-field shape-key authoring.",
@@ -1249,7 +1249,7 @@ class DAFSettings(PropertyGroup):
     last_damage_manifest_path: StringProperty(default="", options={'HIDDEN'})
     last_damage_validation_path: StringProperty(default="", options={'HIDDEN'})
 
-    # Trauma Field Authoring v3.15.0.
+    # Trauma Field Authoring v3.15.1.
     deformation_region: EnumProperty(
         name="Active Region",
         items=_deformation_region_items,
@@ -4089,7 +4089,7 @@ class DAF_PT_legacy_panel(Panel):
             layout,
             s,
             "ui_deformation_authoring_open",
-            "Trauma Field Authoring v3.15.0",
+            "Trauma Field Authoring v3.15.1",
         )
         if opened:
             configure_property_box(box)
