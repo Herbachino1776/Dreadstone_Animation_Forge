@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import ast
+import importlib.util
 import sys
 import unittest
 from pathlib import Path
@@ -115,28 +116,28 @@ class StaticContractTests(unittest.TestCase):
         manifest = contracts.MANIFEST_PATH.read_text(encoding="utf-8")
         self.assertIn('schema_version = "1.0.0"', manifest)
         self.assertIn('id = "dreadstone_animation_forge"', manifest)
-        self.assertIn('version = "3.14.1"', manifest)
+        self.assertIn('version = "3.15.0"', manifest)
         builder = (ROOT / "scripts" / "build_release.py").read_text(encoding="utf-8")
-        self.assertIn('"blender_manifest.toml",\n    "__init__.py",', builder)
+        self.assertIn('ARCHIVE_ENTRIES = ("blender_manifest.toml", *MODULES', builder)
         self.assertNotIn('"dreadstone_animation_forge/__init__.py"', builder)
-        builder_tree = ast.parse(builder)
-        self.assertEqual(
-            contracts.literal_assignment(builder_tree, "ARCHIVE_ENTRIES"),
-            (
-                "blender_manifest.toml",
-                "__init__.py",
-                "damage_readiness.py",
-                "damage_authoring.py",
-                "deformation_authoring.py",
-                "trauma_field.py",
-                "README.txt",
-                "VALIDATION.txt",
-            ),
-        )
+        spec = importlib.util.spec_from_file_location("forge_release_builder", ROOT / "scripts" / "build_release.py")
+        release_builder = importlib.util.module_from_spec(spec)
+        assert spec.loader is not None
+        spec.loader.exec_module(release_builder)
+        expected_modules = tuple(sorted(
+            path.relative_to(ROOT / "dreadstone_animation_forge").as_posix()
+            for path in (ROOT / "dreadstone_animation_forge").rglob("*.py")
+            if "__pycache__" not in path.parts
+        ))
+        self.assertEqual(release_builder.MODULES, expected_modules)
+        self.assertEqual(release_builder.ARCHIVE_ENTRIES[0], "blender_manifest.toml")
+        self.assertEqual(release_builder.ARCHIVE_ENTRIES[-2:], ("README.txt", "VALIDATION.txt"))
+        self.assertIn("deformation/preview_service.py", release_builder.ARCHIVE_ENTRIES)
+        self.assertIn("ui/operators/character.py", release_builder.ARCHIVE_ENTRIES)
         version = contracts.EXPECTED_VERSION
         self.assertEqual(
             f"Dreadstone_Animation_Forge_v{'_'.join(map(str, version))}.zip",
-            "Dreadstone_Animation_Forge_v3_14_1.zip",
+            "Dreadstone_Animation_Forge_v3_15_0.zip",
         )
 
     def test_authoritative_user_workflow_guide_contract(self) -> None:
@@ -154,8 +155,8 @@ class StaticContractTests(unittest.TestCase):
     def test_release_readme_contains_install_quick_start_and_guide_reference(self) -> None:
         readme = (ROOT / "README.md").read_text(encoding="utf-8")
         for marker in (
-            "3.14.1",
-            "Dreadstone_Animation_Forge_v3_14_1.zip",
+            "3.15.0",
+            "Dreadstone_Animation_Forge_v3_15_0.zip",
             "Install from Disk",
             "## Quick start",
             "docs/USER_WORKFLOW_GUIDE.md",

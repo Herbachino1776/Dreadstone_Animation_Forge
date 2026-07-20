@@ -158,6 +158,33 @@ class RaisedGoreTests(unittest.TestCase):
         self.assertGreater(len(records), 0)
         self.assertLess(len(records), len(faces))
 
+    def test_face_selection_never_keeps_more_than_two_uses_of_an_edge(self):
+        positions, faces, weights, displacement = grid_surface(8, 8)
+        # Append a deliberately non-manifold third face on an existing edge.
+        positions.append((0.005, 0.005, 0.01))
+        faces.append((0, 1, len(positions) - 1))
+        records = trauma_field.raised_gore_face_records(
+            positions,
+            faces,
+            weights + [1.0],
+            displacement + [0.03],
+            heavy_overlay(seed=1776),
+        )
+        edge_uses = {}
+        for record in records:
+            vertices = record["vertices"]
+            for index, first in enumerate(vertices):
+                edge = tuple(sorted((first, vertices[(index + 1) % len(vertices)])))
+                edge_uses[edge] = edge_uses.get(edge, 0) + 1
+        self.assertTrue(all(count <= 2 for count in edge_uses.values()))
+        boundary_degree = {}
+        for edge, count in edge_uses.items():
+            if count != 1:
+                continue
+            for vertex in edge:
+                boundary_degree[vertex] = boundary_degree.get(vertex, 0) + 1
+        self.assertTrue(all(degree <= 2 for degree in boundary_degree.values()))
+
     def test_material_classification_uses_all_three_families(self):
         material_ids = {record["materialId"] for record in heavy_records(1776)[3]}
         self.assertEqual(material_ids, set(trauma_field.GORE_MATERIAL_IDS))

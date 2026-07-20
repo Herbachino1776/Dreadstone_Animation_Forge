@@ -1,4 +1,4 @@
-"""Blender 5.1 runtime acceptance for Forge 3.14 core/compound trauma.
+"""Blender 5.1 runtime acceptance for Forge 3.15 core/compound trauma.
 
 This runner intentionally requires a prepared, disposable authoring ``.blend``.
 The artist must already have made valid captures/stamps for the body-front,
@@ -153,6 +153,12 @@ def main():
     pack_manifest = pack_glb.with_suffix(".json")
     pack_validation = pack_glb.with_name(pack_glb.stem + "_validation.json")
     require(pack_glb.is_file() and pack_manifest.is_file(), "Approved Animation Pack files are missing.")
+    pack_validation_payload = json.loads(pack_validation.read_text(encoding="utf-8"))
+    require(
+        pack_validation_payload.get("status") == "PASS",
+        "Approved Animation Pack validation failed: "
+        + "; ".join(pack_validation_payload.get("missing_animations", [])[:6]),
+    )
 
     settings.damage_authoring_output_directory = str(output)
     settings.damage_authoring_filename = "core_compound_damage"
@@ -188,13 +194,14 @@ def main():
         require(mesh_name in imported_objects, f"Clean damage reimport is missing participant mesh {mesh_name}.")
         require(morph_name in imported_morph_names(imported_objects[mesh_name]), f"{mesh_name} lost morph {morph_name}.")
 
+    bpy.ops.wm.read_factory_settings(use_empty=True)
     require('FINISHED' in bpy.ops.import_scene.gltf(filepath=str(pack_glb)), "Clean animation-pack GLB reimport failed.")
     imported_actions = {action.name for action in bpy.data.actions}
     require(approved_names <= imported_actions, "Clean animation reimport is missing approved guard Actions.")
 
     report = {
         "status": "PASS",
-        "forgeVersion": "3.14.1",
+        "forgeVersion": "3.15.0",
         "blenderVersion": bpy.app.version_string,
         "sourceBlend": source_blend,
         "rebuiltPreparedKeys": rebuilt,

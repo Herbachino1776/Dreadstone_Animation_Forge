@@ -28,14 +28,18 @@ MODULE_NAMES = (
     "trauma_field.py",
 )
 MODULE_PATHS = tuple(PACKAGE / name for name in MODULE_NAMES)
+ALL_MODULE_PATHS = tuple(sorted(
+    path for path in PACKAGE.rglob("*.py")
+    if "__pycache__" not in path.parts
+))
 
-EXPECTED_VERSION = (3, 14, 1)
+EXPECTED_VERSION = (3, 15, 0)
 EXPECTED_READINESS_BUILD = "2026-07-18.source-contract.1"
 EXPECTED_AUTHORING_BUILD = "2026-07-18.source-contract.1"
-EXPECTED_DEFORMATION_BUILD = "2026-07-19.gore-emission.1"
+EXPECTED_DEFORMATION_BUILD = "2026-07-20.healing.1"
 
 REQUIRED_GUIDE_HEADINGS = (
-    "## 1. Install Dreadstone Animation Forge 3.14.1",
+    "## 1. Install Dreadstone Animation Forge 3.15.0",
     "## 2. Open the Dreadstone panel",
     "## 3. Import and prepare a source GLB",
     "## 5. Author and approve animation drafts",
@@ -237,7 +241,7 @@ REQUIRED_OPERATORS = {
 REQUIRED_UI_TEXT = {
     "Source Damage Readiness",
     "Damage Segment & Stump Authoring v3.9",
-    "Trauma Field Authoring v3.14.1",
+    "Trauma Field Authoring v3.15.0",
     "5. Surface Gore Overlay",
     "Restore Reimported GLB Intact Preview",
     "Validate Complete Damage Asset",
@@ -415,7 +419,7 @@ def check_extension_manifest() -> None:
         (
             'schema_version = "1.0.0"',
             'id = "dreadstone_animation_forge"',
-            'version = "3.14.1"',
+            'version = "3.15.0"',
             'name = "Dreadstone Animation Forge"',
             'type = "add-on"',
             'blender_version_min = "4.2.0"',
@@ -432,8 +436,8 @@ def check_parse(sources: dict[str, str]) -> None:
 
 def check_compile() -> None:
     with tempfile.TemporaryDirectory(prefix="dreadstone-static-compile-") as temp_dir:
-        for path in MODULE_PATHS:
-            output = Path(temp_dir) / f"{path.name}.pyc"
+        for index, path in enumerate(ALL_MODULE_PATHS):
+            output = Path(temp_dir) / f"{index:03d}_{path.name}.pyc"
             py_compile.compile(str(path), cfile=str(output), doraise=True)
 
 
@@ -774,14 +778,14 @@ def check_repository_hygiene() -> None:
 
 
 def main() -> int:
-    print("DREADSTONE ANIMATION FORGE v3.14.1 STATIC VALIDATION")
+    print("DREADSTONE ANIMATION FORGE v3.15.0 STATIC VALIDATION")
     print("Blender is not imported; runtime acceptance remains separate.")
 
     sources: dict[str, str] = {}
     trees: dict[str, ast.Module] = {}
     checks: list[tuple[str, Callable[[], None]]] = [
         ("all five package modules exist", check_module_files),
-        ("Blender extension manifest exists and matches v3.14.1", check_extension_manifest),
+        ("Blender extension manifest exists and matches v3.15.0", check_extension_manifest),
         ("all Python modules parse with ast.parse", lambda: check_parse(sources)),
         ("all Python modules compile with py_compile", check_compile),
         ("add-on/deformation version and build contracts", lambda: check_versions(trees)),

@@ -1,4 +1,4 @@
-"""Blender runtime acceptance for Forge 3.14 raised surface gore.
+"""Blender runtime acceptance for Forge 3.15 raised surface gore.
 
 Run from a prepared Damage Authoring file that contains the four v001 head
 impact deformation keys and valid linked Trauma Field captures/stamps:
@@ -25,7 +25,7 @@ if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
 import dreadstone_animation_forge as addon  # noqa: E402
-from dreadstone_animation_forge import damage_authoring, deformation_authoring  # noqa: E402
+from dreadstone_animation_forge import damage_authoring, deformation_authoring, trauma_field  # noqa: E402
 
 
 HEAD_KEYS = (
@@ -156,7 +156,7 @@ def main():
 
     report = {
         "status": "PASS",
-        "forgeVersion": "3.14.1",
+        "forgeVersion": "3.15.0",
         "sourceBlend": source_blend,
         "headTriangleCounts": counts,
         "previewChecks": preview_checks,
