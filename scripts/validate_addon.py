@@ -29,13 +29,13 @@ MODULE_NAMES = (
 )
 MODULE_PATHS = tuple(PACKAGE / name for name in MODULE_NAMES)
 
-EXPECTED_VERSION = (3, 13, 0)
+EXPECTED_VERSION = (3, 14, 0)
 EXPECTED_READINESS_BUILD = "2026-07-18.source-contract.1"
 EXPECTED_AUTHORING_BUILD = "2026-07-18.source-contract.1"
-EXPECTED_DEFORMATION_BUILD = "2026-07-19.raised-gore.1"
+EXPECTED_DEFORMATION_BUILD = "2026-07-19.core-compound.1"
 
 REQUIRED_GUIDE_HEADINGS = (
-    "## 1. Install Dreadstone Animation Forge 3.13.0",
+    "## 1. Install Dreadstone Animation Forge 3.14.0",
     "## 2. Open the Dreadstone panel",
     "## 3. Import and prepare a source GLB",
     "## 5. Author and approve animation drafts",
@@ -43,7 +43,7 @@ REQUIRED_GUIDE_HEADINGS = (
     "## 7. Run Source Damage Readiness",
     "## 8. Build Damage Segment and Stump Authoring assets",
     "## 9. Preview intact and detached states",
-    "## 10. Register and validate deformation pairs",
+    "## 10. Register and validate trauma regions",
     "## 12. Capture a surface with every placement mode",
     "## 13. Choose influence masks, distance modes, and damage axis",
     "## 14. Create and manage trauma stamps",
@@ -69,7 +69,8 @@ REQUIRED_GUIDE_UI_LABELS = {
     "**Preview Intact**",
     "**Preview Detached**",
     "**Register Selected Pair**",
-    "**Validate Pair**",
+    "**Validate Region**",
+    "**Register Selected Core Mesh**",
     "**Capture Single Face**",
     "**Capture Connected Face Patch**",
     "**Capture Selected Vertices**",
@@ -94,6 +95,16 @@ REQUIRED_GUIDE_UI_LABELS = {
     "**Clear Current Generated Gore**",
     "**Rebuild All Generated Gore**",
     "**Validate Gore Geometry**",
+    "**Create Body Impact Starters**",
+    "**Create Forearm Impact Starter**",
+    "**New Compound Trauma Event**",
+    "**Add Active Region to Event**",
+    "**Capture Shared Impact Field**",
+    "**Preview Compound Event**",
+    "**Validate Compound Event**",
+    "**Generate Three Mace Head-Guard Drafts**",
+    "**Preview Guard_Active**",
+    "**Validate Mace Head-Guard Drafts**",
     "**Compact Dent**",
     "**Broad Cave**",
     "**Flat Compression**",
@@ -120,6 +131,7 @@ REQUIRED_SCHEMAS = {
     "dreadstone.damage_authoring.v1",
     "dreadstone.damage_deformation.v1",
     "dreadstone.trauma_stamp_library.v1",
+    "dreadstone.compound_trauma_event.v1",
 }
 
 REQUIRED_OBJECT_NAMES = {
@@ -177,9 +189,10 @@ REQUIRED_OPERATORS = {
     "daf.show_deformation_detached": "Show Detached",
     "daf.show_deformation_overlay": "Show Both",
     "daf.validate_deformations": "Validate Deformations",
-    "daf.register_deformation_region": "Register Selected Region Pair",
+    "daf.register_deformation_region": "Register Selected Pair",
+    "daf.register_core_deformation_region": "Register Selected Core Mesh",
     "daf.select_deformation_region": "Select Active Region",
-    "daf.validate_deformation_region": "Validate Registered Pair",
+    "daf.validate_deformation_region": "Validate Active Region",
     "daf.remove_deformation_region": "Remove Region Registration",
     "daf.capture_deformation_selected_patch": "Capture Connected Face Patch",
     "daf.capture_deformation_selected_vertices": "Capture Selected Vertices",
@@ -205,12 +218,26 @@ REQUIRED_OPERATORS = {
     "daf.clear_current_generated_gore": "Clear Current Generated Gore",
     "daf.rebuild_all_generated_gore": "Rebuild All Generated Gore",
     "daf.validate_gore_geometry": "Validate Gore Geometry",
+    "daf.create_body_impact_starters": "Create Body Impact Starters",
+    "daf.create_forearm_impact_starter": "Create Forearm Impact Starter",
+    "daf.new_compound_trauma_event": "New Compound Trauma Event",
+    "daf.select_compound_trauma_event": "Select Compound Trauma Event",
+    "daf.add_active_region_to_compound_event": "Add Active Region to Event",
+    "daf.remove_active_region_from_compound_event": "Remove Region from Event",
+    "daf.capture_compound_impact_field": "Capture Shared Impact Field",
+    "daf.rebuild_compound_trauma_event": "Rebuild Compound Event",
+    "daf.preview_compound_trauma_event": "Preview Compound Event",
+    "daf.clear_compound_trauma_preview": "Clear Compound Preview",
+    "daf.validate_compound_trauma_event": "Validate Compound Event",
+    "daf.generate_mace_head_guards": "Generate Three Mace Head-Guard Drafts",
+    "daf.preview_mace_guard_active": "Preview Guard_Active",
+    "daf.validate_mace_head_guards": "Validate Mace Head-Guard Drafts",
 }
 
 REQUIRED_UI_TEXT = {
     "Source Damage Readiness",
     "Damage Segment & Stump Authoring v3.9",
-    "Trauma Field Authoring v3.13.0",
+    "Trauma Field Authoring v3.14.0",
     "5. Surface Gore Overlay",
     "Restore Reimported GLB Intact Preview",
     "Validate Complete Damage Asset",
@@ -388,7 +415,7 @@ def check_extension_manifest() -> None:
         (
             'schema_version = "1.0.0"',
             'id = "dreadstone_animation_forge"',
-            'version = "3.13.0"',
+            'version = "3.14.0"',
             'name = "Dreadstone Animation Forge"',
             'type = "add-on"',
             'blender_version_min = "4.2.0"',
@@ -747,14 +774,14 @@ def check_repository_hygiene() -> None:
 
 
 def main() -> int:
-    print("DREADSTONE ANIMATION FORGE v3.13.0 STATIC VALIDATION")
+    print("DREADSTONE ANIMATION FORGE v3.14.0 STATIC VALIDATION")
     print("Blender is not imported; runtime acceptance remains separate.")
 
     sources: dict[str, str] = {}
     trees: dict[str, ast.Module] = {}
     checks: list[tuple[str, Callable[[], None]]] = [
         ("all five package modules exist", check_module_files),
-        ("Blender extension manifest exists and matches v3.13.0", check_extension_manifest),
+        ("Blender extension manifest exists and matches v3.14.0", check_extension_manifest),
         ("all Python modules parse with ast.parse", lambda: check_parse(sources)),
         ("all Python modules compile with py_compile", check_compile),
         ("add-on/deformation version and build contracts", lambda: check_versions(trees)),

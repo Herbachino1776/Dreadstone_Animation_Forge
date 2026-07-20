@@ -58,8 +58,20 @@ DIRECTION_MODES = (
 )
 
 STAMP_LIBRARY_SCHEMA = "dreadstone.trauma_stamp_library.v1"
-STAMP_LIBRARY_FORMAT_VERSION = 3
-SUPPORTED_STAMP_LIBRARY_FORMAT_VERSIONS = (1, 2, 3)
+STAMP_LIBRARY_FORMAT_VERSION = 4
+SUPPORTED_STAMP_LIBRARY_FORMAT_VERSIONS = (1, 2, 3, 4)
+
+REGION_MODES = (
+    "PAIRED_SEGMENT",
+    "CORE_SINGLE",
+)
+
+COMPOUND_EVENT_SCHEMA = "dreadstone.compound_trauma_event.v1"
+COMPOUND_CONTINUITY_MODES = (
+    "LOCK_BOUNDARY_TO_SHARED_FIELD",
+    "BLEND_ACROSS_SEAM",
+    "PROTECT_SEAM",
+)
 
 GORE_RECIPE_VERSION = 2
 GORE_OVERLAY_MODES = ("SURFACE_STAIN", "STAIN_AND_RAISED")
@@ -739,6 +751,414 @@ def new_stamp_id() -> str:
     return "stamp_" + uuid.uuid4().hex
 
 
+def new_compound_event_id() -> str:
+    """Create an opaque stable semantic event ID."""
+
+    return "compound_" + uuid.uuid4().hex
+
+
+def derive_participant_seed(event_seed: int, region_id: str, mesh_identity: str) -> int:
+    """Derive coordinated but non-identical deterministic participant variation."""
+
+    try:
+        seed = int(event_seed)
+    except (TypeError, ValueError, OverflowError):
+        raise ValueError("compound event seed must be an integer") from None
+    if seed < 0 or seed > 2147483647:
+        raise ValueError("compound event seed must be from 0 to 2147483647")
+    if not str(region_id).strip() or not str(mesh_identity).strip():
+        raise ValueError("participant seed derivation requires a region and mesh identity")
+    digest = hashlib.sha256(
+        f"{seed}|{str(region_id).strip()}|{str(mesh_identity).strip()}".encode("utf-8")
+    ).digest()
+    return int.from_bytes(digest[:4], "big") & 0x7FFFFFFF
+
+
+def normalize_world_impact_field(field: Mapping[str, object]) -> dict[str, object]:
+    """Canonicalize a shared world-space field used by every event participant."""
+
+    if not isinstance(field, Mapping):
+        raise ValueError("compound world-space impact field must be an object")
+    try:
+        origin = list(_vector3(field.get("origin", ()), "compound field origin"))  # type: ignore[arg-type]
+        direction = list(_normalized(field.get("direction", ()), "compound field direction"))  # type: ignore[arg-type]
+        normal = list(_normalized(field.get("normal", direction), "compound field normal"))  # type: ignore[arg-type]
+        radius = float(field.get("radius", math.nan))
+        depth = float(field.get("depth", math.nan))
+        falloff = float(field.get("falloff", math.nan))
+        strength = float(field.get("strength", math.nan))
+        displacement_limit = float(field.get("displacementLimit", math.nan))
+        seed = int(field.get("seed", 0))
+    except (TypeError, ValueError, OverflowError) as exc:
+        raise ValueError(f"compound world-space impact field contains an invalid value: {exc}") from None
+    if not all(math.isfinite(value) for value in origin + direction + normal):
+        raise ValueError("compound world-space impact vectors must be finite")
+    if not math.isfinite(radius) or radius <= 0.0:
+        raise ValueError("compound world-space impact radius must be positive and finite")
+    if not math.isfinite(depth) or depth < 0.0:
+        raise ValueError("compound world-space impact depth must be finite and non-negative")
+    if not math.isfinite(falloff) or falloff <= 0.0:
+        raise ValueError("compound world-space impact falloff must be positive and finite")
+    if not math.isfinite(strength) or strength < 0.0:
+        raise ValueError("compound world-space impact strength must be finite and non-negative")
+    if not math.isfinite(displacement_limit) or displacement_limit <= 0.0:
+        raise ValueError("compound world-space displacement limit must be positive and finite")
+    if seed < 0 or seed > 2147483647:
+        raise ValueError("compound world-space field seed must be from 0 to 2147483647")
+    family = str(field.get("traumaFamily", "BROAD_CAVE"))
+    if family not in TRAUMA_FAMILIES:
+        raise ValueError(f"unsupported compound trauma family {family!r}")
+    intersections = field.get("participantIntersections", [])
+    if not isinstance(intersections, Sequence) or isinstance(intersections, (str, bytes)):
+        raise ValueError("compound participant intersections must be an array")
+    return {
+        "coordinateSpace": "WORLD",
+        "origin": origin,
+        "direction": direction,
+        "normal": normal,
+        "radius": radius,
+        "depth": depth,
+        "falloff": falloff,
+        "strength": strength,
+        "displacementLimit": displacement_limit,
+        "seed": seed,
+        "traumaFamily": family,
+        "transformReference": str(field.get("transformReference", "WORLD")) or "WORLD",
+        "participantIntersections": copy.deepcopy(list(intersections)),
+    }
+
+
+def world_impact_weight(position: Sequence[float], field: Mapping[str, object]) -> float:
+    """Evaluate the common radial field at one world-space point."""
+
+    normalized = normalize_world_impact_field(field)
+    point = _vector3(position, "world-space field point")
+    delta = _subtract(point, normalized["origin"])  # type: ignore[arg-type]
+    distance = _length(delta)
+    radius = float(normalized["radius"])
+    if distance >= radius:
+        return 0.0
+    normalized_distance = max(0.0, 1.0 - distance / radius)
+    return normalized_distance ** float(normalized["falloff"])
+
+
+def evaluate_world_impact_field(
+    positions: Sequence[Sequence[float]],
+    field: Mapping[str, object],
+    participant_mask: Sequence[float] | None = None,
+) -> dict[str, object]:
+    """Return per-point world deltas and explicit intersection metadata."""
+
+    normalized = normalize_world_impact_field(field)
+    if participant_mask is not None and len(participant_mask) != len(positions):
+        raise ValueError("compound participant mask length does not match the mesh")
+    direction = normalized["direction"]  # type: ignore[assignment]
+    magnitude = min(
+        float(normalized["depth"]) * float(normalized["strength"]),
+        float(normalized["displacementLimit"]),
+    )
+    deltas: list[tuple[float, float, float]] = []
+    weights: list[float] = []
+    affected: list[int] = []
+    for index, position in enumerate(positions):
+        weight = world_impact_weight(position, normalized)
+        if participant_mask is not None:
+            mask_value = float(participant_mask[index])
+            if not math.isfinite(mask_value) or mask_value < 0.0:
+                raise ValueError("compound participant mask values must be finite and non-negative")
+            weight *= min(1.0, mask_value)
+        delta = _scale(direction, magnitude * weight)
+        deltas.append(delta)
+        weights.append(weight)
+        if weight > 1e-8:
+            affected.append(index)
+    return {
+        "deltas": tuple(deltas),
+        "weights": tuple(weights),
+        "affectedVertexIndices": tuple(affected),
+        "maximumDisplacement": max((_length(delta) for delta in deltas), default=0.0),
+    }
+
+
+def resolve_seam_boundary_displacements(
+    first_deltas: Sequence[Sequence[float]],
+    second_deltas: Sequence[Sequence[float]],
+    mapped_indices: Sequence[Sequence[int]],
+    mode: str,
+) -> dict[str, object]:
+    """Resolve mapped seam deltas without changing either participant topology."""
+
+    if mode not in COMPOUND_CONTINUITY_MODES:
+        raise ValueError(f"unsupported compound seam continuity mode {mode!r}")
+    first = [list(_vector3(value, "first seam displacement")) for value in first_deltas]
+    second = [list(_vector3(value, "second seam displacement")) for value in second_deltas]
+    seen_first: set[int] = set()
+    seen_second: set[int] = set()
+    before = 0.0
+    for pair in mapped_indices:
+        if len(pair) != 2:
+            raise ValueError("each seam mapping must contain two vertex indices")
+        first_index, second_index = int(pair[0]), int(pair[1])
+        if not 0 <= first_index < len(first) or not 0 <= second_index < len(second):
+            raise ValueError("a seam mapping references a vertex outside its participant mesh")
+        if first_index in seen_first or second_index in seen_second:
+            raise ValueError("compound seam mappings must be one-to-one")
+        seen_first.add(first_index)
+        seen_second.add(second_index)
+        before = max(before, _length(_subtract(first[first_index], second[second_index])))
+        if mode == "PROTECT_SEAM":
+            resolved = (0.0, 0.0, 0.0)
+        else:
+            # Both LOCK and BLEND use the compatible mapped-boundary value.
+            # BLEND's inward feathering is applied by the Blender integration.
+            resolved = _scale(_add(first[first_index], second[second_index]), 0.5)
+        first[first_index] = list(resolved)
+        second[second_index] = list(resolved)
+    after = max(
+        (
+            _length(_subtract(first[int(pair[0])], second[int(pair[1])]))
+            for pair in mapped_indices
+        ),
+        default=0.0,
+    )
+    return {
+        "firstDeltas": tuple(tuple(value) for value in first),
+        "secondDeltas": tuple(tuple(value) for value in second),
+        "mappedVertexCount": len(mapped_indices),
+        "maximumMismatchBefore": before,
+        "maximumMismatchAfter": after,
+        "topologyMutated": False,
+    }
+
+
+def _compound_event_digest_payload(event: Mapping[str, object]) -> dict[str, object]:
+    payload = copy.deepcopy(dict(event))
+    payload.pop("recipeDigest", None)
+    payload.pop("validationStatus", None)
+    # Intersection counts/digests, generated gore node names, and measured seam
+    # reports are deterministic rebuild outputs, not authoring inputs. Keeping
+    # them outside the recipe digest prevents identical rebuilds from changing
+    # their own seed material while the full library digest still protects the
+    # serialized output records from tampering.
+    world_field = payload.get("worldField")
+    if isinstance(world_field, dict):
+        world_field.pop("participantIntersections", None)
+    for participant in payload.get("participants", []):
+        if not isinstance(participant, dict):
+            continue
+        for field in (
+            "intersectionVertexCount",
+            "intersectionDigest",
+            "goreRecipeDigest",
+            "goreNodeNames",
+        ):
+            participant.pop(field, None)
+    payload.pop("seamContinuity", None)
+    return payload
+
+
+def compound_event_digest(event: Mapping[str, object]) -> str:
+    normalized = normalize_compound_event(event, verify_digest=False)
+    encoded = json.dumps(
+        _compound_event_digest_payload(normalized),
+        sort_keys=True,
+        separators=(",", ":"),
+        allow_nan=False,
+    ).encode("utf-8")
+    return hashlib.sha256(encoded).hexdigest()
+
+
+def normalize_compound_event(
+    event: Mapping[str, object],
+    *,
+    verify_digest: bool = True,
+) -> dict[str, object]:
+    """Canonicalize one synchronized multi-region semantic trauma event."""
+
+    if not isinstance(event, Mapping):
+        raise ValueError("compound trauma event must be an object")
+    event_id = str(event.get("eventId", "")).strip()
+    if not event_id:
+        raise ValueError("compound trauma event has no stable event ID")
+    raw_participants = event.get("participants", [])
+    if not isinstance(raw_participants, Sequence) or isinstance(raw_participants, (str, bytes)):
+        raise ValueError("compound trauma event participants must be an array")
+    participants: list[dict[str, object]] = []
+    for raw in raw_participants:
+        if not isinstance(raw, Mapping):
+            raise ValueError("compound trauma participant must be an object")
+        seam_ids = raw.get("seamIds", [])
+        gore_nodes = raw.get("goreNodeNames", [])
+        if not isinstance(seam_ids, Sequence) or isinstance(seam_ids, (str, bytes)):
+            raise ValueError("compound participant seam IDs must be an array")
+        if not isinstance(gore_nodes, Sequence) or isinstance(gore_nodes, (str, bytes)):
+            raise ValueError("compound participant gore nodes must be an array")
+        region_mode = str(raw.get("regionMode", "PAIRED_SEGMENT"))
+        if region_mode not in REGION_MODES:
+            raise ValueError(f"unsupported compound participant region mode {region_mode!r}")
+        participant = {
+            "regionId": str(raw.get("regionId", "")).strip(),
+            "regionMode": region_mode,
+            "targetObject": str(raw.get("targetObject", raw.get("attachedObject", ""))).strip(),
+            "detachedObject": str(raw.get("detachedObject", "")).strip(),
+            "childKeyName": str(raw.get("childKeyName", "")).strip(),
+            "childStampId": str(raw.get("childStampId", "")).strip(),
+            "seamIds": sorted({str(value).strip() for value in seam_ids if str(value).strip()}),
+            "participantSeed": int(raw.get("participantSeed", 0)),
+            "intersectionVertexCount": int(raw.get("intersectionVertexCount", 0)),
+            "intersectionDigest": str(raw.get("intersectionDigest", "")),
+            "goreRecipeDigest": str(raw.get("goreRecipeDigest", "")),
+            "goreNodeNames": sorted({str(value) for value in gore_nodes if str(value)}),
+        }
+        participants.append(participant)
+    try:
+        seed = int(event.get("seed", 0))
+        activation_weight = float(event.get("activationWeight", 0.01))
+        severity_raw = event.get("severity")
+        severity = None if severity_raw in (None, "") else float(severity_raw)
+    except (TypeError, ValueError, OverflowError) as exc:
+        raise ValueError(f"compound trauma event contains an invalid scalar: {exc}") from None
+    linked_seams = event.get("linkedSeamIds", [])
+    seam_continuity = event.get("seamContinuity", [])
+    if not isinstance(linked_seams, Sequence) or isinstance(linked_seams, (str, bytes)):
+        raise ValueError("compound linked seam IDs must be an array")
+    if not isinstance(seam_continuity, Sequence) or isinstance(seam_continuity, (str, bytes)):
+        raise ValueError("compound seam-continuity records must be an array")
+    normalized = {
+        "schema": COMPOUND_EVENT_SCHEMA,
+        "eventId": event_id,
+        "displayName": str(event.get("displayName", event_id)).strip() or event_id,
+        "traumaFamily": str(event.get("traumaFamily", "BROAD_CAVE")),
+        "impactDirection": str(event.get("impactDirection", "UNSPECIFIED")),
+        "severity": severity,
+        "worldField": normalize_world_impact_field(event.get("worldField", {})),  # type: ignore[arg-type]
+        "participants": sorted(participants, key=lambda value: (str(value["regionId"]), str(value["targetObject"]))),
+        "linkedSeamIds": sorted({str(value).strip() for value in linked_seams if str(value).strip()}),
+        "continuityMode": str(event.get("continuityMode", "PROTECT_SEAM")),
+        "seamContinuity": copy.deepcopy(list(seam_continuity)),
+        "activationWeight": activation_weight,
+        "activationRule": str(event.get("activationRule", "SYNCHRONIZED_WEIGHT")),
+        "goreStyleLinkage": str(event.get("goreStyleLinkage", "SHARED_RECIPE_FAMILY")),
+        "seed": seed,
+        "validationStatus": str(event.get("validationStatus", "NOT_VALIDATED")),
+    }
+    errors = validate_compound_event(normalized)
+    if errors:
+        raise ValueError("; ".join(errors))
+    digest = hashlib.sha256(
+        json.dumps(
+            _compound_event_digest_payload(normalized),
+            sort_keys=True,
+            separators=(",", ":"),
+            allow_nan=False,
+        ).encode("utf-8")
+    ).hexdigest()
+    stored = str(event.get("recipeDigest", ""))
+    if verify_digest and stored and stored != digest:
+        raise ValueError("compound trauma event recipe digest does not match its contents")
+    normalized["recipeDigest"] = digest
+    return normalized
+
+
+def validate_compound_event(
+    event: Mapping[str, object],
+    *,
+    registered_regions: Mapping[str, Mapping[str, object]] | None = None,
+) -> list[str]:
+    """Validate semantic ownership without requiring Blender mesh data."""
+
+    errors: list[str] = []
+    if str(event.get("schema", COMPOUND_EVENT_SCHEMA)) != COMPOUND_EVENT_SCHEMA:
+        errors.append("Compound trauma event schema is unsupported.")
+    if not str(event.get("eventId", "")).strip():
+        errors.append("Compound trauma event has no stable event ID.")
+    family = str(event.get("traumaFamily", ""))
+    if family not in TRAUMA_FAMILIES:
+        errors.append(f"Compound trauma event uses unsupported trauma family {family!r}.")
+    continuity = str(event.get("continuityMode", ""))
+    if continuity not in COMPOUND_CONTINUITY_MODES:
+        errors.append("Compound trauma event has an invalid seam-continuity mode.")
+    participants = event.get("participants", [])
+    if not isinstance(participants, Sequence) or isinstance(participants, (str, bytes)):
+        return errors + ["Compound trauma event participants must be an array."]
+    if len(participants) < 2:
+        errors.append("Compound trauma event requires at least two participants.")
+    try:
+        event_seed = int(event.get("seed", -1))
+    except (TypeError, ValueError, OverflowError):
+        event_seed = -1
+    identities: list[tuple[str, str]] = []
+    for participant in participants:
+        if not isinstance(participant, Mapping):
+            errors.append("Compound trauma event contains an invalid participant.")
+            continue
+        region_id = str(participant.get("regionId", "")).strip()
+        target = str(participant.get("targetObject", "")).strip()
+        region_mode = str(participant.get("regionMode", ""))
+        detached = str(participant.get("detachedObject", "")).strip()
+        identities.append((region_id, target))
+        if not region_id or not target:
+            errors.append("Compound trauma participant requires a region and target mesh identity.")
+        if region_mode not in REGION_MODES:
+            errors.append(f"Compound participant {region_id or '<missing>'} has an invalid region mode.")
+        elif region_mode == "PAIRED_SEGMENT" and not detached:
+            errors.append(f"Compound paired participant {region_id or '<missing>'} has no detached mesh identity.")
+        elif region_mode == "CORE_SINGLE" and detached:
+            errors.append(f"Compound core participant {region_id or '<missing>'} must not require a detached mesh.")
+        if not str(participant.get("childKeyName", "")).strip():
+            errors.append(f"Compound participant {region_id or '<missing>'} has no child deformation key.")
+        if not str(participant.get("childStampId", "")).strip():
+            errors.append(f"Compound participant {region_id or '<missing>'} has no child stamp ID.")
+        try:
+            participant_seed = int(participant.get("participantSeed", -1))
+            expected_seed = derive_participant_seed(event_seed, region_id, target)
+        except (TypeError, ValueError, OverflowError):
+            participant_seed = expected_seed = -1
+        if participant_seed != expected_seed:
+            errors.append(f"Compound participant {region_id or '<missing>'} has a stale deterministic seed.")
+        if registered_regions is not None:
+            registered = registered_regions.get(region_id)
+            if registered is None:
+                errors.append(f"Compound participant region {region_id!r} is not registered.")
+            else:
+                registered_targets = {
+                    str(registered.get(
+                        "targetObject",
+                        registered.get("sourceTargetObject", registered.get("attachedObject", "")),
+                    )),
+                    str(registered.get("attachedObject", registered.get("sourceAttachedObject", ""))),
+                    str(registered.get("sourceTargetObject", "")),
+                    str(registered.get("sourceAttachedObject", "")),
+                }
+                if target not in registered_targets:
+                    errors.append(f"Compound participant {region_id!r} targets the wrong mesh identity.")
+                registered_mode = str(registered.get("regionMode", "PAIRED_SEGMENT"))
+                if region_mode != registered_mode:
+                    errors.append(f"Compound participant {region_id!r} has a stale region-mode binding.")
+                registered_detached = str(
+                    registered.get("detachedObject", registered.get("sourceDetachedObject", ""))
+                )
+                if detached != registered_detached:
+                    errors.append(f"Compound participant {region_id!r} has a stale detached-mesh binding.")
+    duplicates = sorted({identity for identity in identities if identities.count(identity) > 1})
+    if duplicates:
+        errors.append("Compound trauma event contains a duplicate participant.")
+    linked_seams = event.get("linkedSeamIds", [])
+    try:
+        normalize_world_impact_field(event.get("worldField", {}))  # type: ignore[arg-type]
+    except (TypeError, ValueError) as exc:
+        errors.append("Compound world-space impact field is invalid: " + str(exc))
+    try:
+        activation = float(event.get("activationWeight", math.nan))
+    except (TypeError, ValueError):
+        activation = math.nan
+    if not math.isfinite(activation) or not 0.0 <= activation <= 2.0:
+        errors.append("Compound activation weight must be finite from zero to two.")
+    if not 0 <= event_seed <= 2147483647:
+        errors.append("Compound event seed must be from 0 to 2147483647.")
+    return errors
+
+
 def default_gore_overlay(
     preset_id: str = DEFAULT_GORE_PRESET_ID,
     *,
@@ -1047,8 +1467,8 @@ def gore_generated_object_name(region_id: str, deformation_key: str, pair_role: 
     """Return a stable Blender/glTF node name for one generated gore shell."""
 
     role = str(pair_role).upper()
-    if role not in {"ATTACHED", "DETACHED"}:
-        raise ValueError("raised gore pair role must be ATTACHED or DETACHED")
+    if role not in {"ATTACHED", "DETACHED", "CORE"}:
+        raise ValueError("raised gore ownership role must be ATTACHED, DETACHED, or CORE")
 
     def safe(value: str) -> str:
         cleaned = "_".join(filter(None, "".join(
@@ -1537,6 +1957,19 @@ def normalize_stamp_library(payload: Mapping[str, object]) -> dict[str, object]:
         if region_id in seen_regions:
             raise ValueError(f"Duplicate trauma stamp library region {region_id!r}.")
         seen_regions.add(region_id)
+        region_mode = str(raw_region.get("regionMode", "PAIRED_SEGMENT"))
+        if region_mode not in REGION_MODES:
+            raise ValueError(f"Region {region_id!r} has unsupported region mode {region_mode!r}.")
+        target_object = str(
+            raw_region.get("sourceTargetObject", raw_region.get("sourceAttachedObject", ""))
+        )
+        detached_object = str(raw_region.get("sourceDetachedObject", ""))
+        if not target_object:
+            raise ValueError(f"Region {region_id!r} has no source target mesh identity.")
+        if region_mode == "PAIRED_SEGMENT" and not detached_object:
+            raise ValueError(f"Paired region {region_id!r} has no detached mesh identity.")
+        if region_mode == "CORE_SINGLE" and detached_object:
+            raise ValueError(f"Core single region {region_id!r} must not require a detached mesh.")
         topology = str(raw_region.get("topologyFingerprint", ""))
         if len(topology) != 64 or any(character not in "0123456789abcdef" for character in topology.lower()):
             raise ValueError(f"Region {region_id!r} has an invalid topology fingerprint.")
@@ -1618,15 +2051,39 @@ def normalize_stamp_library(payload: Mapping[str, object]) -> dict[str, object]:
         total_keys += len(keys)
         regions.append({
             "regionId": region_id,
-            "sourceAttachedObject": str(raw_region.get("sourceAttachedObject", "")),
-            "sourceDetachedObject": str(raw_region.get("sourceDetachedObject", "")),
+            "regionMode": region_mode,
+            "sourceTargetObject": target_object,
+            "sourceAttachedObject": target_object,
+            "sourceDetachedObject": detached_object,
             "topologyFingerprint": topology,
+            "weightFingerprint": str(raw_region.get("weightFingerprint", "")),
             "vertexCount": vertex_count,
             "polygonCount": polygon_count,
             "relatedSeamId": str(raw_region.get("relatedSeamId", "")),
             "keys": keys,
         })
     regions.sort(key=lambda value: str(value["regionId"]))
+    raw_compound_events = payload.get("compoundEvents", [])
+    if not isinstance(raw_compound_events, Sequence) or isinstance(raw_compound_events, (str, bytes)):
+        raise ValueError("Trauma stamp library compound events must be an array.")
+    compound_events = [
+        normalize_compound_event(event)
+        for event in raw_compound_events
+        if isinstance(event, Mapping)
+    ]
+    if len(compound_events) != len(raw_compound_events):
+        raise ValueError("Trauma stamp library contains a non-object compound event.")
+    compound_events.sort(key=lambda value: str(value["eventId"]))
+    event_ids = [str(event["eventId"]) for event in compound_events]
+    if len(event_ids) != len(set(event_ids)):
+        raise ValueError("Trauma stamp library contains duplicate compound event IDs.")
+    known_regions = {str(region["regionId"]): region for region in regions}
+    for event in compound_events:
+        event_errors = validate_compound_event(event, registered_regions=known_regions)
+        if event_errors:
+            raise ValueError(
+                f"Compound event {event['eventId']!r}: " + "; ".join(event_errors)
+            )
     normalized: dict[str, object] = {
         "schema": STAMP_LIBRARY_SCHEMA,
         "formatVersion": format_version,
@@ -1637,7 +2094,9 @@ def normalize_stamp_library(payload: Mapping[str, object]) -> dict[str, object]:
         "regionCount": len(regions),
         "keyCount": total_keys,
         "stampCount": total_stamps,
+        "compoundEventCount": len(compound_events),
         "regions": regions,
+        "compoundEvents": compound_events,
     }
     calculated_library_digest = _stamp_library_digest(normalized)
     if input_digest_mismatch:
@@ -1650,6 +2109,7 @@ def build_stamp_library(
     regions: Sequence[Mapping[str, object]],
     producer_version: str,
     producer_build_id: str,
+    compound_events: Sequence[Mapping[str, object]] = (),
 ) -> dict[str, object]:
     """Build a deterministic, versioned library from authored region records."""
 
@@ -1661,6 +2121,7 @@ def build_stamp_library(
             "deformationBuildId": str(producer_build_id),
         },
         "regions": list(regions),
+        "compoundEvents": list(compound_events),
     })
 
 
@@ -1678,6 +2139,8 @@ def stamp_library_compatibility_errors(
         if target is None:
             errors.append(f"Stamp library region {region_id!r} is not registered in this scene.")
             continue
+        if str(target.get("regionMode", region["regionMode"])) != str(region["regionMode"]):
+            errors.append(f"Stamp library region {region_id!r} mode does not match the explicit current registration.")
         if str(target.get("topologyFingerprint", "")) != region["topologyFingerprint"]:
             errors.append(f"Stamp library region {region_id!r} topology does not match the current attached mesh.")
         try:

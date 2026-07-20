@@ -2,7 +2,7 @@
 
 ## User documentation boundary
 
-The authoritative beginner-facing installation, authoring, validation, export, and reimport procedure is [USER_WORKFLOW_GUIDE.md](USER_WORKFLOW_GUIDE.md). The runtime-facing node/manifest rules are in [RAISED_GORE_EXPORT_CONTRACT.md](RAISED_GORE_EXPORT_CONTRACT.md). Keep this file developer-focused. Do not duplicate the complete user workflow here.
+The authoritative beginner-facing installation, authoring, validation, export, and reimport procedure is [USER_WORKFLOW_GUIDE.md](USER_WORKFLOW_GUIDE.md). Runtime-facing contracts are in [CORE_COMPOUND_EXPORT_CONTRACT.md](CORE_COMPOUND_EXPORT_CONTRACT.md) and [RAISED_GORE_EXPORT_CONTRACT.md](RAISED_GORE_EXPORT_CONTRACT.md). Keep this file developer-focused. Do not duplicate the complete user workflow here.
 
 When implementation and documentation disagree, inspect the current registered panels, operators, properties, generated names, validation contracts, and export code; then correct the user guide and any stale user-facing source text together.
 
@@ -22,13 +22,13 @@ python -m unittest discover -s tests -p "test_*.py"
 python scripts/build_release.py
 ```
 
-Static validation checks parseability, compilation, version/build/schema contracts, generated names, seams, public operators and labels, trauma-field and surface-gore contracts, managed preview cleanup, exact-index synchronization, GLB hooks, repository hygiene, and the required inventory/version/artifact markers in `docs/USER_WORKFLOW_GUIDE.md`.
+Static validation checks parseability, compilation, version/build/schema contracts, generated names, seams, public operators and labels, core/paired/compound trauma-field and surface-gore contracts, guard action metadata, managed preview cleanup, exact-index synchronization, GLB hooks, repository hygiene, and the required inventory/version/artifact markers in `docs/USER_WORKFLOW_GUIDE.md`.
 
 Static success does not prove Blender registration, UI behavior, mesh operations, viewport presentation, sculpt transitions, GLB export, or reimport behavior.
 
 ## Build the installable ZIP
 
-Run `python scripts/build_release.py`. It validates first and writes `dist/Dreadstone_Animation_Forge_v3_13_0.zip` with deterministic timestamps and ordering. Its exact root layout is:
+Run `python scripts/build_release.py`. It validates first and writes `dist/Dreadstone_Animation_Forge_v3_14_0.zip` with deterministic timestamps and ordering. Its exact root layout is:
 
 ```text
 blender_manifest.toml
@@ -58,6 +58,8 @@ Use the current [user workflow guide](USER_WORKFLOW_GUIDE.md) as the acceptance 
 9. Save a multi-key **Stamp Library**, load it into a clean authoring rebuild from the same source, and confirm names, stable IDs, order, enabled state, captures, gore settings/seeds/digests, rebuilt geometry, exact-index pairing, and validation survive the round trip. Exercise both exact-topology loading and analytical positional-anchor rebinding across GLB split/index changes; confirm unmatched anchors and conflicting existing keys are rejected without mutation.
 10. Confirm virtual welding remains analytical only, missing legacy keys are not recreated, unrepairable attached keys are not overwritten, and Trauma Field views do not rewrite render/export visibility.
 11. Run `blender prepared.blend --background --python tests/blender_raised_gore_acceptance.py -- --output <folder>` where possible; record Blender version, source commit, ZIP SHA-256, per-head attached/detached triangle counts, validation outputs, surface-gore/material observations, and clean-reimport manifest observations.
+12. From a prepared 3.14 file containing explicit artist-authored body/forearm captures plus a two-region head/body compound event, run `blender prepared.blend --background --python tests/blender_core_compound_guard_acceptance.py -- --output <folder>`. Retain `core_compound_guard_acceptance.json` with body/forearm triangle counts, full-weight seam mismatch, topology-mutation flag, compound manifest mapping, three guard marker/pose validations, damage GLB reimport, and Approved Animation Pack reimport.
+13. Static or background checks do not approve visual quality. Record user approval separately for body/arm anatomy, clot silhouette, cracks, all three guard poses, intersections, and final imported appearance.
 
 GitHub Actions runs static checks and packaging; it is not Blender runtime testing.
 

@@ -66,7 +66,8 @@ class StaticContractTests(unittest.TestCase):
         self.assertIn('and obj.get("dsb_generated_role") == "raised_gore"', self.sources["damage_authoring.py"])
         self.assertIn('if not bool(obj.get("dsb_gore_owned", False)):', self.deformation)
         self.assertIn('if existing_recipe and existing_recipe.get("goreUserCustomized", False):', self.deformation)
-        self.assertIn('for source, role in ((attached, "ATTACHED"), (detached, "DETACHED")):', self.deformation)
+        self.assertIn('def _region_gore_sources(', self.deformation)
+        self.assertIn('return ((attached, "CORE"),)', self.deformation)
         self.assertIn("allowed = {'ShaderNodeOutputMaterial', 'ShaderNodeBsdfPrincipled'}", self.deformation)
         self.assertIn('entry["raisedGoreStatus"] = "STALE_REBUILD_REQUIRED"', self.deformation)
 
@@ -111,7 +112,7 @@ class StaticContractTests(unittest.TestCase):
         manifest = contracts.MANIFEST_PATH.read_text(encoding="utf-8")
         self.assertIn('schema_version = "1.0.0"', manifest)
         self.assertIn('id = "dreadstone_animation_forge"', manifest)
-        self.assertIn('version = "3.13.0"', manifest)
+        self.assertIn('version = "3.14.0"', manifest)
         builder = (ROOT / "scripts" / "build_release.py").read_text(encoding="utf-8")
         self.assertIn('"blender_manifest.toml",\n    "__init__.py",', builder)
         self.assertNotIn('"dreadstone_animation_forge/__init__.py"', builder)
@@ -132,7 +133,7 @@ class StaticContractTests(unittest.TestCase):
         version = contracts.EXPECTED_VERSION
         self.assertEqual(
             f"Dreadstone_Animation_Forge_v{'_'.join(map(str, version))}.zip",
-            "Dreadstone_Animation_Forge_v3_13_0.zip",
+            "Dreadstone_Animation_Forge_v3_14_0.zip",
         )
 
     def test_authoritative_user_workflow_guide_contract(self) -> None:
@@ -150,8 +151,8 @@ class StaticContractTests(unittest.TestCase):
     def test_release_readme_contains_install_quick_start_and_guide_reference(self) -> None:
         readme = (ROOT / "README.md").read_text(encoding="utf-8")
         for marker in (
-            "3.13.0",
-            "Dreadstone_Animation_Forge_v3_13_0.zip",
+            "3.14.0",
+            "Dreadstone_Animation_Forge_v3_14_0.zip",
             "Install from Disk",
             "## Quick start",
             "docs/USER_WORKFLOW_GUIDE.md",
@@ -220,7 +221,7 @@ class StaticContractTests(unittest.TestCase):
         self.assertEqual(operators["daf.show_deformation_attached"], "Show Attached")
         self.assertEqual(operators["daf.show_deformation_detached"], "Show Detached")
         self.assertEqual(operators["daf.show_deformation_overlay"], "Show Both")
-        self.assertIn('row.operator("daf.show_deformation_overlay", text="Both"', self.deformation)
+        self.assertIn('detached_controls.operator("daf.show_deformation_overlay", text="Both"', self.deformation)
 
     def test_visibility_normalization_is_pair_scoped_and_viewport_only(self) -> None:
         tree = self.trees["deformation_authoring.py"]
@@ -282,7 +283,7 @@ class StaticContractTests(unittest.TestCase):
         self.assertIn("def repair_legacy_pair_sync(", self.deformation)
         self.assertIn("_sync_exact_index_key_pair(attached, detached, name)", self.deformation)
         self.assertIn("if before <= SYNC_TOLERANCE:", self.deformation)
-        self.assertIn("if max_delta_error > SYNC_TOLERANCE:", self.deformation)
+        self.assertIn("if _region_mode(region) == PAIRED_SEGMENT and max_delta_error > SYNC_TOLERANCE:", self.deformation)
         for field in (
             "legacySyncStatus",
             "legacySyncErrorBefore",

@@ -1,4 +1,4 @@
-"""Blender runtime acceptance for Forge 3.13 raised surface gore.
+"""Blender runtime acceptance for Forge 3.14 raised surface gore.
 
 Run from a prepared Damage Authoring file that contains the four v001 head
 impact deformation keys and valid linked Trauma Field captures/stamps:
@@ -134,7 +134,7 @@ def main():
 
     report = {
         "status": "PASS",
-        "forgeVersion": "3.13.0",
+        "forgeVersion": "3.14.0",
         "sourceBlend": source_blend,
         "headTriangleCounts": counts,
         "previewChecks": preview_checks,

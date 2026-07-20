@@ -15,7 +15,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 PACKAGE = ROOT / "dreadstone_animation_forge"
 DIST = ROOT / "dist"
-DEFORMATION_BUILD = "2026-07-19.raised-gore.1"
+DEFORMATION_BUILD = "2026-07-19.core-compound.1"
 MODULES = (
     "__init__.py",
     "damage_readiness.py",

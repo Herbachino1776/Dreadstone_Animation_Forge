@@ -1,6 +1,6 @@
 # Raised gore export contract
 
-Forge 3.13 exports raised surface gore as ordinary glTF mesh nodes. It does not export cavities, exposed anatomy, runtime code, or zero-scale hiding.
+Forge 3.14 exports raised surface gore as ordinary glTF mesh nodes for paired head/forearm regions, core meshes, and compound-event participants. It does not export cavities, exposed anatomy, runtime code, or zero-scale hiding.
 
 ## Node representation
 

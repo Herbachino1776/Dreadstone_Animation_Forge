@@ -202,7 +202,7 @@ class TraumaFieldTests(unittest.TestCase):
 
     def test_deformation_without_surface_gore_has_no_new_key_field(self) -> None:
         library = four_key_stamp_library()
-        self.assertEqual(library["formatVersion"], 3)
+        self.assertEqual(library["formatVersion"], 4)
         for key in library["regions"][0]["keys"]:
             self.assertNotIn("surfaceGoreOverlay", key)
             self.assertNotIn("goreOverlayDigest", key)

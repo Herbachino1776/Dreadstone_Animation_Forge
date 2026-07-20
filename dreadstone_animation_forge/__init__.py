@@ -1,7 +1,7 @@
 bl_info = {
     "name": "Dreadstone Animation Forge",
     "author": "Dreadstone Black",
-    "version": (3, 13, 0),
+    "version": (3, 14, 0),
     "blender": (3, 6, 0),
     "location": "3D Viewport > Sidebar > Dreadstone",
     "description": "Animation authoring, protected damage assets, and registered-region trauma-field shape-key authoring.",
@@ -55,6 +55,8 @@ ALIASES = {
         "leftforearm","leftlowerarm","forearml","lowerarml",
         "lforearm","lower_arm_l","forearm_l"
     ],
+    "shoulder_l": ["leftshoulder", "shoulderl", "lshoulder", "shoulder_l", "clavicle_l"],
+    "hand_l": ["lefthand", "handl", "lhand", "hand_l", "wrist_l"],
     "upper_arm_r": [
         "rightarm","rightupperarm","upperarmr","rupperarm",
         "upper_arm_r","arm_r"
@@ -63,6 +65,8 @@ ALIASES = {
         "rightforearm","rightlowerarm","forearmr","lowerarmr",
         "rforearm","lower_arm_r","forearm_r"
     ],
+    "shoulder_r": ["rightshoulder", "shoulderr", "rshoulder", "shoulder_r", "clavicle_r"],
+    "hand_r": ["righthand", "handr", "rhand", "hand_r", "wrist_r"],
 }
 
 ANIMATE_ANYTHING_PROFILE = {
@@ -529,21 +533,20 @@ DRAFT_ACTION_NAMES = {
     "DEATH": "DSB_DRAFT_Death",
     "HURT_LEFT": "DSB_DRAFT_Hurt_LEFT",
     "HURT_RIGHT": "DSB_DRAFT_Hurt_RIGHT",
+    "MACE_GUARD_TWO_ARM": "DSB_DRAFT_Mace_Brace_Head_TwoArm",
+    "MACE_GUARD_LEFT_ARM": "DSB_DRAFT_Mace_Brace_Head_LeftArm",
+    "MACE_GUARD_RIGHT_ARM": "DSB_DRAFT_Mace_Brace_Head_RightArm",
 }
 
 
 def unlink_action_everywhere(action):
     """Unlink an Action from active slots before replacing a disposable draft."""
+    # Preflight all NLA users before changing any active Action slot. A refusal
+    # must be non-destructive even when the NLA owner appears late in the scene.
     for obj in bpy.data.objects:
         animation_data = getattr(obj, "animation_data", None)
         if animation_data is None:
             continue
-
-        if animation_data.action == action:
-            animation_data.action = None
-
-        # Draft Actions should never be pushed to NLA, but do not remove an
-        # Action that has accidentally become part of a strip.
         for track in animation_data.nla_tracks:
             for strip in track.strips:
                 if strip.action == action:
@@ -551,6 +554,14 @@ def unlink_action_everywhere(action):
                         f"Draft Action '{action.name}' is used by an NLA strip. "
                         "Remove it from NLA before regenerating."
                     )
+
+    for obj in bpy.data.objects:
+        animation_data = getattr(obj, "animation_data", None)
+        if animation_data is None:
+            continue
+
+        if animation_data.action == action:
+            animation_data.action = None
 
 
 def ensure_draft_action(arm, draft_name):
@@ -604,6 +615,15 @@ def approval_base_name(settings, kind):
     if kind == "HURT_RIGHT":
         return "DSB_Hurt_RIGHT_Flank"
 
+    if kind == "MACE_GUARD_TWO_ARM":
+        return "DSB_Mace_Brace_Head_TwoArm"
+
+    if kind == "MACE_GUARD_LEFT_ARM":
+        return "DSB_Mace_Brace_Head_LeftArm"
+
+    if kind == "MACE_GUARD_RIGHT_ARM":
+        return "DSB_Mace_Brace_Head_RightArm"
+
     raise RuntimeError(f"Unknown Action kind: {kind}")
 
 
@@ -626,6 +646,8 @@ def approve_draft_action(context, kind):
     action["dsb_approved_kind"] = kind
     action["dsb_approved_frame_start"] = int(context.scene.frame_start)
     action["dsb_approved_frame_end"] = int(context.scene.frame_end)
+    if action.get("dsb_guard_variant"):
+        action["dsb_guard_action_id"] = final_name
     action.use_fake_user = True
 
     try:
@@ -741,6 +763,9 @@ class DAFSettings(PropertyGroup):
     ui_workflow_open: BoolProperty(default=False)
     ui_deformation_authoring_open: BoolProperty(default=True)
     ui_surface_gore_open: BoolProperty(default=True)
+    ui_body_arm_trauma_open: BoolProperty(default=False)
+    ui_compound_trauma_open: BoolProperty(default=False)
+    ui_mace_guard_open: BoolProperty(default=False)
 
     target_height: FloatProperty(
         name="Target Height",
@@ -1119,6 +1144,26 @@ class DAFSettings(PropertyGroup):
         max=1
     )
 
+    # Mace head-guard draft timing. Scene FPS determines actual frames.
+    mace_guard_raise_seconds: FloatProperty(
+        name="Arm Raise", default=0.34, min=0.25, max=0.40, unit='TIME'
+    )
+    mace_guard_hold_seconds: FloatProperty(
+        name="Guard Hold", default=0.15, min=0.10, max=0.20, unit='TIME'
+    )
+    mace_guard_recovery_seconds: FloatProperty(
+        name="Interruptible Recovery", default=0.18, min=0.05, max=0.50, unit='TIME'
+    )
+    mace_guard_preview_variant: EnumProperty(
+        name="Preview Variant",
+        items=[
+            ('MACE_GUARD_TWO_ARM', "Two-Arm Head Guard", "Both forearms form an imperfect shield"),
+            ('MACE_GUARD_LEFT_ARM', "Left-Arm Emergency Guard", "Left forearm protects the head"),
+            ('MACE_GUARD_RIGHT_ARM', "Right-Arm Emergency Guard", "Right forearm protects the head"),
+        ],
+        default='MACE_GUARD_TWO_ARM',
+    )
+
     # Source Damage Readiness v3.8.1. The analyzer writes report/UI state and
     # stable identity metadata, but never edits source geometry or weights.
     ui_damage_readiness_open: BoolProperty(default=False)
@@ -1192,7 +1237,7 @@ class DAFSettings(PropertyGroup):
     last_damage_manifest_path: StringProperty(default="", options={'HIDDEN'})
     last_damage_validation_path: StringProperty(default="", options={'HIDDEN'})
 
-    # Trauma Field Authoring v3.13.0.
+    # Trauma Field Authoring v3.14.0.
     deformation_region: EnumProperty(
         name="Active Region",
         items=_deformation_region_items,
@@ -1383,6 +1428,52 @@ class DAFSettings(PropertyGroup):
     )
     deformation_status: StringProperty(default="NOT INITIALIZED", options={'HIDDEN'})
     last_deformation_validation: StringProperty(default="NOT VALIDATED", options={'HIDDEN'})
+
+    # Core/compound trauma authoring.
+    compound_event_id: StringProperty(name="New Event ID", default="Neck_Shoulder_Crush_Left")
+    compound_display_name: StringProperty(name="Display Name", default="Neck Shoulder Crush Left")
+    compound_active_event_id: StringProperty(name="Active Compound Event", default="", options={'HIDDEN'})
+    compound_trauma_family: EnumProperty(
+        name="Trauma Family",
+        items=[
+            ('COMPACT_DENT', "Compact Dent", "Localized inward depression"),
+            ('BROAD_CAVE', "Broad Cave", "Wide soft inward collapse"),
+            ('FLAT_COMPRESSION', "Flat Compression", "Compress toward an impact plane"),
+            ('DIRECTIONAL_SHEAR', "Directional Shear", "Controlled lateral displacement"),
+            ('RAISED_IMPACT_RIM', "Raised Impact Rim", "Restrained raised impact lip"),
+            ('RIDGE_COLLAPSE', "Ridge Collapse", "Push a ridge inward"),
+        ],
+        default='BROAD_CAVE',
+    )
+    compound_semantic_direction: StringProperty(name="Semantic Impact Direction", default="LEFT_TO_RIGHT")
+    compound_severity: FloatProperty(name="Severity", default=1.0, min=0.0, max=10.0)
+    compound_impact_origin: FloatVectorProperty(
+        name="World Impact Origin", size=3, default=(0.0, 0.0, 1.4), subtype='XYZ', unit='LENGTH'
+    )
+    compound_impact_direction: FloatVectorProperty(
+        name="World Impact Direction", size=3, default=(1.0, 0.0, -0.15), subtype='DIRECTION'
+    )
+    compound_impact_radius: FloatProperty(name="Radius", default=0.16, min=0.005, max=1.0, unit='LENGTH')
+    compound_impact_depth: FloatProperty(name="Depth", default=0.035, min=0.0, max=0.25, unit='LENGTH')
+    compound_impact_falloff: FloatProperty(name="Falloff", default=1.45, min=0.1, max=8.0)
+    compound_impact_strength: FloatProperty(name="Strength", default=1.0, min=0.0, max=2.0)
+    compound_displacement_limit: FloatProperty(
+        name="Displacement Limit", default=0.065, min=0.001, max=0.25, unit='LENGTH'
+    )
+    compound_event_seed: IntProperty(name="Event Seed", default=1776, min=0, max=2147483647)
+    compound_linked_seam_ids: StringProperty(
+        name="Linked Seam IDs", description="Comma-separated Damage Authoring seam contracts", default="head_neck"
+    )
+    compound_continuity_mode: EnumProperty(
+        name="Continuity Mode",
+        items=[
+            ('LOCK_BOUNDARY_TO_SHARED_FIELD', "Lock Boundary to Shared Field", "Use one compatible mapped boundary displacement"),
+            ('BLEND_ACROSS_SEAM', "Blend Across Seam", "Match the boundary and feather inward per participant"),
+            ('PROTECT_SEAM', "Protect Seam", "Keep linked seam boundary vertices undisplaced"),
+        ],
+        default='LOCK_BOUNDARY_TO_SHARED_FIELD',
+    )
+    compound_activation_weight: FloatProperty(name="Activation Weight", default=0.01, min=0.0, max=2.0)
 
 PREVIEW_FLOOR_NAME = "DSB_PREVIEW_FLOOR"
 
@@ -1622,6 +1713,13 @@ def adopt_or_create_wrapper(context, armature, objects):
 
 def infer_approved_kind(action_name):
     lower = action_name.lower()
+
+    if "mace" in lower and "brace" in lower and "twoarm" in lower:
+        return "MACE_GUARD_TWO_ARM"
+    if "mace" in lower and "brace" in lower and "leftarm" in lower:
+        return "MACE_GUARD_LEFT_ARM"
+    if "mace" in lower and "brace" in lower and "rightarm" in lower:
+        return "MACE_GUARD_RIGHT_ARM"
 
     if "hurt" in lower and "left" in lower:
         return "HURT_LEFT"
@@ -2568,6 +2666,401 @@ class DAF_OT_hurt_right(Operator):
             self.report({'ERROR'}, str(exc))
             return {'CANCELLED'}
 
+
+MACE_GUARD_VARIANTS = {
+    "MACE_GUARD_TWO_ARM": {
+        "guardVariant": "TWO_ARM_HEAD_GUARD",
+        "presentedRegions": ("forearm_left", "forearm_right", "head"),
+        "leftScale": 1.0,
+        "rightScale": 0.92,
+        "torsoTurn": 2.0,
+    },
+    "MACE_GUARD_LEFT_ARM": {
+        "guardVariant": "LEFT_ARM_EMERGENCY_HEAD_GUARD",
+        "presentedRegions": ("forearm_left", "head"),
+        "leftScale": 1.0,
+        "rightScale": 0.24,
+        "torsoTurn": -8.0,
+    },
+    "MACE_GUARD_RIGHT_ARM": {
+        "guardVariant": "RIGHT_ARM_EMERGENCY_HEAD_GUARD",
+        "presentedRegions": ("forearm_right", "head"),
+        "leftScale": 0.24,
+        "rightScale": 1.0,
+        "torsoTurn": 8.0,
+    },
+}
+
+
+def mace_guard_frame_schedule(fps, raise_seconds=0.34, hold_seconds=0.15, recovery_seconds=0.18):
+    """Build a scene-FPS-aware, short and interruptible brace schedule."""
+    fps = max(float(fps), 0.001)
+    start = 1
+    guard = start + max(1, round(float(raise_seconds) * fps))
+    hold_end = guard + max(1, round(float(hold_seconds) * fps))
+    end = hold_end + max(1, round(float(recovery_seconds) * fps))
+    recognition = start + max(1, round((guard - start) * 0.22))
+    return {
+        "Brace_Start": start,
+        "Recognition": recognition,
+        "Guard_Active": guard,
+        "Guard_Hold_End": hold_end,
+        "Brace_End": end,
+    }
+
+
+def _set_action_marker(action, name, frame):
+    marker = action.pose_markers.get(name)
+    if marker is None:
+        marker = action.pose_markers.new(name)
+    marker.frame = int(frame)
+    return marker
+
+
+def _apply_mace_guard_pose(arm, mapping, settings, variant, intensity):
+    fwd, side, up = vectors(settings)
+    elbow_sign = -1.0 if settings.invert_elbows else 1.0
+    left_scale = float(variant["leftScale"]) * intensity
+    right_scale = float(variant["rightScale"]) * intensity
+
+    # Instinctive compression: chin tuck, slight recoil, raised shoulders, and
+    # softened knees. Only rotation/location channels are authored.
+    rotate(arm, mapping, "spine", side, -7.0 * intensity)
+    rotate(arm, mapping, "chest", side, -10.0 * intensity)
+    rotate(arm, mapping, "chest", up, float(variant["torsoTurn"]) * intensity)
+    rotate(arm, mapping, "neck", side, 8.0 * intensity)
+    rotate(arm, mapping, "head", side, 17.0 * intensity)
+    rotate(arm, mapping, "head", up, -float(variant["torsoTurn"]) * 0.30 * intensity)
+    rotate(arm, mapping, "thigh_l", side, -5.0 * intensity)
+    rotate(arm, mapping, "thigh_r", side, -5.0 * intensity)
+    rotate(arm, mapping, "shin_l", side, 11.0 * intensity)
+    rotate(arm, mapping, "shin_r", side, 11.0 * intensity)
+    offset(arm, mapping, "hips", -up * (0.024 * intensity) - fwd * (0.012 * intensity))
+
+    for suffix, scale, inward_sign, asymmetry in (
+        ("l", left_scale, -1.0, 1.0),
+        ("r", right_scale, 1.0, 0.94),
+    ):
+        rotate(arm, mapping, f"shoulder_{suffix}", side, -16.0 * scale)
+        rotate(arm, mapping, f"upper_arm_{suffix}", side, -76.0 * scale * asymmetry)
+        rotate(arm, mapping, f"upper_arm_{suffix}", fwd, inward_sign * 38.0 * scale)
+        rotate(arm, mapping, f"upper_arm_{suffix}", up, -inward_sign * 8.0 * scale)
+        rotate(arm, mapping, f"lower_arm_{suffix}", side, 112.0 * scale * elbow_sign)
+        rotate(arm, mapping, f"lower_arm_{suffix}", fwd, -inward_sign * 11.0 * scale)
+        rotate_local(arm, mapping, f"lower_arm_{suffix}", (0.0, 1.0, 0.0), inward_sign * 18.0 * scale)
+        rotate_local(arm, mapping, f"hand_{suffix}", (1.0, 0.0, 0.0), -12.0 * scale)
+        rotate_local(arm, mapping, f"hand_{suffix}", (0.0, 0.0, 1.0), inward_sign * 8.0 * scale)
+
+
+def validate_mace_guard_action(context, action, arm=None, mapping=None):
+    errors = []
+    variant_name = str(action.get("dsb_guard_variant", ""))
+    if variant_name not in {value["guardVariant"] for value in MACE_GUARD_VARIANTS.values()}:
+        errors.append("Mace guard action has invalid or missing guard-variant metadata.")
+    curves = iter_action_fcurves(action)
+    if any("scale" in str(getattr(curve, "data_path", "")) for curve in curves):
+        errors.append("Mace guard action contains forbidden bone-scale animation.")
+    allowed_channels = ("rotation_quaternion", "location")
+    forbidden = sorted({
+        str(getattr(curve, "data_path", ""))
+        for curve in curves
+        if not any(str(getattr(curve, "data_path", "")).endswith(channel) for channel in allowed_channels)
+    })
+    if forbidden:
+        errors.append("Mace guard action contains forbidden channels: " + ", ".join(forbidden[:4]) + ".")
+    start, end = action_frame_bounds(action)
+    if not math.isfinite(start) or not math.isfinite(end) or end <= start:
+        errors.append("Mace guard action range is invalid.")
+    markers = {marker.name: int(marker.frame) for marker in action.pose_markers}
+    for required in ("Brace_Start", "Guard_Active", "Brace_End"):
+        if required not in markers:
+            errors.append(f"Mace guard action is missing {required} marker.")
+    if "Guard_Active" in markers and not start <= markers["Guard_Active"] <= end:
+        errors.append("Mace guard Guard_Active marker lies outside the action range.")
+    try:
+        presented = json.loads(str(action.get("dsb_presented_regions_json", "[]")))
+    except (TypeError, json.JSONDecodeError):
+        presented = []
+        errors.append("Mace guard action has malformed presented-region metadata.")
+    if not isinstance(presented, list) or not all(isinstance(value, str) for value in presented):
+        presented = []
+        errors.append("Mace guard action presented-region metadata must be an array of strings.")
+    if not presented or "head" not in presented:
+        errors.append("Mace guard action has no presented-region metadata for the head.")
+
+    if not errors and context is not None:
+        arm = arm or find_armature(context)
+        mapping = mapping or map_bones(arm, context.scene.daf_settings)
+        previous_action = arm.animation_data.action if arm.animation_data else None
+        previous_frame = context.scene.frame_current
+        try:
+            if not arm.animation_data:
+                arm.animation_data_create()
+            arm.animation_data.action = action
+            context.scene.frame_set(markers["Guard_Active"])
+            head = arm.pose.bones.get(mapping.get("head", ""))
+            if head is None:
+                errors.append("Mace guard validation is missing the mapped head bone.")
+            else:
+                head_height = (head.head.z + head.tail.z) * 0.5
+                minimum_height = head_height - max(float(head.length) * 2.5, 0.35)
+                sides = []
+                if "forearm_left" in presented:
+                    sides.append("l")
+                if "forearm_right" in presented:
+                    sides.append("r")
+                for suffix in sides:
+                    forearm = arm.pose.bones.get(mapping.get(f"lower_arm_{suffix}", ""))
+                    if forearm is None:
+                        errors.append(f"Mace guard validation is missing the mapped {suffix} forearm bone.")
+                        continue
+                    forearm_height = max(float(forearm.head.z), float(forearm.tail.z))
+                    if forearm_height < minimum_height:
+                        errors.append(f"Mace guard {suffix} forearm remains grossly below head height at Guard_Active.")
+        finally:
+            context.scene.frame_set(previous_frame)
+            arm.animation_data.action = previous_action
+    return {
+        "status": "FAIL" if errors else "PASS",
+        "action": action.name,
+        "guardVariant": variant_name,
+        "guardActiveFrame": markers.get("Guard_Active"),
+        "presentedRegions": presented,
+        "errors": errors,
+    }
+
+
+def generate_mace_guard_action(context, kind):
+    if kind not in MACE_GUARD_VARIANTS:
+        raise RuntimeError(f"Unknown mace guard variant {kind!r}.")
+    settings = context.scene.daf_settings
+    arm = find_armature(context)
+    mapping = map_bones(arm, settings)
+    required = [
+        "hips", "spine", "chest", "neck", "head",
+        "upper_arm_l", "lower_arm_l", "hand_l",
+        "upper_arm_r", "lower_arm_r", "hand_r",
+        "thigh_l", "shin_l", "thigh_r", "shin_r",
+    ]
+    missing = [role for role in required if role not in mapping]
+    if missing:
+        raise RuntimeError("Missing mapped bones for mace head guard: " + ", ".join(missing) + ".")
+    action = ensure_draft_action(arm, DRAFT_ACTION_NAMES[kind])
+    fps = context.scene.render.fps / max(context.scene.render.fps_base, 0.001)
+    schedule = mace_guard_frame_schedule(
+        fps,
+        settings.mace_guard_raise_seconds,
+        settings.mace_guard_hold_seconds,
+        settings.mace_guard_recovery_seconds,
+    )
+    context.scene.frame_start = schedule["Brace_Start"]
+    context.scene.frame_end = schedule["Brace_End"]
+    stages = (
+        (schedule["Brace_Start"], 0.0),
+        (schedule["Recognition"], 0.24),
+        (schedule["Guard_Active"], 1.0),
+        (schedule["Guard_Hold_End"], 0.96),
+        (schedule["Brace_End"], 0.42),
+    )
+    variant = MACE_GUARD_VARIANTS[kind]
+    for frame, intensity in stages:
+        context.scene.frame_set(frame)
+        reset_pose(arm, mapping)
+        _apply_mace_guard_pose(arm, mapping, settings, variant, intensity)
+        key_pose(arm, mapping, frame)
+    for marker_name in ("Brace_Start", "Guard_Active", "Brace_End"):
+        _set_action_marker(action, marker_name, schedule[marker_name])
+    action["dsb_guard_variant"] = variant["guardVariant"]
+    action["dsb_guard_active_frame"] = int(schedule["Guard_Active"])
+    action["dsb_guard_active_time_seconds"] = float(
+        (schedule["Guard_Active"] - schedule["Brace_Start"]) / max(fps, 0.001)
+    )
+    action["dsb_presented_regions_json"] = json.dumps(list(variant["presentedRegions"]))
+    action["dsb_interruptible"] = True
+    action["dsb_root_motion_policy"] = "IN_PLACE"
+    action["dsb_draft_kind"] = kind
+    action["dsb_guard_action_id"] = action.name
+    set_bezier(action, cycles=False)
+    validation = validate_mace_guard_action(context, action, arm, mapping)
+    action["dsb_guard_validation_status"] = validation["status"]
+    action["dsb_guard_validation_json"] = json.dumps(validation, sort_keys=True)
+    if validation["status"] != "PASS":
+        raise RuntimeError("Generated mace guard failed validation: " + "; ".join(validation["errors"][:4]))
+    context.scene.frame_set(schedule["Guard_Active"])
+    return action
+
+
+def generate_all_mace_guard_actions(context):
+    """Regenerate the three disposable guard drafts as one safe transaction."""
+
+    arm = find_armature(context)
+    if not arm.animation_data:
+        arm.animation_data_create()
+    original_action = arm.animation_data.action
+    original_action_name = original_action.name if original_action is not None else ""
+    draft_names = [DRAFT_ACTION_NAMES[kind] for kind in MACE_GUARD_VARIANTS]
+    active_users = {draft_name: [] for draft_name in draft_names}
+
+    # Refuse all three before copying/removing anything when a draft became an
+    # NLA dependency. ``unlink_action_everywhere`` performs the same preflight
+    # for individual generation.
+    for draft_name in draft_names:
+        existing = bpy.data.actions.get(draft_name)
+        if existing is None:
+            continue
+        for obj in bpy.data.objects:
+            animation_data = getattr(obj, "animation_data", None)
+            if animation_data is None:
+                continue
+            if animation_data.action == existing:
+                active_users[draft_name].append(obj)
+            if any(strip.action == existing for track in animation_data.nla_tracks for strip in track.strips):
+                raise RuntimeError(
+                    f"Draft Action '{draft_name}' is used by an NLA strip. Remove it from NLA before regenerating."
+                )
+
+    backups = {}
+    for draft_name in draft_names:
+        existing = bpy.data.actions.get(draft_name)
+        if existing is None:
+            continue
+        backup = existing.copy()
+        backup.name = "__DSB_GUARD_BACKUP_" + draft_name
+        backup.use_fake_user = True
+        backups[draft_name] = (backup, bool(existing.use_fake_user))
+
+    try:
+        actions = [generate_mace_guard_action(context, kind) for kind in MACE_GUARD_VARIANTS]
+    except Exception:
+        for draft_name in draft_names:
+            current = bpy.data.actions.get(draft_name)
+            if current is not None:
+                unlink_action_everywhere(current)
+                try:
+                    bpy.data.actions.remove(current, do_unlink=True)
+                except TypeError:
+                    bpy.data.actions.remove(current)
+            backup_record = backups.get(draft_name)
+            if backup_record is not None:
+                backup, original_fake_user = backup_record
+                backup.name = draft_name
+                backup.use_fake_user = original_fake_user
+                for obj in active_users[draft_name]:
+                    if not obj.animation_data:
+                        obj.animation_data_create()
+                    obj.animation_data.action = backup
+        if original_action_name in backups:
+            arm.animation_data.action = bpy.data.actions.get(original_action_name)
+        else:
+            try:
+                arm.animation_data.action = original_action
+            except ReferenceError:
+                arm.animation_data.action = None
+        raise
+    for backup, _original_fake_user in backups.values():
+        try:
+            bpy.data.actions.remove(backup, do_unlink=True)
+        except TypeError:
+            bpy.data.actions.remove(backup)
+    return actions
+
+
+def validate_all_mace_guard_actions(context):
+    arm = find_armature(context)
+    mapping = map_bones(arm, context.scene.daf_settings)
+    records = []
+    ownership = {}
+    for action in bpy.data.actions:
+        if not action.get("dsb_guard_variant"):
+            continue
+        record = validate_mace_guard_action(context, action, arm, mapping)
+        records.append(record)
+        action_id = str(action.get("dsb_guard_action_id", ""))
+        ownership.setdefault(action_id, []).append(action.name)
+    errors = [
+        f"Duplicate mace guard action ownership {action_id!r}: {', '.join(names)}."
+        for action_id, names in ownership.items() if not action_id or len(names) > 1
+    ]
+    errors.extend(
+        f"{record['action']}: {message}"
+        for record in records for message in record["errors"]
+    )
+    return {"status": "FAIL" if errors else "PASS", "actions": records, "errors": errors}
+
+
+class DAF_OT_generate_mace_head_guards(Operator):
+    bl_idname = "daf.generate_mace_head_guards"
+    bl_label = "Generate Three Mace Head-Guard Drafts"
+    bl_options = {'REGISTER', 'UNDO'}
+
+    def execute(self, context):
+        try:
+            actions = generate_all_mace_guard_actions(context)
+            self.report({'INFO'}, "Generated: " + ", ".join(action.name for action in actions) + ".")
+            return {'FINISHED'}
+        except Exception as exc:
+            self.report({'ERROR'}, str(exc))
+            return {'CANCELLED'}
+
+
+class DAF_OT_preview_mace_guard_active(Operator):
+    bl_idname = "daf.preview_mace_guard_active"
+    bl_label = "Preview Guard_Active"
+    bl_options = {'REGISTER'}
+
+    def execute(self, context):
+        try:
+            kind = context.scene.daf_settings.mace_guard_preview_variant
+            action = bpy.data.actions.get(DRAFT_ACTION_NAMES[kind])
+            if action is None:
+                approved = [
+                    value for value in bpy.data.actions
+                    if value.get("dsb_approved_kind") == kind
+                ]
+                action = sorted(approved, key=lambda value: value.name)[-1] if approved else None
+            if action is None:
+                raise RuntimeError("Generate or approve the selected mace guard variant first.")
+            arm = find_armature(context)
+            if not arm.animation_data:
+                arm.animation_data_create()
+            arm.animation_data.action = action
+            frame = int(action.get("dsb_guard_active_frame", 1))
+            context.scene.frame_set(frame)
+            presented = json.loads(str(action.get("dsb_presented_regions_json", "[]")))
+            object_names = {"head": "DSB_ATTACHED_HEAD", "forearm_left": "DSB_ATTACHED_FOREARM_L", "forearm_right": "DSB_ATTACHED_FOREARM_R"}
+            bpy.ops.object.select_all(action='DESELECT')
+            selected = []
+            for region_id in presented:
+                obj = bpy.data.objects.get(object_names.get(region_id, ""))
+                if obj is not None:
+                    obj.select_set(True)
+                    selected.append(obj)
+            if selected:
+                context.view_layer.objects.active = selected[0]
+            self.report({'INFO'}, f"{action.name} at Guard_Active frame {frame}; presented regions selected.")
+            return {'FINISHED'}
+        except Exception as exc:
+            self.report({'ERROR'}, str(exc))
+            return {'CANCELLED'}
+
+
+class DAF_OT_validate_mace_head_guards(Operator):
+    bl_idname = "daf.validate_mace_head_guards"
+    bl_label = "Validate Mace Head-Guard Drafts"
+    bl_options = {'REGISTER'}
+
+    def execute(self, context):
+        try:
+            validation = validate_all_mace_guard_actions(context)
+            if validation["status"] != "PASS":
+                self.report({'ERROR'}, "; ".join(validation["errors"][:4]))
+                return {'CANCELLED'}
+            self.report({'INFO'}, f"Validated {len(validation['actions'])} mace head-guard actions.")
+            return {'FINISHED'}
+        except Exception as exc:
+            self.report({'ERROR'}, str(exc))
+            return {'CANCELLED'}
+
 class DAF_OT_approve_draft(Operator):
     bl_idname = "daf.approve_draft"
     bl_label = "Version / Approve Draft"
@@ -2740,7 +3233,7 @@ def action_pack_metadata(action, fps):
     loop = kind == "WALK" or "walk" in lower or "idle" in lower
     death = kind == "DEATH" or any(word in lower for word in ("death", "collapse", "faceplant"))
     hurt = kind in {"HURT_LEFT", "HURT_RIGHT"} or "hurt" in lower
-    return {
+    result = {
         "name": action.name,
         "approved_kind": kind or None,
         "frame_start": round(start, 4),
@@ -2756,6 +3249,28 @@ def action_pack_metadata(action, fps):
         "hold_final_pose": bool(death),
         "return_to_previous_state": bool(hurt),
     }
+    guard_variant = str(action.get("dsb_guard_variant", ""))
+    if guard_variant:
+        try:
+            presented_regions = json.loads(str(action.get("dsb_presented_regions_json", "[]")))
+        except (TypeError, json.JSONDecodeError):
+            presented_regions = []
+        markers = {marker.name: int(marker.frame) for marker in action.pose_markers}
+        guard_frame = markers.get("Guard_Active", action.get("dsb_guard_active_frame"))
+        result.update({
+            "guard_variant": guard_variant,
+            "guard_active_frame": int(guard_frame) if guard_frame is not None else None,
+            "guard_active_time_seconds": (
+                round((float(guard_frame) - start) / max(fps, 0.001), 6)
+                if guard_frame is not None else None
+            ),
+            "markers": markers,
+            "presented_regions": presented_regions,
+            "interruptible": bool(action.get("dsb_interruptible", True)),
+            "root_motion_policy": str(action.get("dsb_root_motion_policy", "IN_PLACE")),
+            "guard_validation_status": str(action.get("dsb_guard_validation_status", "NOT_VALIDATED")),
+        })
+    return result
 
 
 def sanitize_pack_filename(value):
@@ -3018,6 +3533,23 @@ class DAF_OT_build_approved_pack(Operator):
             invalid = [item['name'] for item in metadata if item['non_finite_keyframes'] > 0]
             if invalid:
                 raise RuntimeError('Non-finite keyframes found in: ' + ', '.join(invalid))
+            guard_actions = [action for action in actions if action.get("dsb_guard_variant")]
+            guard_validation = []
+            if guard_actions:
+                armature = find_armature(context)
+                mapping = map_bones(armature, settings)
+                guard_validation = [
+                    validate_mace_guard_action(context, action, armature, mapping)
+                    for action in guard_actions
+                ]
+                invalid_guards = [record for record in guard_validation if record["status"] != "PASS"]
+                if invalid_guards:
+                    raise RuntimeError(
+                        "Mace head-guard validation failed: "
+                        + "; ".join(
+                            message for record in invalid_guards for message in record["errors"][:2]
+                        )
+                    )
             export_approved_glb(context, glb_path, actions, settings.pack_force_sampling)
             validation = validate_pack_file(glb_path, [action.name for action in actions])
             stem = os.path.splitext(glb_path)[0]
@@ -3040,6 +3572,7 @@ class DAF_OT_build_approved_pack(Operator):
                     'original_height_m': wrapper.get('dsb_original_height_m'),
                 },
                 'animations': metadata,
+                'mace_head_guard_validation': guard_validation,
                 'validation_report': os.path.basename(validation_path),
             }
             write_json(manifest_path, manifest)
@@ -3391,7 +3924,7 @@ class DAF_PT_panel(Panel):
             layout,
             s,
             "ui_deformation_authoring_open",
-            "Trauma Field Authoring v3.13.0",
+            "Trauma Field Authoring v3.14.0",
         )
         if opened:
             configure_property_box(box)
@@ -3598,6 +4131,37 @@ class DAF_PT_panel(Panel):
         box, opened = draw_foldout(
             layout,
             s,
+            "ui_mace_guard_open",
+            "Mace Head-Guard Drafts",
+        )
+        if opened:
+            configure_property_box(box)
+            box.prop(s, "mace_guard_raise_seconds")
+            box.prop(s, "mace_guard_hold_seconds")
+            box.prop(s, "mace_guard_recovery_seconds")
+            box.operator(
+                "daf.generate_mace_head_guards",
+                text="Generate Three Mace Head-Guard Drafts",
+                icon='ACTION',
+            )
+            box.prop(s, "mace_guard_preview_variant")
+            row = box.row(align=True)
+            row.operator("daf.preview_mace_guard_active", text="Preview Guard_Active", icon='PLAY')
+            row.operator("daf.validate_mace_head_guards", text="Validate Mace Head-Guard Drafts", icon='CHECKMARK')
+            for kind, label in (
+                ("MACE_GUARD_TWO_ARM", "Approve Two-Arm"),
+                ("MACE_GUARD_LEFT_ARM", "Approve Left-Arm"),
+                ("MACE_GUARD_RIGHT_ARM", "Approve Right-Arm"),
+            ):
+                approve = box.operator("daf.approve_draft", text=label, icon='FAKE_USER_ON')
+                approve.kind = kind
+            box.label(text="Brace markers: Brace_Start / Guard_Active / Brace_End", icon='MARKER_HLT')
+            box.label(text="Shape-key damage remains a separate preview", icon='INFO')
+
+        # Pack builder ------------------------------------------------------
+        box, opened = draw_foldout(
+            layout,
+            s,
             "ui_pack_open",
             "Approved Animation Pack",
         )
@@ -3687,6 +4251,9 @@ CLASSES = (
     DAF_OT_collapse,
     DAF_OT_hurt_left,
     DAF_OT_hurt_right,
+    DAF_OT_generate_mace_head_guards,
+    DAF_OT_preview_mace_guard_active,
+    DAF_OT_validate_mace_head_guards,
     DAF_OT_approve_draft,
     DAF_OT_approve_active_legacy,
     DAF_OT_purge_unapproved_attempts,

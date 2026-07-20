@@ -175,7 +175,7 @@ class RaisedGoreTests(unittest.TestCase):
         self.assertNotIn("!", name)
 
     def test_generated_name_rejects_unknown_pair_role(self):
-        with self.assertRaisesRegex(ValueError, "ATTACHED or DETACHED"):
+        with self.assertRaisesRegex(ValueError, "ATTACHED, DETACHED, or CORE"):
             trauma_field.gore_generated_object_name("torso", "impact", "PREVIEW")
 
     def test_generation_digest_is_deterministic(self):
@@ -307,11 +307,11 @@ class RaisedGoreTests(unittest.TestCase):
         self.assertEqual(exported["goreOverlayMode"], "STAIN_AND_RAISED")
         self.assertEqual(exported["goreActivationWeight"], 0.01)
 
-    def test_portable_v3_round_trip_preserves_raised_recipe(self):
+    def test_portable_v4_round_trip_preserves_raised_recipe(self):
         library = library_with_overlay(heavy_overlay(seed=9876))
         restored = trauma_field.normalize_stamp_library(json.loads(json.dumps(library)))
         key = restored["regions"][0]["keys"][0]
-        self.assertEqual(restored["formatVersion"], 3)
+        self.assertEqual(restored["formatVersion"], 4)
         self.assertTrue(key["surfaceGoreOverlay"]["goreRaisedEnabled"])
         self.assertEqual(key["surfaceGoreOverlay"]["goreMaskSeed"], 9876)
         self.assertNotIn("meshBytes", json.dumps(key))

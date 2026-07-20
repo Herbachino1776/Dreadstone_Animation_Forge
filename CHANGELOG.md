@@ -1,5 +1,17 @@
 # Changelog
 
+## 3.14.0
+
+- Added explicit `CORE_SINGLE` trauma-region registration for `DSB_BODY_CORE` and other single meshes without fake detached partners, while retaining `PAIRED_SEGMENT` exact-index behavior.
+- Added body-core and left/right forearm impact starter records; artists still choose and capture the intended surface before stamping or rebuilding.
+- Added first-class compound trauma events with one shared world-space field, deterministic per-participant seeds, mesh-local child morphs, synchronized preview, portable serialization, validation, and runtime manifest ownership.
+- Added mapped seam-boundary continuity modes (`LOCK_BOUNDARY_TO_SHARED_FIELD`, `BLEND_ACROSS_SEAM`, and `PROTECT_SEAM`) without welding, merging, or mutating generated topology.
+- Generalized thin stain and raised-gore generation to core meshes, forearms, and compound participants. Raised shells now use deterministic thickness relaxation and boundary tapering to reduce jagged triangular silhouettes.
+- Added three FPS-aware mace head-guard animation drafts with `Brace_Start`, `Guard_Active`, and `Brace_End` markers, presented-region metadata, validation, preview, and Approved Animation Pack promotion.
+- Extended portable trauma libraries to format 4 and GLB/manifest metadata with core region modes, compound activation mappings, participant gore nodes, seam reports, and approved brace semantics. Versions 1–3 remain supported.
+- Added 67 focused core/compound, seam, body/arm, gore, animation, and export tests plus a prepared-scene Blender acceptance runner.
+- Source Damage Readiness and `NOT READY` repair behavior were not changed.
+
 ## 3.13.0
 
 - Add `Gore_Crush_Heavy_Clotted` as the recommended high-intensity preset for all Trauma Field regions, with dense core clots, broken rim islands, peripheral fragments, strong thickness variation, and clean gaps over the intact exterior.
