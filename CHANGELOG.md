@@ -1,5 +1,19 @@
 # Changelog
 
+## 3.15.0
+
+- Added one managed `OFF`/`FAST`/`BALANCED`/`FINAL` preview lifecycle with a single 200 ms main-thread debounce timer, stale-generation rejection, exact preview-state restoration, and explicit Commit/Revert/Clear actions.
+- Replaced heavy synchronous deformation property callbacks and panel work with dirty marking and cached UI summaries; Testman FAST preview median improved from 76.46 ms on 3.14.1 to 24.59 ms on the same Blender 5.1.2 fixture and hardware (67.8%).
+- Added bounded topology, adjacency, seam-factor, mesh-snapshot, serialization, gore-record, compound-participant, seam-mapping, and validation-summary caches with file-load, unregister, topology, region, and explicit-rebuild invalidation.
+- Added task-oriented Start / Character, Damage Authoring, Animation, Validate & Export, and Advanced workspaces while retaining every previous public operator and expert workflow.
+- Added transactional **Prepare Character for Damage Authoring** and **Create Impact From Current Selection** orchestration, standard head/body/forearm registration, impact presets, draft rollback, and focused final validation.
+- Modularized Blender-facing deformation responsibilities under `deformation/` and `ui/` while preserving the `deformation_authoring.py` compatibility facade, schemas, generated names, exact-index behavior, portable libraries v1–v4, and export contracts.
+- Added diagnostics JSON/Markdown/Text reporting, a cached in-panel runtime summary, startup duplicate-handler/timer checks, a repeatable Blender performance/resource/RSS runner, warm-cache plateau accounting, and focused architecture/performance tests.
+- Fixed hidden source and generated-object transform validation after save/reload without weakening Source Readiness; validation briefly evaluates the saved hierarchy and restores exact visibility.
+- Preserved high-intensity raised gore and made replacement transactional so a failed rebuild restores the prior owned geometry and metadata.
+- Fixed pinched/corner-sharing raised-gore shell islands so final technical outputs remain manifold without flattening or weakening geometry validation.
+- Fixed Approved Animation Pack export from hidden preserved source rigs and scoped glTF Action filtering so only approved Actions are exported and existing exporter filter state is restored.
+
 ## 3.14.1
 
 - Fixed raised-gore validation in Blender builds whose Principled shader defaults expose a non-black emission color at zero strength. Generated gore now explicitly sets emission color to black and strength to zero, while validation rejects actual emissive output and linked emission inputs. Wetness continues to use Roughness and Coat Weight only.

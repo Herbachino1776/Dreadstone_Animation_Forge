@@ -1,30 +1,31 @@
 # Dreadstone Animation Forge
 
-Dreadstone Animation Forge `3.14.1` is a proprietary Blender add-on for animation drafting, protected damage-segment and stump authoring, paired and core-mesh trauma fields, compound multi-region impacts, high-intensity raised surface gore, mace head-guard drafts, and GLB/manifest export. The supported runtime is Blender `5.1.2`.
+Dreadstone Animation Forge `3.15.0` is a proprietary Blender add-on for animation drafting and compatibility-preserving damage authoring. It retains protected Source Readiness, paired and core trauma fields, compound events, exact-index morph synchronization, high-intensity raised gore, brace Actions, and GLB/manifest export. The supported release runtime is Blender `5.1.2`.
 
 ## Install and open
 
-1. Download `Dreadstone_Animation_Forge_v3_14_1.zip`.
+1. Download `Dreadstone_Animation_Forge_v3_15_0.zip`.
 2. In Blender 5.1.2 choose **Edit > Preferences > Add-ons > Install from Disk**.
 3. Select the ZIP without extracting it and enable **Dreadstone Animation Forge**.
 4. In the 3D Viewport press `N`, then open the **Dreadstone** tab.
 
 ## Quick start
 
-1. Import a source GLB with **File > Import > glTF 2.0 (.glb/.gltf)** and save a working `.blend`.
-2. Select the imported character mesh or armature, run **Analyze Rig**, and prepare sizing/grounding only if needed.
-3. Choose an explicit **Report Output Folder** and run **Analyze Source Damage Readiness** on the original imported source.
-4. When all four seams are automatic and **Overall** is `SOURCE READY`, run **Load READY Handoff** and **Build Authoring Asset**.
-5. Register exact-topology attached/detached pairs with **Register Selected Pair**, or register `DSB_BODY_CORE` without a fake partner using **Register Selected Core Mesh**. Capture the intended artist-selected surface, add trauma stamps, then run **REBUILD ACTIVE DEFORMATION**.
-6. For one impact crossing objects, create a **Compound Trauma Event**, add two or more active region/key participants, capture its shared world-space field, link any real seam contract, and run **REBUILD COMPOUND EVENT**. Forge writes one mesh-local morph per participant and exports one synchronized semantic activation contract.
-7. For heavy blunt damage, choose `Gore_Crush_Heavy_Clotted` and click **Preview / Rebuild Current Gore**, or use **Apply Heavy Gore to All Deformations**. Forge adds a broken stain plus smoother tapered raised-clot shells to head, core, and forearm regions while leaving the original exterior intact.
-8. Generate the three disposable mace head-guard drafts in **Mace Head-Guard Drafts**, preview `Guard_Active`, visually inspect the pose, then explicitly promote acceptable drafts into the Approved Animation Pack.
-9. Use **Save Stamp Library...** to preserve core, paired, and compound recipes without embedding mesh bytes. Require **Validate Morph Targets**, **Validate Compound Event**, and **Validate Complete Damage Asset** to pass.
-10. Run **Export Damage GLB + Manifest** (Export Validation), import the GLB into a clean scene, and click **Restore Reimported GLB Intact Preview**. Build the Approved Animation Pack separately for approved brace Actions.
+1. Import a source GLB, save a working `.blend`, select its mesh or armature, and open **Start / Character**.
+2. Choose the explicit readiness output folder and target height, then click **Prepare Character for Damage Authoring**. The orchestrator reports every step and stops on `NOT READY`; it never guesses a repair.
+3. In **Damage Authoring**, activate Head, Body, Left Forearm, or Right Forearm. Enter Face Edit mode and select one connected surface patch chosen by the artist.
+4. Choose the impact direction, family, intensity, and optional semantic name, then click **Create Impact From Current Selection**.
+5. Tune Radius, Depth, Falloff, Seam Safety, and gore controls with managed `FAST` or `BALANCED` live preview. Click **Commit** for deterministic final deformation and raised gore, **Revert** to the stored recipe, or **Undo Draft** before committing.
+6. Use **Validate & Export** for focused morph/gore checks, complete authoring validation, and **Export Damage GLB + Manifest**. Clean-reimport the GLB and restore its intact preview for inspection.
+7. Use **Advanced** for every manual 3.14 workflow: explicit readiness/build steps, custom region registration, capture modes, stamp ordering, pair synchronization, portable libraries v1–v4, compound participants, detailed gore budgets, legacy presets, and diagnostics.
 
-Source Readiness remains bound to the preserved original source after segmentation. Forge 3.14 does not loosen, reinterpret, or add new `NOT READY` repair behavior. Do not repair intentional cut boundaries on generated `DSB_*` meshes; a real failure report is required before any future readiness change.
+Source Readiness remains bound to the preserved original source after segmentation. Forge 3.15 does not weaken or reinterpret `NOT READY`, and it does not repair intentional generated cut boundaries as if they were source damage.
 
-For exact object selections, every current feature and UI label, animation workflows, complete recipes, expected results, and troubleshooting, use the authoritative [Forge user workflow guide](docs/USER_WORKFLOW_GUIDE.md). Runtime consumers should also read the [core/compound export contract](docs/CORE_COMPOUND_EXPORT_CONTRACT.md) and [raised gore export contract](docs/RAISED_GORE_EXPORT_CONTRACT.md).
+For exact selections, body/forearm/compound recipes, all legacy controls, diagnostics, export checks, and troubleshooting, use the authoritative [Forge user workflow guide](docs/USER_WORKFLOW_GUIDE.md). Runtime consumers should also read the [core/compound export contract](docs/CORE_COMPOUND_EXPORT_CONTRACT.md) and [raised gore export contract](docs/RAISED_GORE_EXPORT_CONTRACT.md).
+
+## Performance and crash support
+
+The 3.15 preview manager debounces slider changes on Blender's main thread, reuses a single temporary preview key, bounds reusable caches, and reserves final raised-shell generation for explicit final work. If a problem occurs, open **Advanced > Diagnostics and Crash Support**, run **Startup Self-Check**, then click **WRITE FORGE DIAGNOSTIC REPORT**. Reports contain timings and contract state, not proprietary mesh payloads.
 
 ## License
 

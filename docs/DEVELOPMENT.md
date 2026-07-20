@@ -28,7 +28,7 @@ Static success does not prove Blender registration, UI behavior, mesh operations
 
 ## Build the installable ZIP
 
-Run `python scripts/build_release.py`. It validates first and writes `dist/Dreadstone_Animation_Forge_v3_14_1.zip` with deterministic timestamps and ordering. Its exact root layout is:
+Run `python scripts/build_release.py`. It validates first and writes `dist/Dreadstone_Animation_Forge_v3_15_0.zip` with deterministic timestamps and ordering. Its extension-root layout is:
 
 ```text
 blender_manifest.toml
@@ -37,11 +37,30 @@ damage_readiness.py
 damage_authoring.py
 deformation_authoring.py
 trauma_field.py
+deformation/__init__.py
+deformation/*.py
+ui/__init__.py
+ui/*.py
+ui/operators/*.py
 README.txt
 VALIDATION.txt
 ```
 
-`README.txt` is generated from the concise repository README. `dist/` is generated and must not be committed. Before a release, build twice from unchanged source and require identical SHA-256 hashes.
+Every package Python file is discovered recursively, normalized to a POSIX archive path, and sorted before writing. `README.txt` is generated from the concise repository README. `dist/` is generated and must not be committed. Before a release, build twice from unchanged source and require identical SHA-256 hashes.
+
+## Healing architecture and hot-path rules
+
+`deformation_authoring.py` remains the public compatibility facade. New Blender-facing ownership is split among bounded registry/cache services, bulk mesh and shape-key access, capture/deformation/pair/compound/gore services, one preview lifecycle, focused validation summaries, serialization, transactions, diagnostics, and task UI modules. `trauma_field.py` remains the Blender-free algorithm layer.
+
+Panel draw and property callbacks must stay lightweight. Draw reads cached summaries and renders controls. Updates mark dirty and schedule the one preview manager timer. Mesh snapshots and Blender RNA are main-thread only; pure numeric work may be separated only after safe copying. Caches must be bounded and invalidated on file load, unregister, topology/transform/source changes, region removal, and explicit rebuild.
+
+Run the performance/resource harness against an artist-prepared fixture:
+
+```text
+blender prepared.blend --factory-startup --background --python tests/blender_performance_acceptance.py -- --output performance.json --source source.glb --stress
+```
+
+The runner records operation medians, exceptions, cache/handler/timer counts, RSS where available, and warm-cycle resource growth. It never chooses anatomical faces and reports `SKIP` when the prepared fixture lacks an authored prerequisite. A release must not relabel those skips as visual or runtime approval.
 
 ## Blender 5.1.2 runtime acceptance
 

@@ -15,24 +15,13 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 PACKAGE = ROOT / "dreadstone_animation_forge"
 DIST = ROOT / "dist"
-DEFORMATION_BUILD = "2026-07-19.gore-emission.1"
-MODULES = (
-    "__init__.py",
-    "damage_readiness.py",
-    "damage_authoring.py",
-    "deformation_authoring.py",
-    "trauma_field.py",
-)
-ARCHIVE_ENTRIES = (
-    "blender_manifest.toml",
-    "__init__.py",
-    "damage_readiness.py",
-    "damage_authoring.py",
-    "deformation_authoring.py",
-    "trauma_field.py",
-    "README.txt",
-    "VALIDATION.txt",
-)
+DEFORMATION_BUILD = "2026-07-20.healing.1"
+MODULES = tuple(sorted(
+    path.relative_to(PACKAGE).as_posix()
+    for path in PACKAGE.rglob("*.py")
+    if "__pycache__" not in path.parts
+))
+ARCHIVE_ENTRIES = ("blender_manifest.toml", *MODULES, "README.txt", "VALIDATION.txt")
 ZIP_TIMESTAMP = (1980, 1, 1, 0, 0, 0)
 
 
@@ -71,7 +60,7 @@ def run_validation() -> str:
 
 def validation_text(version: tuple[int, int, int], report: str) -> bytes:
     dotted = ".".join(map(str, version))
-    files = "\n".join(f"  dreadstone_animation_forge/{name}" for name in MODULES)
+    files = "\n".join(f"  {name}" for name in MODULES)
     text = f"""DREADSTONE ANIMATION FORGE v{dotted} VALIDATION
 {'=' * (38 + len(dotted))}
 
