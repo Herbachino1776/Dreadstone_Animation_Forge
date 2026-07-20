@@ -1,10 +1,10 @@
 # Dreadstone Animation Forge
 
-Dreadstone Animation Forge `3.14.0` is a proprietary Blender add-on for animation drafting, protected damage-segment and stump authoring, paired and core-mesh trauma fields, compound multi-region impacts, high-intensity raised surface gore, mace head-guard drafts, and GLB/manifest export. The supported runtime is Blender `5.1.2`.
+Dreadstone Animation Forge `3.14.1` is a proprietary Blender add-on for animation drafting, protected damage-segment and stump authoring, paired and core-mesh trauma fields, compound multi-region impacts, high-intensity raised surface gore, mace head-guard drafts, and GLB/manifest export. The supported runtime is Blender `5.1.2`.
 
 ## Install and open
 
-1. Download `Dreadstone_Animation_Forge_v3_14_0.zip`.
+1. Download `Dreadstone_Animation_Forge_v3_14_1.zip`.
 2. In Blender 5.1.2 choose **Edit > Preferences > Add-ons > Install from Disk**.
 3. Select the ZIP without extracting it and enable **Dreadstone Animation Forge**.
 4. In the 3D Viewport press `N`, then open the **Dreadstone** tab.

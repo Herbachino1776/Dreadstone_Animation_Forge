@@ -1,4 +1,4 @@
-"""Dreadstone Animation Forge v3.14.0 trauma-field authoring.
+"""Dreadstone Animation Forge v3.14.1 trauma-field authoring.
 
 The workbench edits explicitly registered paired-segment or core-single regions
 on the generated protected Damage Asset. Paired morph targets remain exact-index
@@ -21,8 +21,8 @@ from bpy_extras.io_utils import ExportHelper, ImportHelper
 from . import trauma_field
 
 DEFORMATION_SCHEMA = "dreadstone.damage_deformation.v1"
-DEFORMATION_VERSION = (3, 14, 0)
-DEFORMATION_BUILD_ID = "2026-07-19.core-compound.1"
+DEFORMATION_VERSION = (3, 14, 1)
+DEFORMATION_BUILD_ID = "2026-07-19.gore-emission.1"
 ATTACHED_HEAD_NAME = "DSB_ATTACHED_HEAD"
 DETACHED_HEAD_NAME = "DSB_SEGMENT_HEAD"
 PREVIEW_KEY_NAME = "__DSB_DEFORMATION_SEED_PREVIEW"
@@ -2589,6 +2589,14 @@ def _ensure_gore_material(material_id, overlay):
     shader.inputs["Base Color"].default_value = tuple(base)
     shader.inputs["Roughness"].default_value = roughness
     shader.inputs["Metallic"].default_value = 0.0
+    emission = shader.inputs.get("Emission Color")
+    if emission is None:
+        emission = shader.inputs.get("Emission")
+    if emission is not None:
+        emission.default_value = (0.0, 0.0, 0.0, 1.0)
+    emission_strength = shader.inputs.get("Emission Strength")
+    if emission_strength is not None:
+        emission_strength.default_value = 0.0
     if shader.inputs.get("Coat Weight") is not None:
         coat = 0.28 * float(overlay["goreWetness"]) if material_id == trauma_field.GORE_MATERIAL_IDS[0] else 0.0
         shader.inputs["Coat Weight"].default_value = coat
@@ -3051,12 +3059,21 @@ def _gltf_gore_material_errors(material, expected_id):
     elif not outputs[0].inputs["Surface"].is_linked:
         errors.append(f"Material {material.name} has no linked material output.")
     if shaders:
-        metallic = float(shaders[0].inputs["Metallic"].default_value)
+        shader = shaders[0]
+        metallic = float(shader.inputs["Metallic"].default_value)
         if abs(metallic) > 1e-8:
             errors.append(f"Material {material.name} must keep Metallic at zero.")
-        if shaders[0].inputs.get("Emission Color") is not None:
-            emission = shaders[0].inputs["Emission Color"].default_value
-            if any(float(channel) > 1e-8 for channel in emission[:3]):
+        emission = shader.inputs.get("Emission Color")
+        if emission is None:
+            emission = shader.inputs.get("Emission")
+        emission_strength = shader.inputs.get("Emission Strength")
+        if emission is not None:
+            strength = float(emission_strength.default_value) if emission_strength is not None else 1.0
+            if (
+                emission.is_linked
+                or (emission_strength is not None and emission_strength.is_linked)
+                or trauma_field.has_effective_emission(emission.default_value, strength)
+            ):
                 errors.append(f"Material {material.name} must not use emission to fake wetness.")
     return errors
 

@@ -1,5 +1,9 @@
 # Changelog
 
+## 3.14.1
+
+- Fixed raised-gore validation in Blender builds whose Principled shader defaults expose a non-black emission color at zero strength. Generated gore now explicitly sets emission color to black and strength to zero, while validation rejects actual emissive output and linked emission inputs. Wetness continues to use Roughness and Coat Weight only.
+
 ## 3.14.0
 
 - Added explicit `CORE_SINGLE` trauma-region registration for `DSB_BODY_CORE` and other single meshes without fake detached partners, while retaining `PAIRED_SEGMENT` exact-index behavior.

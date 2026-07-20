@@ -69,6 +69,9 @@ class StaticContractTests(unittest.TestCase):
         self.assertIn('def _region_gore_sources(', self.deformation)
         self.assertIn('return ((attached, "CORE"),)', self.deformation)
         self.assertIn("allowed = {'ShaderNodeOutputMaterial', 'ShaderNodeBsdfPrincipled'}", self.deformation)
+        self.assertIn('emission.default_value = (0.0, 0.0, 0.0, 1.0)', self.deformation)
+        self.assertIn('emission_strength.default_value = 0.0', self.deformation)
+        self.assertIn('trauma_field.has_effective_emission(emission.default_value, strength)', self.deformation)
         self.assertIn('entry["raisedGoreStatus"] = "STALE_REBUILD_REQUIRED"', self.deformation)
 
     @classmethod
@@ -112,7 +115,7 @@ class StaticContractTests(unittest.TestCase):
         manifest = contracts.MANIFEST_PATH.read_text(encoding="utf-8")
         self.assertIn('schema_version = "1.0.0"', manifest)
         self.assertIn('id = "dreadstone_animation_forge"', manifest)
-        self.assertIn('version = "3.14.0"', manifest)
+        self.assertIn('version = "3.14.1"', manifest)
         builder = (ROOT / "scripts" / "build_release.py").read_text(encoding="utf-8")
         self.assertIn('"blender_manifest.toml",\n    "__init__.py",', builder)
         self.assertNotIn('"dreadstone_animation_forge/__init__.py"', builder)
@@ -133,7 +136,7 @@ class StaticContractTests(unittest.TestCase):
         version = contracts.EXPECTED_VERSION
         self.assertEqual(
             f"Dreadstone_Animation_Forge_v{'_'.join(map(str, version))}.zip",
-            "Dreadstone_Animation_Forge_v3_14_0.zip",
+            "Dreadstone_Animation_Forge_v3_14_1.zip",
         )
 
     def test_authoritative_user_workflow_guide_contract(self) -> None:
@@ -151,8 +154,8 @@ class StaticContractTests(unittest.TestCase):
     def test_release_readme_contains_install_quick_start_and_guide_reference(self) -> None:
         readme = (ROOT / "README.md").read_text(encoding="utf-8")
         for marker in (
-            "3.14.0",
-            "Dreadstone_Animation_Forge_v3_14_0.zip",
+            "3.14.1",
+            "Dreadstone_Animation_Forge_v3_14_1.zip",
             "Install from Disk",
             "## Quick start",
             "docs/USER_WORKFLOW_GUIDE.md",

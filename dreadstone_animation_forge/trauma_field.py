@@ -97,6 +97,18 @@ GORE_MATERIAL_SPECS = {
         "metallic": 0.0,
     },
 }
+
+
+def has_effective_emission(color, strength, epsilon=1e-8):
+    """Return whether an RGB emission color and strength produce visible output."""
+
+    emission_strength = float(strength)
+    return any(
+        abs(float(channel) * emission_strength) > float(epsilon)
+        for channel in tuple(color)[:3]
+    )
+
+
 GORE_MAX_TRIANGLES_PER_DEFORMATION = 12000
 GORE_MAX_TRIANGLES_PER_ASSET = 48000
 GORE_MAX_SURFACE_OFFSET = 0.012

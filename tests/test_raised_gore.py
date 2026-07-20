@@ -301,6 +301,12 @@ class RaisedGoreTests(unittest.TestCase):
             self.assertEqual(len(material["baseColor"]), 4)
             self.assertGreater(material["roughness"], 0.0)
 
+    def test_material_emission_contract_uses_effective_output(self):
+        self.assertFalse(trauma_field.has_effective_emission((1.0, 1.0, 1.0, 1.0), 0.0))
+        self.assertFalse(trauma_field.has_effective_emission((0.0, 0.0, 0.0, 1.0), 1.0))
+        self.assertFalse(trauma_field.has_effective_emission((1e-10, 0.0, 0.0, 1.0), 1.0))
+        self.assertTrue(trauma_field.has_effective_emission((0.3, 0.006, 0.004, 1.0), 1.0))
+
     def test_export_metadata_declares_inactive_activation_contract(self):
         exported = trauma_field.gore_overlay_export_metadata(heavy_overlay())
         self.assertFalse(exported["goreDefaultVisible"])

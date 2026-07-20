@@ -101,6 +101,28 @@ def main():
         }
         require(attached_visible and detached_visible, f"{key_name} failed paired preview visibility.")
 
+    for obj in deformation_authoring.generated_gore_objects():
+        for material in obj.data.materials:
+            shader = next(
+                node for node in material.node_tree.nodes
+                if node.bl_idname == 'ShaderNodeBsdfPrincipled'
+            )
+            emission = shader.inputs.get("Emission Color")
+            if emission is None:
+                emission = shader.inputs.get("Emission")
+            strength = shader.inputs.get("Emission Strength")
+            require(emission is not None, f"{material.name} has no Principled emission input.")
+            require(strength is not None, f"{material.name} has no Principled emission strength input.")
+            require(
+                not trauma_field.has_effective_emission(emission.default_value, strength.default_value),
+                f"{material.name} produces emissive output.",
+            )
+            require(
+                tuple(emission.default_value)[:3] == (0.0, 0.0, 0.0)
+                and float(strength.default_value) == 0.0,
+                f"{material.name} did not explicitly disable emission.",
+            )
+
     validation = deformation_authoring.validate_deformations(require_keys=True)
     require(validation["status"] == "PASS", "Raised gore validation failed: " + "; ".join(validation["errors"][:8]))
     deformation_authoring.prepare_for_export()
@@ -134,7 +156,7 @@ def main():
 
     report = {
         "status": "PASS",
-        "forgeVersion": "3.14.0",
+        "forgeVersion": "3.14.1",
         "sourceBlend": source_blend,
         "headTriangleCounts": counts,
         "previewChecks": preview_checks,

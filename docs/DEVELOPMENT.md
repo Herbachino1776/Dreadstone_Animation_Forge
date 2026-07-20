@@ -28,7 +28,7 @@ Static success does not prove Blender registration, UI behavior, mesh operations
 
 ## Build the installable ZIP
 
-Run `python scripts/build_release.py`. It validates first and writes `dist/Dreadstone_Animation_Forge_v3_14_0.zip` with deterministic timestamps and ordering. Its exact root layout is:
+Run `python scripts/build_release.py`. It validates first and writes `dist/Dreadstone_Animation_Forge_v3_14_1.zip` with deterministic timestamps and ordering. Its exact root layout is:
 
 ```text
 blender_manifest.toml

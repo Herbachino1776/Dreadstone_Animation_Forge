@@ -1,8 +1,8 @@
 # Dreadstone Animation Forge user workflow guide
 
-- **Current Forge version:** `3.14.0`
+- **Current Forge version:** `3.14.1`
 - **Supported Blender version:** Blender `5.1.2`
-- **Current release ZIP:** `Dreadstone_Animation_Forge_v3_14_0.zip`
+- **Current release ZIP:** `Dreadstone_Animation_Forge_v3_14_1.zip`
 - **Last updated:** 2026-07-19
 
 This is the authoritative user how-to for the current Forge release. It follows the labels and behavior implemented in the add-on. If an older note, video, or README disagrees with this guide, use this guide.
@@ -20,9 +20,9 @@ Save a working copy of the `.blend` before authoring. Forge protects the importe
 > **WARNING**
 > Never apply the scale of a Forge safe wrapper such as `DSB_SIZE_ROOT_ADOPTED`. Never animate bone scale. Those operations can invalidate sizing, animation, and exact-index deformation contracts.
 
-## 1. Install Dreadstone Animation Forge 3.14.0
+## 1. Install Dreadstone Animation Forge 3.14.1
 
-1. Obtain `Dreadstone_Animation_Forge_v3_14_0.zip`.
+1. Obtain `Dreadstone_Animation_Forge_v3_14_1.zip`.
 2. Do not extract the ZIP. It is a Blender extension package whose `blender_manifest.toml` and `__init__.py` are at the ZIP root.
 3. Open Blender 5.1.2.
 4. Choose **Edit > Preferences > Add-ons**.
@@ -31,7 +31,7 @@ Save a working copy of the `.blend` before authoring. Forge protects the importe
 7. Close Preferences. Restart Blender if an older Forge version was loaded in this session.
 
 > **EXPECTED RESULT**
-> Blender lists Dreadstone Animation Forge version 3.14.0 and the add-on enables without a registration error.
+> Blender lists Dreadstone Animation Forge version 3.14.1 and the add-on enables without a registration error.
 
 > **TROUBLESHOOTING**
 > If Blender says the package is invalid, confirm that you selected the original ZIP without extracting or rezipping it. If old labels remain after upgrading, restart Blender so no stale add-on module remains loaded.
@@ -43,7 +43,7 @@ Save a working copy of the `.blend` before authoring. Forge protects the importe
 3. Click the **Dreadstone** tab.
 4. Expand the sections you need by clicking their headings.
 
-The one panel is titled **Dreadstone Animation Forge**. Its major sections are **Character Setup**, **Ground Preview**, **Rig Mapping & Direction**, **Source Damage Readiness**, **Damage Segment & Stump Authoring v3.9**, **Trauma Field Authoring v3.14.0**, **Arm & Hand Pose Polish**, **Walk Draft**, **Death / Collapse Draft**, **Flank Hurt Drafts**, **Approved Animation Pack**, and **Action Cleanup & Safety**.
+The one panel is titled **Dreadstone Animation Forge**. Its major sections are **Character Setup**, **Ground Preview**, **Rig Mapping & Direction**, **Source Damage Readiness**, **Damage Segment & Stump Authoring v3.9**, **Trauma Field Authoring v3.14.1**, **Arm & Hand Pose Polish**, **Walk Draft**, **Death / Collapse Draft**, **Flank Hurt Drafts**, **Approved Animation Pack**, and **Action Cleanup & Safety**.
 
 ## 3. Import and prepare a source GLB
 
@@ -292,7 +292,7 @@ Trauma Field uses two explicit region modes. A **Paired Segment** owns an attach
 1. In Object Mode, select exactly two mesh objects.
 2. Select the detached object first.
 3. Shift-select the attached object last so the attached object is active (brighter outline).
-4. Expand **Trauma Field Authoring v3.14.0**.
+4. Expand **Trauma Field Authoring v3.14.1**.
 5. In **New Region ID**, enter a unique semantic name such as `head`, `forearm_left`, or `forearm_right`.
 6. In **Related Seam ID**, enter the matching seam ID: `head_neck`, `left_elbow`, `right_elbow`, or `lower_spine`.
 7. Click **Register Selected Pair**.
@@ -430,7 +430,7 @@ Order can matter because each enabled stamp is applied to the result of the prev
 **Save Stamp Library...** writes every procedural stamp stack in every registered deformation region to one portable `.dsbstamps.json` file. It preserves deformation-key names, stamp names and stable IDs, order, enabled state, trauma family, surface capture, influence and distance modes, radius, depth, falloff, strength, seam protection, displacement limit, damage direction, and each key's optional Surface Gore Overlay recipe. It saves recipes rather than source geometry, generated meshes, preview materials, or Source Readiness reports.
 
 1. Save the current `.blend` as a backup.
-2. In **Trauma Field Authoring v3.14.0**, click **Save Stamp Library...**.
+2. In **Trauma Field Authoring v3.14.1**, click **Save Stamp Library...**.
 3. Choose a project folder and filename. Forge adds `.dsbstamps.json` when needed.
 4. Keep this small JSON file beside the source GLB or in source control.
 
@@ -710,7 +710,7 @@ The restore button enables Mesh visibility in open 3D Views, unhides the importe
 ### Recipe: carry four head stamps into a clean source rebuild
 
 1. Open the old generated/reimported Damage `.blend` that still contains the four head-impact keys and stamps.
-2. Expand **Trauma Field Authoring v3.14.0** and click **Save Stamp Library...**. Confirm the message says four keys and four stamps.
+2. Expand **Trauma Field Authoring v3.14.1** and click **Save Stamp Library...**. Confirm the message says four keys and four stamps.
 3. Start a new `.blend`, import the same original source GLB, and run **Analyze Source Damage Readiness**.
 4. Run **Load READY Handoff** and **Build Authoring Asset**.
 5. Register `DSB_ATTACHED_HEAD` with `DSB_SEGMENT_HEAD` as region `head`, then require **Validate Region** to pass.
@@ -775,6 +775,7 @@ The restore button enables Mesh visibility in open 3D Views, unhides the importe
 | Deformation exceeds limit | Depth/strength/stack is above declared maximum | Reduce **Seed Depth** or **Stamp Strength**, increase the maximum only when intentional, update stamps, and rebuild. |
 | Legacy repair says unrepairable | Attached authority failed topology, finite-value, key, Basis, or maximum checks | Leave it unchanged; repair the underlying attached key or topology contract manually, then validate. |
 | Damage validation reports a gap/cap error | Generated contour or cap no longer matches the approved source | Clear generated assets, rerun readiness if the source changed, and rebuild. Do not hide the issue by arbitrarily raising tolerance. |
+| `DSB_GORE_* must not use emission to fake wetness` | A gore material has actual emissive output, or it was generated by an older Forge build that left Blender's Principled emission defaults implicit | Install the current Forge build, then click **Preview / Rebuild Current Gore** (or **Rebuild All Generated Gore**) before validating again. Current builds explicitly set emission color to black and strength to zero; wetness uses Roughness and Coat Weight only. |
 | Export folder error | Unsaved file with blank/relative path or drive root | Save the `.blend` or choose an explicit project subfolder. |
 | Reimport shows only a socket/Empty | Imported visibility metadata was not interpreted by Blender | Click **Restore Reimported GLB Intact Preview**. |
 
