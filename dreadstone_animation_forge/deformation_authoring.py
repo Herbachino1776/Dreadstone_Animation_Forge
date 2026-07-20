@@ -1,4 +1,4 @@
-"""Dreadstone Animation Forge v3.14.1 trauma-field authoring.
+"""Dreadstone Animation Forge v3.15.0 trauma-field authoring.
 
 The workbench edits explicitly registered paired-segment or core-single regions
 on the generated protected Damage Asset. Paired morph targets remain exact-index
@@ -19,10 +19,22 @@ from bpy.types import Operator
 from bpy_extras.io_utils import ExportHelper, ImportHelper
 
 from . import trauma_field
+from .deformation import (
+    compound_service,
+    diagnostics,
+    gore_service,
+    mesh_snapshot,
+    preview_service,
+    registry as service_registry,
+    serialization,
+    shape_keys,
+    transactions,
+    validation_service,
+)
 
 DEFORMATION_SCHEMA = "dreadstone.damage_deformation.v1"
-DEFORMATION_VERSION = (3, 14, 1)
-DEFORMATION_BUILD_ID = "2026-07-19.gore-emission.1"
+DEFORMATION_VERSION = (3, 15, 0)
+DEFORMATION_BUILD_ID = "2026-07-20.healing.1"
 ATTACHED_HEAD_NAME = "DSB_ATTACHED_HEAD"
 DETACHED_HEAD_NAME = "DSB_SEGMENT_HEAD"
 PREVIEW_KEY_NAME = "__DSB_DEFORMATION_SEED_PREVIEW"
@@ -39,9 +51,21 @@ COMPOUND_PREVIEW_PROPERTY = "dsb_compound_trauma_preview_json"
 PAIR_TOLERANCE = 1e-6
 SYNC_TOLERANCE = 1e-6
 COMPOUND_SEAM_TOLERANCE = 0.0005
-_GEODESIC_CACHE = {}
-_GEODESIC_CACHE_CONTEXT = {}
+_GEODESIC_CACHE = service_registry.register_cache(
+    "geodesicDistances", service_registry.BoundedCache(32, "geodesic_distances")
+)
+_GEODESIC_CACHE_CONTEXT = service_registry.register_cache(
+    "geodesicContexts", service_registry.BoundedCache(32, "geodesic_contexts")
+)
+_ADJACENCY_CACHE = service_registry.register_cache(
+    "weightedAdjacency", service_registry.BoundedCache(8, "weighted_adjacency")
+)
+_SEAM_FACTOR_CACHE = service_registry.register_cache(
+    "seamFactors", service_registry.BoundedCache(16, "seam_factors")
+)
 _UNSET_REGION_OBJECT = object()
+_PENDING_REGION_ID = ""
+_PREVIEW_RESTORE_STATE = {}
 
 STANDARD_HEAD_KEYS = {
     "Head_Dent_Left": {
@@ -116,28 +140,14 @@ def _object(name):
     return bpy.data.objects.get(name)
 
 
-def _topology_fingerprint(obj):
-    digest = hashlib.sha256()
-    digest.update(f"v:{len(obj.data.vertices)}|p:{len(obj.data.polygons)}|".encode("utf8"))
-    for polygon in obj.data.polygons:
-        digest.update((",".join(str(int(index)) for index in polygon.vertices) + ";").encode("ascii"))
-    return digest.hexdigest()
+def _topology_fingerprint(obj, force=False):
+    return mesh_snapshot.topology_fingerprint(obj, force=force)
 
 
-def _weight_fingerprint(obj):
+def _weight_fingerprint(obj, force=False):
     """Fingerprint source skin weights without changing Source Readiness rules."""
 
-    digest = hashlib.sha256()
-    groups = {int(group.index): str(group.name) for group in obj.vertex_groups}
-    digest.update(json.dumps(groups, sort_keys=True, separators=(",", ":")).encode("utf-8"))
-    for vertex in obj.data.vertices:
-        values = sorted(
-            (groups.get(int(item.group), str(int(item.group))), round(float(item.weight), 9))
-            for item in vertex.groups
-            if float(item.weight) > 0.0
-        )
-        digest.update(json.dumps(values, separators=(",", ":")).encode("utf-8"))
-    return digest.hexdigest()
+    return mesh_snapshot.weight_fingerprint(obj, force=force)
 
 
 def _region_mode(region):
@@ -160,8 +170,8 @@ def validate_core_region(target=None):
         "errors": errors,
         "targetVertexCount": len(target.data.vertices) if target is not None and target.type == 'MESH' else 0,
         "targetPolygonCount": len(target.data.polygons) if target is not None and target.type == 'MESH' else 0,
-        "topologyFingerprint": _topology_fingerprint(target) if target is not None and target.type == 'MESH' else "",
-        "weightFingerprint": _weight_fingerprint(target) if target is not None and target.type == 'MESH' else "",
+        "topologyFingerprint": _topology_fingerprint(target, force=True) if target is not None and target.type == 'MESH' else "",
+        "weightFingerprint": _weight_fingerprint(target, force=True) if target is not None and target.type == 'MESH' else "",
     }
 
 
@@ -184,7 +194,7 @@ def validate_region_contract(region, target=None, detached=None):
     pair["regionMode"] = PAIRED_SEGMENT
     pair["targetVertexCount"] = pair["attachedVertexCount"]
     pair["targetPolygonCount"] = pair["attachedPolygonCount"]
-    pair["weightFingerprint"] = _weight_fingerprint(target) if target is not None and target.type == 'MESH' else ""
+    pair["weightFingerprint"] = _weight_fingerprint(target, force=True) if target is not None and target.type == 'MESH' else ""
     return pair
 
 
@@ -229,8 +239,8 @@ def validate_topology_pair(attached=_UNSET_REGION_OBJECT, detached=_UNSET_REGION
         errors.append("Registered deformation meshes must contain vertices.")
     if len(attached.data.polygons) == 0 or len(detached.data.polygons) == 0:
         errors.append("Registered deformation meshes must contain polygons.")
-    attached_fingerprint = _topology_fingerprint(attached)
-    detached_fingerprint = _topology_fingerprint(detached)
+    attached_fingerprint = _topology_fingerprint(attached, force=True)
+    detached_fingerprint = _topology_fingerprint(detached, force=True)
     if attached_fingerprint != detached_fingerprint:
         errors.append("Attached and detached topology fingerprints differ; vertex-index transfer is unsafe.")
     return {
@@ -269,20 +279,52 @@ def _registry_raw():
     return ""
 
 
+def _cache_registry_summary(payload):
+    validation_service.store("region_registry", {
+        "activeRegionId": str(payload.get("activeRegionId", "")),
+        "activeCompoundEventId": str(payload.get("activeCompoundEventId", "")),
+        "regions": [
+            {
+                "regionId": str(region.get("regionId", "")),
+                "regionMode": str(region.get("regionMode", PAIRED_SEGMENT)),
+                "targetObject": str(region.get("targetObject", region.get("attachedObject", ""))),
+                "detachedObject": str(region.get("detachedObject", "")),
+                "validationStatus": str(region.get("validationStatus", "NOT VALIDATED")),
+                "vertexCount": int(region.get("attachedVertexCount", 0)),
+                "polygonCount": int(region.get("polygonCount", 0)),
+            }
+            for region in payload.get("regions", [])
+        ],
+        "compoundEvents": [
+            {
+                "eventId": str(event.get("eventId", "")),
+                "displayName": str(event.get("displayName", event.get("eventId", ""))),
+                "participantCount": len(event.get("participants", [])),
+                "validationStatus": str(event.get("validationStatus", "NOT VALIDATED")),
+            }
+            for event in payload.get("compoundEvents", [])
+        ],
+    })
+
+
 def _store_registry(payload):
     payload["schema"] = DEFORMATION_SCHEMA
     payload["authoringVersion"] = _version_string()
     payload["authoringBuildId"] = DEFORMATION_BUILD_ID
-    encoded = json.dumps(payload, sort_keys=True, separators=(",", ":"))
+    encoded = serialization.encode(payload)
     scene = getattr(bpy.context, "scene", None)
-    if scene is not None:
+    if scene is not None and str(scene.get(REGISTRY_PROPERTY, "")) != encoded:
         scene[REGISTRY_PROPERTY] = encoded
     for region in payload.get("regions", []):
         for name in (region.get("targetObject", region.get("attachedObject")), region.get("detachedObject")):
             obj = _object(name) if name else None
             if obj is not None:
-                obj[REGISTRY_PROPERTY] = encoded
-                obj["dsb_deformation_region"] = region.get("regionId", "")
+                if str(obj.get(REGISTRY_PROPERTY, "")) != encoded:
+                    obj[REGISTRY_PROPERTY] = encoded
+                region_id = region.get("regionId", "")
+                if str(obj.get("dsb_deformation_region", "")) != region_id:
+                    obj["dsb_deformation_region"] = region_id
+    _cache_registry_summary(payload)
 
 
 def _region_record(registry, region_id):
@@ -332,7 +374,7 @@ def _load_registry(migrate_legacy=True):
     raw = _registry_raw()
     if raw:
         try:
-            decoded = json.loads(raw)
+            decoded = serialization.decode(raw)
             if isinstance(decoded, dict) and isinstance(decoded.get("regions", []), list):
                 payload.update(decoded)
         except Exception:
@@ -401,7 +443,12 @@ def _set_active_region(region_id, context=None):
     scene = getattr(context, "scene", None) if context is not None else getattr(bpy.context, "scene", None)
     settings = getattr(scene, "daf_settings", None)
     if settings is not None and settings.deformation_region != region_id:
-        settings.deformation_region = region_id
+        auto_preview = settings.deformation_auto_preview
+        settings.deformation_auto_preview = False
+        try:
+            settings.deformation_region = region_id
+        finally:
+            settings.deformation_auto_preview = auto_preview
     _invalidate_geodesic_cache()
 
 
@@ -454,16 +501,98 @@ def region_enum_items():
     return items or [("NONE", "No Regions", "Register a paired segment or core mesh", 0)]
 
 
+def register_standard_generated_regions(context=None):
+    """Register existing generated standard objects without guessing replacements."""
+
+    context = context or bpy.context
+    registry = _load_registry()
+    specs = (
+        ("head", PAIRED_SEGMENT, "DSB_ATTACHED_HEAD", "DSB_SEGMENT_HEAD", "head_neck"),
+        ("body_core", CORE_SINGLE, "DSB_BODY_CORE", "", "lower_spine"),
+        ("forearm_left", PAIRED_SEGMENT, "DSB_ATTACHED_FOREARM_L", "DSB_SEGMENT_FOREARM_L", "left_elbow"),
+        ("forearm_right", PAIRED_SEGMENT, "DSB_ATTACHED_FOREARM_R", "DSB_SEGMENT_FOREARM_R", "right_elbow"),
+    )
+    registered = []
+    existing = []
+    skipped = []
+    used_names = {
+        name for record in registry.get("regions", [])
+        for name in (record.get("targetObject", record.get("attachedObject", "")), record.get("detachedObject", ""))
+        if name
+    }
+    for region_id, mode, target_name, detached_name, seam_id in specs:
+        prior = _region_record(registry, region_id)
+        if prior is not None:
+            target, detached = _resolve_region_pair(prior)
+            _ensure_basis(target)
+            if detached is not None:
+                _ensure_basis(detached)
+            contract = validate_region_contract(prior, target, detached)
+            if contract["status"] != "PASS":
+                raise RuntimeError(f"Existing standard region {region_id!r} is invalid: {' '.join(contract['errors'])}")
+            prior["validationStatus"] = "PASS"
+            existing.append(region_id)
+            continue
+        target = _object(target_name)
+        detached = _object(detached_name) if detached_name else None
+        if target is None or (mode == PAIRED_SEGMENT and detached is None):
+            skipped.append({"regionId": region_id, "reason": "generated object not present"})
+            continue
+        _ensure_basis(target)
+        if detached is not None:
+            _ensure_basis(detached)
+        assigned = {target_name, detached_name} - {""}
+        if assigned.intersection(used_names):
+            raise RuntimeError(f"A standard {region_id!r} object is already owned by another registered region.")
+        if mode == CORE_SINGLE:
+            contract = validate_core_region(target)
+            record = _record_from_core(region_id, target, seam_id)
+        else:
+            contract = validate_topology_pair(target, detached)
+            record = _record_from_pair(region_id, target, detached, seam_id)
+        if contract["status"] != "PASS":
+            raise RuntimeError(f"Generated standard region {region_id!r} is invalid: {' '.join(contract['errors'])}")
+        record["validationStatus"] = "PASS"
+        registry.setdefault("regions", []).append(record)
+        used_names.update(assigned)
+        registered.append(region_id)
+    if not registry.get("activeRegionId") and registry.get("regions"):
+        registry["activeRegionId"] = "head" if _region_record(registry, "head") else registry["regions"][0]["regionId"]
+    _store_registry(registry)
+    active_id = registry.get("activeRegionId", "")
+    settings = getattr(getattr(context, "scene", None), "daf_settings", None)
+    if settings is not None and active_id and settings.deformation_region != active_id:
+        auto = settings.deformation_auto_preview
+        settings.deformation_auto_preview = False
+        try:
+            settings.deformation_region = active_id
+        finally:
+            settings.deformation_auto_preview = auto
+    _invalidate_geodesic_cache()
+    return {"registered": registered, "existing": existing, "skipped": skipped}
+
+
 def _invalidate_geodesic_cache():
     _GEODESIC_CACHE.clear()
     _GEODESIC_CACHE_CONTEXT.clear()
+    _ADJACENCY_CACHE.clear()
+    _SEAM_FACTOR_CACHE.clear()
+    mesh_snapshot.clear_cache("authoring invalidation")
+    gore_service.clear_cache("authoring invalidation")
+    validation_service.clear_cache("authoring invalidation")
+
+
+def cached_diagnostics_summary():
+    """Return the last explicitly refreshed diagnostics snapshot for UI draw."""
+
+    return diagnostics.cached_summary()
 
 
 def _metadata(obj):
     raw = obj.get(METADATA_PROPERTY, "") or obj.data.get(METADATA_PROPERTY, "")
     if raw:
         try:
-            payload = json.loads(raw)
+            payload = serialization.decode(raw)
             if isinstance(payload, dict):
                 payload["schema"] = DEFORMATION_SCHEMA
                 payload["authoringVersion"] = _version_string()
@@ -515,6 +644,36 @@ def _metadata(obj):
     return payload
 
 
+def _cache_metadata_summary(attached, detached, payload, region_id):
+    validation_service.store("active_metadata", {
+        "regionId": str(region_id),
+        "regionMode": str(payload.get("regionMode", PAIRED_SEGMENT)),
+        "targetObject": attached.name,
+        "detachedObject": detached.name if detached is not None else "",
+        "keys": [
+            {
+                "name": str(name),
+                "status": str(entry.get("status", "")),
+                "recipeStatus": str(entry.get("recipeStatus", "")),
+                "stampCount": len(entry.get("stamps", [])),
+                "stamps": [
+                    {
+                        "stampId": str(stamp.get("stampId", "")),
+                        "displayName": str(stamp.get("displayName", stamp.get("stampId", ""))),
+                        "enabled": bool(stamp.get("enabled", True)),
+                        "orderIndex": int(stamp.get("orderIndex", 0)),
+                    }
+                    for stamp in entry.get("stamps", [])
+                ],
+                "goreStatus": str(entry.get("raisedGoreStatus", "NOT GENERATED")),
+                "goreTriangles": sum(int(value) for value in entry.get("goreTriangleCounts", {}).values()),
+                "validationStatus": str(entry.get("validationStatus", "NOT VALIDATED")),
+            }
+            for name, entry in payload.get("keys", {}).items()
+        ],
+    })
+
+
 def _store_metadata(attached, detached, payload):
     registry = _load_registry()
     region = next((
@@ -535,14 +694,20 @@ def _store_metadata(attached, detached, payload):
     payload["targetObject"] = attached.name
     payload["attachedObject"] = attached.name
     payload["detachedObject"] = detached.name if detached is not None else ""
-    encoded = json.dumps(payload, sort_keys=True, separators=(",", ":"))
-    attached.data[METADATA_PROPERTY] = encoded
-    attached[METADATA_PROPERTY] = encoded
-    attached["dsb_deformation_region"] = region_id
+    encoded = serialization.encode(payload)
+    if str(attached.data.get(METADATA_PROPERTY, "")) != encoded:
+        attached.data[METADATA_PROPERTY] = encoded
+    if str(attached.get(METADATA_PROPERTY, "")) != encoded:
+        attached[METADATA_PROPERTY] = encoded
+    if str(attached.get("dsb_deformation_region", "")) != region_id:
+        attached["dsb_deformation_region"] = region_id
     if detached is not None:
-        detached.data[METADATA_PROPERTY] = encoded
-        detached[METADATA_PROPERTY] = encoded
-        detached["dsb_deformation_region"] = region_id
+        if str(detached.data.get(METADATA_PROPERTY, "")) != encoded:
+            detached.data[METADATA_PROPERTY] = encoded
+        if str(detached.get(METADATA_PROPERTY, "")) != encoded:
+            detached[METADATA_PROPERTY] = encoded
+        if str(detached.get("dsb_deformation_region", "")) != region_id:
+            detached["dsb_deformation_region"] = region_id
     if region is not None:
         region["managedKeys"] = sorted(payload.get("keys", {}).keys())
         region["topologyFingerprint"] = _topology_fingerprint(attached)
@@ -551,6 +716,26 @@ def _store_metadata(attached, detached, payload):
         region["detachedVertexCount"] = len(detached.data.vertices) if detached is not None else 0
         region["polygonCount"] = len(attached.data.polygons)
         _store_registry(registry)
+    _cache_metadata_summary(attached, detached, payload, region_id)
+
+
+def cached_ui_summary(settings=None):
+    registry = validation_service.get("region_registry", {}) or {}
+    metadata = validation_service.get("active_metadata", {}) or {}
+    active_region_id = str(registry.get("activeRegionId", metadata.get("regionId", "")))
+    region = next((item for item in registry.get("regions", []) if item.get("regionId") == active_region_id), {})
+    active_key = str(getattr(settings, "deformation_active_key", "")) if settings is not None else ""
+    key = next((item for item in metadata.get("keys", []) if item.get("name") == active_key), {})
+    active_stamp_id = str(getattr(settings, "deformation_active_stamp_id", "")) if settings is not None else ""
+    stamp = next((item for item in key.get("stamps", []) if item.get("stampId") == active_stamp_id), {})
+    return {
+        "registry": registry,
+        "metadata": metadata,
+        "region": region,
+        "key": key,
+        "stamp": stamp,
+        "preview": preview_service.state(),
+    }
 
 
 def _ensure_basis(obj):
@@ -604,9 +789,15 @@ def _ensure_key_pair(name, metadata_entry=None, preview=False):
     if not name or name == "Basis":
         raise RuntimeError("Choose a valid deformation key name.")
     _registry, region, attached, detached = _resolve_active_region()
-    contract = validate_region_contract(region, attached, detached)
-    if contract["status"] != "PASS":
-        raise RuntimeError(" ".join(contract["errors"]))
+    if preview:
+        if str(region.get("validationStatus", "")) != "PASS":
+            raise RuntimeError("Validate the active deformation region before previewing it.")
+        if detached is not None and len(attached.data.vertices) != len(detached.data.vertices):
+            raise RuntimeError("The registered pair no longer has exact-index compatible point counts.")
+    else:
+        contract = validate_region_contract(region, attached, detached)
+        if contract["status"] != "PASS":
+            raise RuntimeError(" ".join(contract["errors"]))
     _ensure_basis(attached)
     if detached is not None:
         _ensure_basis(detached)
@@ -736,6 +927,35 @@ def _smoothstep(value):
 
 def _linear_world_matrix(obj):
     return obj.matrix_world.to_3x3()
+
+
+def _evaluated_world_matrix(obj):
+    """Return a correct matrix for a hidden object after file reopen.
+
+    Blender may defer dependency-graph evaluation for disabled viewport objects
+    and temporarily expose an identity ``matrix_world``. Explicit Forge work
+    briefly evaluates the object and its parents, then restores exact visibility.
+    """
+
+    hierarchy = []
+    current = obj
+    while current is not None:
+        hierarchy.append(current)
+        current = current.parent
+    visibility = [(item, bool(item.hide_viewport), bool(item.hide_get())) for item in hierarchy]
+    if not any(viewport or hidden for _item, viewport, hidden in visibility):
+        return obj.matrix_world.copy()
+    try:
+        for item, _viewport, _hidden in visibility:
+            item.hide_viewport = False
+            item.hide_set(False)
+        bpy.context.view_layer.update()
+        return obj.matrix_world.copy()
+    finally:
+        for item, viewport, hidden in reversed(visibility):
+            item.hide_viewport = viewport
+            item.hide_set(hidden)
+        bpy.context.view_layer.update()
 
 
 def _local_delta_to_world(obj, delta):
@@ -979,10 +1199,7 @@ def _seed_coordinates(settings, attached):
 
 
 def _set_key_coordinates(key_block, coordinates):
-    if len(key_block.data) != len(coordinates):
-        raise RuntimeError("Shape-key coordinate count does not match the mesh.")
-    for point, coordinate in zip(key_block.data, coordinates):
-        point.co = coordinate
+    shape_keys.set_coordinates(key_block, coordinates)
 
 
 def _sync_exact_index_key_pair(attached, detached, name):
@@ -999,6 +1216,8 @@ def _sync_exact_index_key_pair(attached, detached, name):
         == len(attached_basis.data) == len(detached_basis.data)
     ):
         raise RuntimeError(f"The paired key {name} has mismatched point counts.")
+    _evaluated_world_matrix(attached)
+    _evaluated_world_matrix(detached)
     for index in range(len(attached_key.data)):
         delta_attached_local = attached_key.data[index].co - attached_basis.data[index].co
         delta_world = _local_delta_to_world(attached, delta_attached_local)
@@ -1031,6 +1250,8 @@ def _pair_delta_error(attached, detached, name):
         == len(attached_basis.data) == len(detached_basis.data)
     ):
         return math.inf
+    _evaluated_world_matrix(attached)
+    _evaluated_world_matrix(detached)
     maximum = 0.0
     for index in range(len(attached_key.data)):
         delta_a = _local_delta_to_world(attached, attached_key.data[index].co - attached_basis.data[index].co)
@@ -1229,7 +1450,8 @@ def preview_seed(context, quiet=False):
     _set_authoring_view(attached, detached, 'ATTACHED')
     coordinates = _seed_coordinates(settings, attached)
     _set_key_coordinates(attached_preview, coordinates)
-    sync_key_to_detached(PREVIEW_KEY_NAME)
+    if detached is not None:
+        _sync_exact_index_key_pair(attached, detached, PREVIEW_KEY_NAME)
     attached_preview.value = 1.0
     attached_preview.slider_max = 1.0
     settings.deformation_status = "LIVE SEED PREVIEW"
@@ -1239,25 +1461,383 @@ def preview_seed(context, quiet=False):
 
 
 def refresh_live_seed_preview(context):
-    # Settings callbacks may change traversal radius or feathering. Clearing is
-    # cheap compared with risking reuse of a graph result for superseded inputs.
-    _invalidate_geodesic_cache()
-    settings = getattr(getattr(context, "scene", None), "daf_settings", None)
-    if not settings or not settings.deformation_auto_preview:
+    """Compatibility entry point: schedule managed preview without doing geometry work."""
+
+    return request_managed_preview(context, "legacy live-preview request")
+
+
+def request_managed_preview(context, reason="property update"):
+    return preview_service.request_refresh(context, reason)
+
+
+def request_region_switch(region_id, context=None):
+    global _PENDING_REGION_ID
+    _PENDING_REGION_ID = str(region_id)
+    return preview_service.request_refresh(context, "region switch")
+
+
+def _apply_pending_region(context):
+    global _PENDING_REGION_ID
+    if not _PENDING_REGION_ID:
         return
+    region_id = _PENDING_REGION_ID
+    _PENDING_REGION_ID = ""
+    if region_id != _active_region_id(context):
+        _set_active_region(region_id, context)
+    registry, region, attached, _detached = _resolve_active_region(context, region_id)
+    _set_active_object(context, attached)
+    validation_service.store("active_context", {
+        "regionId": region_id,
+        "regionMode": _region_mode(region),
+        "activeObject": attached.name,
+        "validationStatus": region.get("validationStatus", "NOT VALIDATED"),
+        "registeredRegionCount": len(registry.get("regions", [])),
+    })
+
+
+def _capture_preview_restore_state(context, attached, detached):
+    global _PREVIEW_RESTORE_STATE
+    if _PREVIEW_RESTORE_STATE:
+        return
+    objects = tuple(value for value in (attached, detached) if value is not None)
+    _PREVIEW_RESTORE_STATE = {
+        "active": getattr(getattr(context.view_layer, "objects", None), "active", None).name
+        if getattr(getattr(context.view_layer, "objects", None), "active", None) else "",
+        "selected": tuple(obj.name for obj in context.selected_objects),
+        "mode": str(getattr(context, "mode", "OBJECT")),
+        "objects": {
+            obj.name: {
+                "hideViewport": bool(obj.hide_viewport),
+                "hideRender": bool(obj.hide_render),
+                "hideGet": bool(obj.hide_get()),
+                "shapeValues": {
+                    key.name: float(key.value) for key in obj.data.shape_keys.key_blocks
+                } if obj.type == 'MESH' and obj.data.shape_keys else {},
+            }
+            for obj in objects
+        },
+    }
+
+
+def _restore_preview_state(context):
+    global _PREVIEW_RESTORE_STATE
+    state = _PREVIEW_RESTORE_STATE
+    _PREVIEW_RESTORE_STATE = {}
+    if not state:
+        return
+    for object_name, record in state.get("objects", {}).items():
+        obj = _object(object_name)
+        if obj is None:
+            continue
+        obj.hide_viewport = bool(record.get("hideViewport", False))
+        obj.hide_render = bool(record.get("hideRender", False))
+        obj.hide_set(bool(record.get("hideGet", False)))
+        if obj.type == 'MESH' and obj.data.shape_keys:
+            for key_name, value in record.get("shapeValues", {}).items():
+                key = _key(obj, key_name)
+                if key is not None:
+                    key.value = float(value)
     try:
-        if settings.deformation_seed_center_valid and settings.deformation_active_key:
-            attached, _detached = _resolve_pair(context)
-            entry = _metadata(attached).get("keys", {}).get(settings.deformation_active_key, {})
-            if entry.get("stamps") and settings.deformation_active_stamp_id:
-                preview_active_stamp(context, quiet=True)
-            else:
-                preview_seed(context, quiet=True)
-    except Exception as exc:
-        settings.deformation_status = "SEED PREVIEW ERROR: " + str(exc)[:120]
+        if getattr(context, "mode", "OBJECT") != 'OBJECT':
+            bpy.ops.object.mode_set(mode='OBJECT')
+        bpy.ops.object.select_all(action='DESELECT')
+        for name in state.get("selected", ()):
+            obj = _object(name)
+            if obj is not None:
+                obj.select_set(True)
+        context.view_layer.objects.active = _object(state.get("active", ""))
+        if state.get("mode", "") == 'SCULPT':
+            bpy.ops.object.mode_set(mode='SCULPT')
+        elif str(state.get("mode", "")).startswith("EDIT"):
+            bpy.ops.object.mode_set(mode='EDIT')
+    except Exception:
+        pass
+
+
+def _preview_stamp_stack(context, quality):
+    settings, _registry, region, attached, detached, _payload, name, entry = _active_key_context(context)
+    stored = _active_stamp(settings, entry)
+    order_index = int(stored.get("orderIndex", 0))
+    current = _stamp_from_settings(context, stamp_id=str(stored["stampId"]), order_index=order_index)
+    if quality == "FAST":
+        stamps = [current]
+    else:
+        stamps = [
+            current if str(stamp.get("stampId", "")) == str(current["stampId"]) else stamp
+            for stamp in trauma_field.reindex_stamps(entry.get("stamps", []))
+            if stamp.get("enabled", True)
+        ]
+    weights, distances = _stamp_weights(attached, region, current)
+    _capture_preview_restore_state(context, attached, detached)
+    attached, detached, attached_preview, _detached_preview = _ensure_key_pair(PREVIEW_KEY_NAME, preview=True)
+    _zero_managed_weights(attached)
+    coordinates = (
+        _stamp_local_coordinates_from_inputs(
+            attached,
+            stamps,
+            {str(current["stampId"]): weights},
+            {str(current["stampId"]): distances},
+        )
+        if quality == "FAST" else _stamp_local_coordinates(attached, stamps, region)
+    )
+    _set_key_coordinates(attached_preview, coordinates)
+    if detached is not None:
+        _sync_exact_index_key_pair(attached, detached, PREVIEW_KEY_NAME)
+    attached_preview.value = 1.0
+    attached_preview.slider_max = 1.0
+    _set_authoring_view(attached, detached, 'ATTACHED', context)
+    estimated = 0
+    if settings.deformation_gore_enabled and settings.deformation_gore_raised_enabled:
+        estimated = min(
+            int(settings.deformation_gore_maximum_triangles),
+            int(sum(float(value) > 1e-4 for value in weights) * 2 * float(settings.deformation_gore_geometry_density)),
+        )
+    return {
+        "key": name,
+        "stampId": current["stampId"],
+        "affectedVertexCount": sum(float(value) > 1e-8 for value in weights),
+        "estimatedGoreTriangleCount": estimated,
+        "finalGoreTriangleCount": 0,
+        "message": f"{quality.title()} non-destructive preview ready",
+    }
+
+
+def _execute_managed_preview(context, quality, _generation):
+    _apply_pending_region(context)
+    settings = getattr(getattr(context, "scene", None), "daf_settings", None)
+    if settings is None or not settings.deformation_active_key or not settings.deformation_seed_center_valid:
+        return {"message": "Select a region, deformation, stamp, and captured surface"}
+    if quality == "FINAL":
+        result = commit_current_tuning(context)
+        return {
+            "affectedVertexCount": int(result.get("affectedVertexCount", 0)),
+            "finalGoreTriangleCount": int(result.get("finalGoreTriangleCount", 0)),
+            "message": "Final impact committed",
+        }
+    return _preview_stamp_stack(context, quality)
+
+
+def _clear_managed_preview(context, **_flags):
+    try:
+        clear_seed_preview(all_regions=True)
+    finally:
+        try:
+            clear_surface_gore_preview(all_regions=True)
+        finally:
+            _restore_preview_state(context)
+
+
+def commit_current_tuning(context):
+    settings, _registry, region, attached, detached, payload, name, entry = _active_key_context(context)
+    objects = tuple(value for value in (attached, detached) if value is not None)
+    with transactions.OperationTransaction(
+        context,
+        "Commit Impact",
+        objects=objects,
+        metadata_keys=(METADATA_PROPERTY, REGISTRY_PROPERTY),
+        coordinate_key_names=(name,),
+        ownership_predicate=lambda value: bool(value.get("dsb_generated_role", "") or value.get("dsb_damage_generated", False)),
+    ) as transaction:
+        transaction.set_stage("persist recipe")
+        stored = _active_stamp(settings, entry)
+        current = _stamp_from_settings(
+            context,
+            stamp_id=str(stored["stampId"]),
+            order_index=int(stored.get("orderIndex", 0)),
+        )
+        entry["stamps"] = trauma_field.reindex_stamps([
+            current if str(stamp.get("stampId", "")) == str(current["stampId"]) else stamp
+            for stamp in entry.get("stamps", [])
+        ])
+        entry["maximumInfluence"] = float(settings.deformation_maximum_influence)
+        entry["maximumDisplacement"] = float(settings.deformation_max_vertex_displacement)
+        entry["draftStatus"] = "COMMITTED"
+        if settings.deformation_gore_enabled:
+            overlay = _gore_overlay_from_settings(context)
+            entry["surfaceGoreOverlay"] = overlay
+            entry["goreOverlayDigest"] = trauma_field.gore_overlay_digest(overlay)
+        _store_metadata(attached, detached, payload)
+        transaction.set_stage("rebuild final deformation and gore")
+        result = rebuild_active_deformation(context)
+        refreshed = _metadata(attached).get("keys", {}).get(name, {})
+        triangle_counts = refreshed.get("goreTriangleCounts", {})
+        result["finalGoreTriangleCount"] = sum(int(value) for value in triangle_counts.values())
+        result["affectedVertexCount"] = len(attached.data.vertices)
+        transaction.commit()
+        return result
+
+
+def revert_current_tuning(context):
+    settings, _registry, _region, _attached, _detached, _payload, _name, entry = _active_key_context(context)
+    stamp = _active_stamp(settings, entry)
+    _load_stamp_into_settings(settings, stamp)
+    _load_gore_into_settings(settings, entry.get("surfaceGoreOverlay"))
+    return preview_service.request_refresh(context, "reverted to saved recipe")
+
+
+def _unique_impact_name(attached, entry_names, settings, region_id):
+    requested = settings.deformation_impact_semantic_name.strip()
+    if requested:
+        base = re.sub(r"[^A-Za-z0-9_]+", "_", requested).strip("_")
+        if not base:
+            raise RuntimeError("Impact Name must contain at least one letter or digit.")
+    else:
+        preset_names = {
+            "HEAD_LEFT": "Head_Impact_Left",
+            "HEAD_RIGHT": "Head_Impact_Right",
+            "HEAD_FRONT": "Head_Impact_Front",
+            "HEAD_BACK": "Head_Impact_Back",
+            "BODY_FRONT": "Body_Impact_Front",
+            "BODY_LEFT": "Body_Impact_Left",
+            "BODY_RIGHT": "Body_Impact_Right",
+            "BODY_BACK": "Body_Impact_Back",
+            "FOREARM_OUTER": "Forearm_Impact_Outer",
+            "CUSTOM": region_id.replace("_", " ").title().replace(" ", "_") + "_Impact",
+        }
+        base = preset_names.get(settings.deformation_impact_preset, "Impact")
+    base = base[:52].rstrip("_")
+    for version in range(1, 10000):
+        candidate = f"{base}_v{version:03d}"
+        if candidate not in entry_names and _key(attached, candidate) is None:
+            return candidate
+    raise RuntimeError("Could not allocate a unique managed impact name.")
+
+
+def _configure_impact_defaults(settings, capture):
+    intensity = str(settings.deformation_impact_intensity)
+    values = {
+        "LIGHT": (0.055, 0.014, 2.2, 0.70),
+        "MEDIUM": (0.080, 0.026, 1.7, 1.00),
+        "HEAVY": (0.105, 0.040, 1.35, 1.25),
+    }[intensity]
+    estimated = float(capture.get("estimatedRadius", 0.0))
+    settings.deformation_seed_radius = max(values[0], min(0.30, estimated * 1.20))
+    settings.deformation_seed_depth = values[1]
+    settings.deformation_seed_falloff = values[2]
+    settings.deformation_stamp_strength = values[3]
+    settings.deformation_capture_mode = 'SELECTED_FACE_PATCH'
+    if intensity == "HEAVY" and settings.deformation_default_heavy_gore:
+        settings.deformation_gore_enabled = True
+        settings.deformation_gore_raised_enabled = True
+        settings.deformation_gore_preset = "Gore_Crush_Heavy_Clotted"
+        apply_gore_preset_to_settings(bpy.context)
+
+
+def create_impact_from_current_selection(context):
+    settings = context.scene.daf_settings
+    _registry, region, attached, detached = _resolve_active_region(context)
+    previous_settings = {
+        name: getattr(settings, name) for name in (
+            "deformation_active_key", "deformation_active_stamp_id", "deformation_key_name",
+            "deformation_capture_json", "deformation_seed_center_valid", "deformation_status",
+        )
+    }
+    try:
+        with transactions.OperationTransaction(
+            context,
+            "Create Impact From Current Selection",
+            objects=tuple(value for value in (attached, detached) if value is not None),
+            metadata_keys=(METADATA_PROPERTY, REGISTRY_PROPERTY),
+            property_groups=((settings, "deformation_"),),
+            ownership_predicate=lambda value: bool(value.get("dsb_generated_role", "") or value.get("dsb_damage_generated", False)),
+        ) as transaction:
+            transaction.set_stage("validate selected connected patch")
+            settings.deformation_active_key = ""
+            settings.deformation_active_stamp_id = ""
+            capture = _capture_face_selection(context, require_single=False)
+
+            transaction.set_stage("configure impact defaults")
+            auto = settings.deformation_auto_preview
+            settings.deformation_auto_preview = False
+            try:
+                _configure_impact_defaults(settings, capture)
+                payload = _metadata(attached)
+                name = _unique_impact_name(attached, payload.get("keys", {}), settings, str(region.get("regionId", "")))
+                settings.deformation_key_name = name
+                settings.deformation_active_key = name
+                attached, detached, attached_key, detached_key = _ensure_key_pair(name, metadata_entry={
+                    "family": str(settings.deformation_stamp_family).lower(),
+                    "status": "IMPACT_DRAFT",
+                    "recipeStatus": "PROCEDURAL_STACK",
+                    "legacy": False,
+                    "maximumInfluence": float(settings.deformation_maximum_influence),
+                    "maximumDisplacement": float(settings.deformation_max_vertex_displacement),
+                })
+                transaction.set_stage("create default trauma stamp")
+                stamp = _stamp_from_settings(context, order_index=0)
+                settings.deformation_active_stamp_id = str(stamp["stampId"])
+                payload = _metadata(attached)
+                entry = payload["keys"][name]
+                entry["stamps"] = [stamp]
+                entry["recipeDigest"] = trauma_field.recipe_digest(entry["stamps"])
+                entry["status"] = "IMPACT_DRAFT"
+                entry["draftStatus"] = "UNCOMMITTED"
+                entry["recipeStatus"] = "PROCEDURAL_STACK"
+                entry["legacy"] = False
+                _store_metadata(attached, detached, payload)
+                if settings.deformation_gore_enabled:
+                    payload = _metadata(attached)
+                    entry = payload["keys"][name]
+                    overlay = _gore_overlay_from_settings(context)
+                    entry["surfaceGoreOverlay"] = overlay
+                    entry["goreOverlayDigest"] = trauma_field.gore_overlay_digest(overlay)
+                    entry["raisedGoreStatus"] = "STALE_REBUILD_REQUIRED" if overlay["goreRaisedEnabled"] else "NOT_GENERATED"
+                _store_metadata(attached, detached, payload)
+                attached_key.value = 0.0
+                if detached_key is not None:
+                    detached_key.value = 0.0
+            finally:
+                settings.deformation_auto_preview = auto
+
+            transaction.set_stage("generate FAST preview")
+            result = preview_service.run_now(context, quality="FAST")
+            if result.get("failed"):
+                raise RuntimeError(result.get("error", "FAST preview failed."))
+            settings.deformation_status = f"IMPACT DRAFT — {name}"
+            transaction.commit()
+            return {
+                "key": name,
+                "stampId": str(stamp["stampId"]),
+                "faceCount": len(capture.get("faceIndices", [])),
+                "vertexCount": len(capture.get("vertexIndices", [])),
+                "preview": result,
+            }
+    except Exception:
+        auto = settings.deformation_auto_preview
+        settings.deformation_auto_preview = False
+        try:
+            for name, value in previous_settings.items():
+                setattr(settings, name, value)
+        finally:
+            settings.deformation_auto_preview = auto
+        raise
+
+
+def remove_active_draft(context):
+    settings, _registry, region, attached, detached, payload, name, entry = _active_key_context(context)
+    if str(entry.get("draftStatus", "")) != "UNCOMMITTED":
+        return False
+    _remove_generated_gore_objects(str(region.get("regionId", "")), name)
+    _remove_key(attached, name)
+    if detached is not None:
+        _remove_key(detached, name)
+    payload.get("keys", {}).pop(name, None)
+    _store_metadata(attached, detached, payload)
+    settings.deformation_active_key = ""
+    settings.deformation_active_stamp_id = ""
+    settings.deformation_capture_json = ""
+    settings.deformation_seed_center_valid = False
+    settings.deformation_status = f"DRAFT REMOVED — {name}"
+    return True
 
 
 def update_active_key_metadata(context):
+    """Compatibility entry point; metadata writes happen only on explicit commit."""
+
+    return request_managed_preview(context, "active key metadata changed")
+
+
+def commit_active_key_metadata(context):
     settings = getattr(getattr(context, "scene", None), "daf_settings", None)
     if not settings or not settings.deformation_active_key:
         return
@@ -1281,18 +1861,23 @@ def update_active_key_metadata(context):
 def _select_key(settings, name):
     attached, _detached = _resolve_pair()
     entry = _metadata(attached).get("keys", {}).get(name, {})
-    settings.deformation_active_key = name
-    settings.deformation_key_name = name
-    settings.deformation_seed_radius = float(entry.get("seedRadius", settings.deformation_seed_radius))
-    settings.deformation_seed_depth = float(entry.get("seedDepth", settings.deformation_seed_depth))
-    settings.deformation_seed_falloff = float(entry.get("seedFalloff", settings.deformation_seed_falloff))
-    settings.deformation_maximum_influence = float(entry.get("maximumInfluence", 1.0))
-    settings.deformation_max_vertex_displacement = float(entry.get("maximumDisplacement", 0.045))
-    stamps = entry.get("stamps", [])
-    settings.deformation_active_stamp_id = ""
-    if stamps:
-        _load_stamp_into_settings(settings, sorted(stamps, key=lambda stamp: int(stamp.get("orderIndex", 0)))[0])
-    _load_gore_into_settings(settings, entry.get("surfaceGoreOverlay"))
+    auto_preview = settings.deformation_auto_preview
+    settings.deformation_auto_preview = False
+    try:
+        settings.deformation_active_key = name
+        settings.deformation_key_name = name
+        settings.deformation_seed_radius = float(entry.get("seedRadius", settings.deformation_seed_radius))
+        settings.deformation_seed_depth = float(entry.get("seedDepth", settings.deformation_seed_depth))
+        settings.deformation_seed_falloff = float(entry.get("seedFalloff", settings.deformation_seed_falloff))
+        settings.deformation_maximum_influence = float(entry.get("maximumInfluence", 1.0))
+        settings.deformation_max_vertex_displacement = float(entry.get("maximumDisplacement", 0.045))
+        stamps = entry.get("stamps", [])
+        settings.deformation_active_stamp_id = ""
+        if stamps:
+            _load_stamp_into_settings(settings, sorted(stamps, key=lambda stamp: int(stamp.get("orderIndex", 0)))[0])
+        _load_gore_into_settings(settings, entry.get("surfaceGoreOverlay"))
+    finally:
+        settings.deformation_auto_preview = auto_preview
 
 
 def _load_gore_into_settings(settings, overlay):
@@ -1574,17 +2159,16 @@ def _load_stamp_into_settings(settings, stamp):
 
 
 def _basis_world_positions(attached):
-    basis = _ensure_basis(attached)
-    return [tuple(attached.matrix_world @ point.co) for point in basis.data]
+    _ensure_basis(attached)
+    return mesh_snapshot.basis_world_positions(attached)
 
 
 def _world_vertex_positions(attached):
-    return [tuple(attached.matrix_world @ vertex.co) for vertex in attached.data.vertices]
+    return mesh_snapshot.world_positions(attached)
 
 
 def _virtual_weld_context(attached):
-    positions = _world_vertex_positions(attached)
-    return positions, trauma_field.build_virtual_weld_map(positions)
+    return mesh_snapshot.virtual_weld_context(attached, trauma_field.build_virtual_weld_map)
 
 
 def _stamp_weights(attached, region, stamp):
@@ -1603,10 +2187,11 @@ def _stamp_weights(attached, region, stamp):
         distances = {index: 0.0 for index in selected}
     elif distance_mode == "WORLD_DISTANCE":
         center = Vector(stamp.get("center", (0.0, 0.0, 0.0)))
+        positions = mesh_snapshot.world_positions(attached)
         distances = {
-            index: (attached.matrix_world @ vertex.co - center).length
-            for index, vertex in enumerate(attached.data.vertices)
-            if (attached.matrix_world @ vertex.co - center).length <= maximum_traversal
+            index: (Vector(position) - center).length
+            for index, position in enumerate(positions)
+            if (Vector(position) - center).length <= maximum_traversal
         }
     else:
         topology = _topology_fingerprint(attached)
@@ -1621,13 +2206,19 @@ def _stamp_weights(attached, region, stamp):
             virtual_weld["tolerance"],
         )
         if cache_key not in _GEODESIC_CACHE:
-            edges = [tuple(edge.vertices) for edge in attached.data.edges]
-            adjacency = trauma_field.build_weighted_adjacency(
-                vertex_count,
-                edges,
-                positions,
-                virtual_members=virtual_weld["virtual_members"],
+            adjacency_key = (
+                topology, f"{attached.name}:{attached.data.name}",
+                virtual_weld["digest"], float(virtual_weld["tolerance"]),
             )
+            adjacency = _ADJACENCY_CACHE.peek(adjacency_key)
+            if adjacency is None:
+                adjacency = trauma_field.build_weighted_adjacency(
+                    vertex_count,
+                    mesh_snapshot.edges(attached),
+                    positions,
+                    virtual_members=virtual_weld["virtual_members"],
+                )
+                _ADJACENCY_CACHE[adjacency_key] = adjacency
             _GEODESIC_CACHE[cache_key] = trauma_field.geodesic_distances(adjacency, selected, maximum_traversal)
             _GEODESIC_CACHE_CONTEXT[cache_key] = {
                 "topologyFingerprint": topology,
@@ -1654,10 +2245,23 @@ def _stamp_weights(attached, region, stamp):
     if seam_protection > 0.0:
         seam_points = [attached.matrix_world @ point for point in _region_seam_points(region)]
         if seam_points:
-            for index, vertex in enumerate(attached.data.vertices):
-                point_world = attached.matrix_world @ vertex.co
-                seam_distance = min((point_world - point).length for point in seam_points)
-                weights[index] *= _smoothstep(seam_distance / seam_protection)
+            seam_digest = hashlib.sha256(
+                "|".join(
+                    f"{point[0]:.9f},{point[1]:.9f},{point[2]:.9f}" for point in seam_points
+                ).encode("ascii")
+            ).hexdigest()
+            factor_key = (
+                f"{attached.name}:{attached.data.name}", _topology_fingerprint(attached),
+                seam_digest, round(seam_protection, 12),
+            )
+            factors = _SEAM_FACTOR_CACHE.peek(factor_key)
+            if factors is None:
+                factors = tuple(
+                    _smoothstep(min((Vector(position) - point).length for point in seam_points) / seam_protection)
+                    for position in mesh_snapshot.world_positions(attached)
+                )
+                _SEAM_FACTOR_CACHE[factor_key] = factors
+            weights = [value * factors[index] for index, value in enumerate(weights)]
     return tuple(weights), dict(distances)
 
 
@@ -1727,7 +2331,6 @@ def update_surface_gore_overlay(context):
 
 
 def _stamp_local_coordinates(attached, stamps, region=None):
-    basis_world = _basis_world_positions(attached)
     if region is None:
         _registry, region, _active, _detached = _resolve_active_region()
     weights_by_stamp = {}
@@ -1736,6 +2339,11 @@ def _stamp_local_coordinates(attached, stamps, region=None):
         weights, distances = _stamp_weights(attached, region, stamp)
         weights_by_stamp[str(stamp["stampId"])] = weights
         distances_by_stamp[str(stamp["stampId"])] = distances
+    return _stamp_local_coordinates_from_inputs(attached, stamps, weights_by_stamp, distances_by_stamp)
+
+
+def _stamp_local_coordinates_from_inputs(attached, stamps, weights_by_stamp, distances_by_stamp):
+    basis_world = _basis_world_positions(attached)
     final_world = trauma_field.evaluate_stamp_stack(basis_world, stamps, weights_by_stamp, distances_by_stamp)
     inverse_world = attached.matrix_world.inverted()
     return [inverse_world @ Vector(position) for position in final_world]
@@ -2613,6 +3221,7 @@ def _deformation_local_points(obj, key_name):
 
 
 def _deformation_input_digest(obj, key_name):
+    _evaluated_world_matrix(obj)
     basis = _ensure_basis(obj)
     basis_world = [tuple(obj.matrix_world @ point.co) for point in basis.data]
     deformed_world = [tuple(obj.matrix_world @ point) for point in _deformation_local_points(obj, key_name)]
@@ -2712,62 +3321,114 @@ def _build_gore_shell_object(source, key_name, region_id, pair_role, overlay, fa
     name = trauma_field.gore_generated_object_name(region_id, key_name, pair_role)
     if bpy.data.objects.get(name) is not None:
         raise RuntimeError(f"Raised gore object name {name!r} was not cleared before rebuild.")
+    source_world = _evaluated_world_matrix(source)
     positions = _deformation_local_points(source, key_name)
     source_faces = [tuple(int(index) for index in polygon.vertices) for polygon in source.data.polygons]
     normals = _local_vertex_normals(positions, source_faces)
-    source_indices = sorted({int(index) for record in face_records for index in record["vertices"]})
-    if not source_indices:
+    all_source_indices = sorted({int(index) for record in face_records for index in record["vertices"]})
+    if not all_source_indices:
         raise RuntimeError("Raised gore selection contains no usable source vertices.")
     thickness_by_vertex = _smoothed_gore_thickness(face_records)
 
-    inverse = source.matrix_world.inverted()
-    normal_matrix = source.matrix_world.to_3x3().inverted().transposed()
+    record_edges = []
+    edge_records = {}
+    for record_index, record in enumerate(face_records):
+        record_face = [int(index) for index in record["vertices"]]
+        edges = {
+            tuple(sorted((first, record_face[(index + 1) % len(record_face)])))
+            for index, first in enumerate(record_face)
+        }
+        record_edges.append(edges)
+        for edge in edges:
+            edge_records.setdefault(edge, []).append(record_index)
+    record_adjacency = {index: set() for index in range(len(face_records))}
+    for record_indices in edge_records.values():
+        for first in record_indices:
+            record_adjacency[first].update(index for index in record_indices if index != first)
+    components = []
+    remaining = set(range(len(face_records)))
+    while remaining:
+        seed = min(remaining)
+        stack = [seed]
+        component = []
+        remaining.remove(seed)
+        while stack:
+            current = stack.pop()
+            component.append(current)
+            neighbors = sorted(record_adjacency[current] & remaining, reverse=True)
+            for neighbor in neighbors:
+                remaining.remove(neighbor)
+                stack.append(neighbor)
+        components.append(sorted(component))
+
+    inverse = source_world.inverted()
+    normal_matrix = source_world.to_3x3().inverted().transposed()
     offset = float(overlay["goreSurfaceOffset"])
     vertices = []
     generated_source_indices = []
-    bottom_index = {}
-    top_index = {}
-    for source_index in source_indices:
-        normal_world = normal_matrix @ normals[source_index]
-        if normal_world.length_squared <= 1e-16:
-            normal_world = Vector((0.0, 0.0, 1.0))
-        normal_world.normalize()
-        surface_world = source.matrix_world @ positions[source_index]
-        bottom_index[source_index] = len(vertices)
-        vertices.append(tuple(inverse @ (surface_world + normal_world * offset)))
-        generated_source_indices.append(source_index)
-    for source_index in source_indices:
-        normal_world = normal_matrix @ normals[source_index]
-        if normal_world.length_squared <= 1e-16:
-            normal_world = Vector((0.0, 0.0, 1.0))
-        normal_world.normalize()
-        surface_world = source.matrix_world @ positions[source_index]
-        top_index[source_index] = len(vertices)
-        vertices.append(tuple(inverse @ (
-            surface_world + normal_world * (offset + thickness_by_vertex[source_index])
-        )))
-        generated_source_indices.append(source_index)
-
     material_lookup = {material_id: index for index, material_id in enumerate(trauma_field.GORE_MATERIAL_IDS)}
     faces = []
     material_indices = []
-    selected_edge_uses = {}
-    for record in face_records:
-        face = [int(index) for index in record["vertices"]]
-        faces.append(tuple(top_index[index] for index in face))
-        material_indices.append(material_lookup[str(record["materialId"])])
-        faces.append(tuple(bottom_index[index] for index in reversed(face)))
-        material_indices.append(material_lookup[trauma_field.GORE_MATERIAL_IDS[1]])
-        for edge_index, first in enumerate(face):
-            second = face[(edge_index + 1) % len(face)]
-            edge_key = tuple(sorted((first, second)))
-            selected_edge_uses.setdefault(edge_key, []).append((first, second))
-    for uses in selected_edge_uses.values():
-        if len(uses) != 1:
-            continue
-        first, second = uses[0]
-        faces.append((bottom_index[first], bottom_index[second], top_index[second], top_index[first]))
-        material_indices.append(material_lookup[trauma_field.GORE_MATERIAL_IDS[2]])
+    for component in components:
+        source_indices = sorted({
+            int(index)
+            for record_index in component
+            for index in face_records[record_index]["vertices"]
+        })
+        bottom_index = {}
+        top_index = {}
+        for source_index in source_indices:
+            normal_world = normal_matrix @ normals[source_index]
+            if normal_world.length_squared <= 1e-16:
+                normal_world = Vector((0.0, 0.0, 1.0))
+            normal_world.normalize()
+            surface_world = source_world @ positions[source_index]
+            bottom_index[source_index] = len(vertices)
+            vertices.append(tuple(inverse @ (surface_world + normal_world * offset)))
+            generated_source_indices.append(source_index)
+        for source_index in source_indices:
+            normal_world = normal_matrix @ normals[source_index]
+            if normal_world.length_squared <= 1e-16:
+                normal_world = Vector((0.0, 0.0, 1.0))
+            normal_world.normalize()
+            surface_world = source_world @ positions[source_index]
+            top_index[source_index] = len(vertices)
+            vertices.append(tuple(inverse @ (
+                surface_world + normal_world * (offset + thickness_by_vertex[source_index])
+            )))
+            generated_source_indices.append(source_index)
+
+        selected_edge_uses = {}
+        for record_index in component:
+            record = face_records[record_index]
+            face = [int(index) for index in record["vertices"]]
+            faces.append(tuple(top_index[index] for index in face))
+            material_indices.append(material_lookup[str(record["materialId"])])
+            faces.append(tuple(bottom_index[index] for index in reversed(face)))
+            material_indices.append(material_lookup[trauma_field.GORE_MATERIAL_IDS[1]])
+            for edge_index, first in enumerate(face):
+                second = face[(edge_index + 1) % len(face)]
+                edge_key = tuple(sorted((first, second)))
+                selected_edge_uses.setdefault(edge_key, []).append((first, second))
+        for uses in selected_edge_uses.values():
+            if len(uses) != 1:
+                continue
+            first, second = uses[0]
+            faces.append((bottom_index[first], bottom_index[second], top_index[second], top_index[first]))
+            material_indices.append(material_lookup[trauma_field.GORE_MATERIAL_IDS[2]])
+
+    constructed_edge_counts = {}
+    for face in faces:
+        for index, first in enumerate(face):
+            edge = tuple(sorted((int(first), int(face[(index + 1) % len(face)]))))
+            constructed_edge_counts[edge] = constructed_edge_counts.get(edge, 0) + 1
+    invalid_edges = {edge: count for edge, count in constructed_edge_counts.items() if count != 2}
+    if invalid_edges:
+        samples = ", ".join(f"{edge}:{count}" for edge, count in sorted(invalid_edges.items())[:6])
+        raise RuntimeError(
+            f"Raised gore source selection cannot form a closed manifold shell "
+            f"({len(invalid_edges)} invalid edges; {samples})."
+        )
 
     mesh = bpy.data.meshes.new(name + "_MESH")
     mesh.from_pydata(vertices, [], faces)
@@ -2831,20 +3492,6 @@ def _expected_raised_gore_inputs(region, attached, detached, key_name, entry):
         errors.append("The linked stamp topology changed; apply the gore recipe again before rebuilding.")
     if errors:
         raise RuntimeError(" ".join(errors))
-    weights, _distances = _stamp_weights(attached, region, stamp)
-    basis = _ensure_basis(attached)
-    target = _key(attached, key_name)
-    if target is None:
-        raise RuntimeError(f"The deformation key {key_name!r} is missing.")
-    basis_world = [attached.matrix_world @ point.co for point in basis.data]
-    target_world = [attached.matrix_world @ point.co for point in target.data]
-    displacement = [(deformed - original).length for original, deformed in zip(basis_world, target_world)]
-    faces = [tuple(int(index) for index in polygon.vertices) for polygon in attached.data.polygons]
-    records = trauma_field.raised_gore_face_records(
-        [tuple(point) for point in target_world], faces, weights, displacement, overlay
-    )
-    if not records:
-        raise RuntimeError("The linked capture produced no raised gore faces at the current density and breakup settings.")
     topology = _topology_fingerprint(attached)
     capture_hash = str(capture.get("selectionHash", ""))
     sources = _region_gore_sources(region, attached, detached)
@@ -2852,6 +3499,29 @@ def _expected_raised_gore_inputs(region, attached, detached, key_name, entry):
         role: _deformation_input_digest(source, key_name)
         for source, role in sources
     }
+    cache_key = hashlib.sha256(
+        (
+            trauma_field.gore_overlay_digest(overlay) + "|" + topology + "|"
+            + deformation_digests.get("ATTACHED", deformation_digests.get("CORE", "")) + "|" + capture_hash
+        ).encode("utf-8")
+    ).hexdigest()
+
+    def evaluate_records():
+        weights, _distances = _stamp_weights(attached, region, stamp)
+        basis = _ensure_basis(attached)
+        target = _key(attached, key_name)
+        if target is None:
+            raise RuntimeError(f"The deformation key {key_name!r} is missing.")
+        basis_world = [attached.matrix_world @ point.co for point in basis.data]
+        target_world = [attached.matrix_world @ point.co for point in target.data]
+        displacement = [(deformed - original).length for original, deformed in zip(basis_world, target_world)]
+        return trauma_field.raised_gore_face_records(
+            [tuple(point) for point in target_world], mesh_snapshot.faces(attached), weights, displacement, overlay
+        )
+
+    records, _cache_hit = gore_service.face_records(cache_key, evaluate_records)
+    if not records:
+        raise RuntimeError("The linked capture produced no raised gore faces at the current density and breakup settings.")
     generation_digests = {
         role: trauma_field.raised_gore_geometry_digest(
             overlay,
@@ -2873,7 +3543,14 @@ def rebuild_raised_gore_for_key(region, attached, detached, key_name, entry):
         _expected_raised_gore_inputs(region, attached, detached, key_name, entry)
     )
     region_id = str(region.get("regionId", ""))
-    _remove_generated_gore_objects(region_id, key_name)
+    previous = list(generated_gore_objects(region_id, key_name))
+    previous_state = []
+    for index, obj in enumerate(previous):
+        mesh = obj.data if obj.type == 'MESH' else None
+        previous_state.append((obj, obj.name, mesh, mesh.name if mesh is not None else ""))
+        obj.name = f"__DSB_GORE_ROLLBACK_{index:03d}"
+        if mesh is not None:
+            mesh.name = f"__DSB_GORE_MESH_ROLLBACK_{index:03d}"
     built = []
     try:
         for source, role in _region_gore_sources(region, attached, detached):
@@ -2884,8 +3561,27 @@ def rebuild_raised_gore_for_key(region, attached, detached, key_name, entry):
             obj["dsb_gore_generation_digest"] = generation_digests[role]
             built.append(obj)
     except Exception:
-        _remove_generated_gore_objects(region_id, key_name)
+        expected_names = {
+            trauma_field.gore_generated_object_name(region_id, key_name, role)
+            for _source, role in _region_gore_sources(region, attached, detached)
+        }
+        for name in expected_names:
+            obj = bpy.data.objects.get(name)
+            if obj is None:
+                continue
+            mesh = obj.data if obj.type == 'MESH' else None
+            bpy.data.objects.remove(obj, do_unlink=True)
+            if mesh is not None and mesh.users == 0:
+                bpy.data.meshes.remove(mesh)
+        for obj, object_name, mesh, mesh_name in previous_state:
+            obj.name = object_name
+            if mesh is not None:
+                mesh.name = mesh_name
         raise
+    for obj, _object_name, mesh, _mesh_name in previous_state:
+        bpy.data.objects.remove(obj, do_unlink=True)
+        if mesh is not None and mesh.users == 0:
+            bpy.data.meshes.remove(mesh)
     entry["raisedGoreStatus"] = "READY"
     entry["goreGeneratedMeshIds"] = [str(obj["dsb_gore_mesh_id"]) for obj in built]
     entry["goreGeneratedNodeNames"] = [obj.name for obj in built]
@@ -3088,8 +3784,10 @@ def _raised_gore_mesh_errors(obj, source, key_name, overlay, expected_role):
         errors.append(f"Raised gore object {obj.name} is incorrectly marked preview-only.")
     if bool(obj.get("dsb_gore_default_visible", True)) or not obj.hide_render:
         errors.append(f"Raised gore object {obj.name} is visible by default; the export contract requires inactive gore.")
+    obj_world = _evaluated_world_matrix(obj)
+    source_world = _evaluated_world_matrix(source)
     transform_error = max(
-        abs(float(obj.matrix_world[row][column] - source.matrix_world[row][column]))
+        abs(float(obj_world[row][column] - source_world[row][column]))
         for row in range(4) for column in range(4)
     )
     if transform_error > 1e-8:
@@ -3158,7 +3856,7 @@ def _raised_gore_mesh_errors(obj, source, key_name, overlay, expected_role):
             if source_index < 0 or source_index >= len(deformed):
                 errors.append(f"Raised gore object {obj.name} references an invalid source vertex.")
                 break
-            distance = ((obj.matrix_world @ vertex.co) - (source.matrix_world @ deformed[source_index])).length
+            distance = ((obj_world @ vertex.co) - (source_world @ deformed[source_index])).length
             maximum_distance = max(maximum_distance, distance)
         allowed = float(overlay["goreSurfaceOffset"]) + float(overlay["goreClotThickness"]) * 4.0 + 0.002
         if maximum_distance > allowed:
@@ -3480,6 +4178,48 @@ def preview_active_stamp(context, quiet=False):
     return None
 
 
+def validate_active_deformation(context, *, include_gore=True):
+    settings, _registry, region, attached, detached, _payload, name, entry = _active_key_context(context)
+    errors = []
+    contract = validate_region_contract(region, attached, detached)
+    errors.extend(contract.get("errors", []))
+    key = _key(attached, name)
+    maximum = 0.0
+    if key is None:
+        errors.append(f"The active deformation key {name!r} is missing.")
+    else:
+        maximum = _max_displacement(attached, name)
+        allowed = float(entry.get("maximumDisplacement", settings.deformation_max_vertex_displacement))
+        if maximum > allowed + 1e-6:
+            errors.append(f"{name} exceeds its maximum world displacement ({maximum:.6f} m > {allowed:.6f} m).")
+    if detached is not None:
+        mismatch = _pair_delta_error(attached, detached, name)
+        if mismatch > SYNC_TOLERANCE:
+            errors.append(f"{name} attached/detached exact-index delta mismatch is {mismatch:.9f} m.")
+    overlay = entry.get("surfaceGoreOverlay")
+    if include_gore and isinstance(overlay, dict) and overlay.get("goreOverlayEnabled") and overlay.get("goreRaisedEnabled"):
+        expected_roles = {role for _source, role in _region_gore_sources(region, attached, detached)}
+        objects = generated_gore_objects(str(region.get("regionId", "")), name)
+        actual_roles = {str(obj.get("dsb_gore_pair_role", "")) for obj in objects}
+        if actual_roles != expected_roles:
+            errors.append(f"{name} final raised-gore roles are incomplete ({sorted(actual_roles)} != {sorted(expected_roles)}).")
+        try:
+            normalized_overlay = trauma_field.normalize_gore_overlay(overlay)
+            gore_errors, _gore_record = _raised_gore_errors(
+                region, attached, detached, name, entry, normalized_overlay
+            )
+            errors.extend(gore_errors)
+        except Exception as exc:
+            errors.append(f"{name} final raised-gore focused validation failed: {exc}")
+    return {
+        "status": "PASS" if not errors else "FAIL",
+        "errors": errors,
+        "regionId": str(region.get("regionId", "")),
+        "key": name,
+        "maximumDisplacement": maximum,
+    }
+
+
 def rebuild_active_deformation(context):
     settings, _registry, region, attached, detached, payload, name, entry = _active_key_context(context)
     stamps = trauma_field.reindex_stamps(entry.get("stamps", []))
@@ -3509,9 +4249,12 @@ def rebuild_active_deformation(context):
     _zero_managed_weights(attached)
     target.value = min(1.0, target.slider_max)
     _set_authoring_view(attached, detached, 'ATTACHED')
-    validation = validate_deformations(require_keys=True)
+    validation = validate_active_deformation(context)
     if validation["status"] != "PASS":
         raise RuntimeError("Rebuilt deformation failed validation: " + "; ".join(validation["errors"][:4]))
+    entry["validationStatus"] = validation["status"]
+    entry["focusedValidationErrors"] = list(validation.get("errors", []))
+    _store_metadata(attached, detached, payload)
     settings.last_deformation_validation = validation["status"]
     settings.deformation_status = f"REBUILT FROM BASIS — {name} / {len(stamps)} stamps"
     return {"key": name, "stampCount": len(stamps), "validation": validation}
@@ -3766,12 +4509,36 @@ def _compound_seam_mapping(first, second, seam_id, tolerance=COMPOUND_SEAM_TOLER
     protected = _object(state.get("protected_source_mesh", ""))
     if not seam or protected is None:
         raise RuntimeError(f"Linked seam contract {seam_id!r} is missing from Damage Authoring state.")
-    contour_world = [protected.matrix_world @ Vector(point) for point in seam.get("contour_points_object", [])]
+    protected_world = damage_authoring._evaluated_hidden_world_matrix(protected)
+    first_world = damage_authoring._evaluated_hidden_world_matrix(first)
+    second_world = damage_authoring._evaluated_hidden_world_matrix(second)
+    contour_points = seam.get("contour_points_object", [])
+    contour_digest = hashlib.sha256(
+        json.dumps(contour_points, sort_keys=True, separators=(",", ":")).encode("utf-8")
+    ).hexdigest()
+    cache_key = (
+        str(seam_id),
+        first.name,
+        _topology_fingerprint(first),
+        tuple(round(float(value), 12) for row in first_world for value in row),
+        second.name,
+        _topology_fingerprint(second),
+        tuple(round(float(value), 12) for row in second_world for value in row),
+        protected.name,
+        tuple(round(float(value), 12) for row in protected_world for value in row),
+        contour_digest,
+        round(float(tolerance), 9),
+    )
+    cached = compound_service.seam_mapping(cache_key)
+    if cached is not None:
+        return list(cached)
+    contour_world = [protected_world @ Vector(point) for point in contour_points]
     if len(contour_world) < 3:
         raise RuntimeError(f"Linked seam contract {seam_id!r} has an incomplete contour.")
 
     def closest_indices(obj):
-        world = [obj.matrix_world @ vertex.co for vertex in obj.data.vertices]
+        matrix = first_world if obj == first else second_world
+        world = [matrix @ vertex.co for vertex in obj.data.vertices]
         result = []
         for point in contour_world:
             index, distance = min(
@@ -3797,7 +4564,7 @@ def _compound_seam_mapping(first, second, seam_id, tolerance=COMPOUND_SEAM_TOLER
         mappings.append(pair)
     if len(mappings) < 3:
         raise RuntimeError(f"Linked seam {seam_id!r} produced fewer than three unique mapped boundary points.")
-    return mappings
+    return list(compound_service.store_seam_mapping(cache_key, mappings))
 
 
 def _feather_compound_seam_inward(deltas, obj, boundary_indices, rings=2):
@@ -4032,10 +4799,19 @@ def rebuild_compound_event(context):
 
 
 def preview_compound_event(context, weight=1.0):
-    if context.scene.get(COMPOUND_PREVIEW_PROPERTY, ""):
-        clear_compound_preview(context)
     registry, event = _active_compound_event(context)
-    previous = []
+    raw_previous = context.scene.get(COMPOUND_PREVIEW_PROPERTY, "")
+    try:
+        preview_state = json.loads(raw_previous) if raw_previous else {}
+    except (TypeError, json.JSONDecodeError):
+        preview_state = {}
+    if preview_state and str(preview_state.get("eventId", "")) != str(event.get("eventId", "")):
+        clear_compound_preview(context)
+        preview_state = {}
+    previous = list(preview_state.get("previous", []))
+    previous_regions = {str(record.get("regionId", "")) for record in previous}
+    event_digest = trauma_field.compound_event_digest(event)
+    recomputed = 0
     for participant in event.get("participants", []):
         region = _region_record(registry, str(participant.get("regionId", "")))
         if region is None:
@@ -4045,18 +4821,38 @@ def preview_compound_event(context, weight=1.0):
         key = _key(attached, key_name)
         if key is None:
             raise RuntimeError(f"Compound child key {key_name!r} is missing on {attached.name}.")
-        previous.append({
-            "regionId": str(region.get("regionId", "")),
-            "values": {name: float(_key(attached, name).value) for name in _managed_names(attached)},
-        })
+        region_id = str(region.get("regionId", ""))
+        if region_id not in previous_regions:
+            previous.append({
+                "regionId": region_id,
+                "values": {name: float(_key(attached, name).value) for name in _managed_names(attached)},
+            })
+            previous_regions.add(region_id)
+        preview_digest = compound_service.participant_digest(
+            region_fingerprint=str(region.get("topologyFingerprint", "")),
+            target_topology=_topology_fingerprint(attached),
+            child_key_state={"key": key_name, "weight": round(float(weight), 6)},
+            shared_field_digest=event_digest,
+            seam_mapping_digest=json.dumps(sorted(participant.get("seamIds", []))),
+            gore_recipe_digest=str(participant.get("goreRecipeDigest", "")),
+        )
+        if not compound_service.is_dirty(event.get("eventId", ""), region_id, preview_digest):
+            continue
         _zero_managed_weights(attached, include_preview=True)
         key.value = max(0.0, min(float(key.slider_max), float(weight)))
         _set_authoring_view(attached, detached, 'BOTH' if detached is not None else 'ATTACHED', context)
+        compound_service.mark_clean(event.get("eventId", ""), region_id, preview_digest, preview_service.state().get("generation", 0))
+        recomputed += 1
     context.scene[COMPOUND_PREVIEW_PROPERTY] = json.dumps({
         "eventId": event["eventId"], "previous": previous,
     }, sort_keys=True, separators=(",", ":"))
     context.scene.daf_settings.deformation_status = f"COMPOUND PREVIEW {float(weight):.2f} — {event['eventId']}"
-    return {"eventId": event["eventId"], "participantCount": len(previous), "weight": float(weight)}
+    return {
+        "eventId": event["eventId"],
+        "participantCount": len(previous),
+        "recomputedParticipantCount": recomputed,
+        "weight": float(weight),
+    }
 
 
 def clear_compound_preview(context):
@@ -4081,6 +4877,7 @@ def clear_compound_preview(context):
         restored += 1
     if COMPOUND_PREVIEW_PROPERTY in context.scene:
         del context.scene[COMPOUND_PREVIEW_PROPERTY]
+    compound_service.clear_cache("compound preview cleared")
     context.scene.daf_settings.deformation_status = "COMPOUND PREVIEW CLEARED"
     return restored
 
@@ -6236,7 +7033,7 @@ class DAF_OT_validate_deformations(Operator):
             return {'CANCELLED'}
 
 
-def draw_panel(box, context, settings):
+def _legacy_draw_panel_source(box, context, settings):
     regions = box.box()
     regions.label(text="1. Core Single-Mesh / Paired Segment Regions", icon='MESH_DATA')
     regions.prop(settings, "deformation_region")
@@ -6543,6 +7340,271 @@ def draw_panel(box, context, settings):
         icon='LINKED',
     )
     validation_box.label(text="Source mesh and rig remain protected", icon='LOCKED')
+
+
+def draw_panel(box, context, settings):
+    """Draw every expert workflow from deliberately cached, mesh-free state."""
+
+    summary = cached_ui_summary(settings)
+    registry = summary.get("registry", {})
+    metadata = summary.get("metadata", {})
+    region = summary.get("region", {})
+    active_key = summary.get("key", {})
+
+    regions = box.box()
+    regions.label(text="Manual Region Registration", icon='MESH_DATA')
+    regions.prop(settings, "deformation_region")
+    row = regions.row(align=True)
+    row.operator("daf.select_deformation_region", text="Use Selected Region")
+    row.operator("daf.validate_deformation_region", text="Validate Region")
+    regions.prop(settings, "deformation_region_id")
+    regions.prop(settings, "deformation_related_seam_id")
+    row = regions.row(align=True)
+    row.operator("daf.register_deformation_region", text="Register Selected Pair")
+    row.operator("daf.register_core_deformation_region", text="Register Selected Core Mesh")
+    regions.operator("daf.remove_deformation_region", text="Remove Registration")
+    if region:
+        regions.label(text=f"{region.get('regionId')}: {region.get('regionMode')} / {region.get('validationStatus')}")
+        regions.label(text=f"Cached inventory: {int(region.get('vertexCount', 0)):,} vertices / {int(region.get('polygonCount', 0)):,} polygons")
+
+    keys = box.box()
+    keys.label(text="Managed Deformations and Legacy Presets", icon='SHAPEKEY_DATA')
+    keys.prop(settings, "deformation_key_name")
+    row = keys.row(align=True)
+    row.operator("daf.create_damage_shape_key", text="Create Damage Shape Key")
+    row.operator("daf.create_standard_head_deformations", text="Create Standard Head Set")
+    keys.operator("daf.create_blunt_gore_head_deformations", text="Create Blunt Gore Head Set")
+    row = keys.row(align=True)
+    row.operator("daf.create_body_impact_starters", text="Create Body Impact Starters")
+    row.operator("daf.create_forearm_impact_starter", text="Create Forearm Impact Starter")
+    for record in metadata.get("keys", []):
+        select = keys.operator(
+            "daf.select_deformation_key",
+            text=record.get("name", "<unnamed>"),
+            depress=record.get("name") == settings.deformation_active_key,
+        )
+        select.key_name = record.get("name", "")
+    row = keys.row(align=True)
+    row.operator("daf.zero_deformations", text="Zero All")
+    row.operator("daf.delete_managed_deformation", text="Delete Active")
+    row.operator("daf.create_mirrored_deformation", text="Mirror Active")
+
+    capture = box.box()
+    capture.label(text="Exact Placement and Capture", icon='FACESEL')
+    capture.prop(settings, "deformation_capture_mode")
+    capture.prop(settings, "deformation_influence_mode")
+    capture.prop(settings, "deformation_distance_mode")
+    capture.prop(settings, "deformation_feather_distance")
+    row = capture.row(align=True)
+    row.operator("daf.capture_deformation_selected_face", text="Capture Single Face")
+    row.operator("daf.capture_deformation_selected_patch", text="Capture Connected Face Patch")
+    row = capture.row(align=True)
+    row.operator("daf.capture_deformation_selected_vertices", text="Capture Selected Vertices")
+    row.operator("daf.capture_deformation_cursor", text="Capture 3D Cursor")
+
+    stamps = box.box()
+    stamps.label(text="Stamp Stack Ordering and Portable Libraries", icon='MOD_DISPLACE')
+    for stamp in active_key.get("stamps", []):
+        select = stamps.operator(
+            "daf.select_trauma_stamp",
+            text=f"{int(stamp.get('orderIndex', 0)) + 1}. {stamp.get('displayName', '<stamp>')}",
+            depress=stamp.get("stampId") == settings.deformation_active_stamp_id,
+        )
+        select.stamp_id = stamp.get("stampId", "")
+    row = stamps.row(align=True)
+    row.operator("daf.add_trauma_stamp", text="Add Stamp")
+    row.operator("daf.duplicate_trauma_stamp", text="Duplicate")
+    row.operator("daf.remove_trauma_stamp", text="Remove")
+    row = stamps.row(align=True)
+    row.operator("daf.move_trauma_stamp_up", text="Move Up")
+    row.operator("daf.move_trauma_stamp_down", text="Move Down")
+    row.operator("daf.toggle_trauma_stamp", text="Enable / Disable")
+    row = stamps.row(align=True)
+    row.operator("daf.save_trauma_stamp_library", text="Save Stamp Library...")
+    row.operator("daf.load_trauma_stamp_library", text="Load Stamp Library...")
+    for prop in (
+        "deformation_stamp_name", "deformation_stamp_family", "deformation_seed_radius",
+        "deformation_seed_depth", "deformation_seed_falloff", "deformation_stamp_strength",
+        "deformation_seed_direction_mode", "deformation_seed_custom_direction",
+        "deformation_seed_seam_protection", "deformation_max_vertex_displacement",
+        "deformation_maximum_influence",
+    ):
+        stamps.prop(settings, prop)
+    stamps.operator("daf.update_trauma_stamp", text="Update Active Stamp")
+
+    gore = box.box()
+    gore.label(text="Detailed Raised Gore", icon='MATERIAL')
+    for prop in (
+        "deformation_gore_enabled", "deformation_default_heavy_gore", "deformation_gore_preset",
+        "deformation_gore_coverage", "deformation_gore_scatter", "deformation_gore_edge_feather",
+        "deformation_gore_raised_enabled", "deformation_gore_clot_coverage", "deformation_gore_core_density",
+        "deformation_gore_clot_thickness", "deformation_gore_thickness_variation",
+        "deformation_gore_island_breakup", "deformation_gore_peripheral_fragments",
+        "deformation_gore_surface_offset", "deformation_gore_geometry_density",
+        "deformation_gore_maximum_triangles", "deformation_gore_wetness",
+        "deformation_gore_wetness_variation", "deformation_gore_dark_clot_bias",
+        "deformation_gore_rough_edge_bias", "deformation_gore_color_intensity",
+        "deformation_gore_darkness", "deformation_gore_color_bias", "deformation_gore_mask_seed",
+        "deformation_gore_user_customized",
+    ):
+        gore.prop(settings, prop)
+    row = gore.row(align=True)
+    row.operator("daf.apply_surface_gore_preset", text="Use Preset Defaults")
+    row.operator("daf.update_surface_gore_overlay", text="Apply Gore Overlay Settings")
+    gore.operator("daf.preview_surface_gore_overlay", text="Preview / Rebuild Current Gore")
+    gore.operator("daf.apply_heavy_gore_all_deformations", text="Apply Heavy Gore to All Deformations")
+    row = gore.row(align=True)
+    row.operator("daf.clear_current_generated_gore", text="Clear Current Generated Gore")
+    row.operator("daf.clear_surface_gore_overlay_preview", text="Clear Stain Preview")
+    gore.operator("daf.rebuild_all_generated_gore", text="Rebuild All Generated Gore")
+    gore.operator("daf.validate_gore_geometry", text="Validate Gore Geometry")
+
+    compound = box.box()
+    compound.label(text="Compound Participants and Cross-Seam Settings", icon='LINKED')
+    compound.prop(settings, "compound_event_id")
+    compound.prop(settings, "compound_display_name")
+    row = compound.row(align=True)
+    row.operator("daf.new_compound_trauma_event", text="New Compound Trauma Event")
+    row.operator("daf.add_active_region_to_compound_event", text="Add Active Region to Event")
+    compound.operator("daf.remove_active_region_from_compound_event", text="Remove Region from Event")
+    for event in registry.get("compoundEvents", []):
+        select = compound.operator("daf.select_compound_trauma_event", text=event.get("displayName", event.get("eventId", "")))
+        select.event_id = event.get("eventId", "")
+    for prop in (
+        "compound_trauma_family", "compound_semantic_direction", "compound_severity",
+        "compound_impact_origin", "compound_impact_direction", "compound_impact_radius",
+        "compound_impact_depth", "compound_impact_falloff", "compound_impact_strength",
+        "compound_displacement_limit", "compound_event_seed", "compound_linked_seam_ids",
+        "compound_continuity_mode", "compound_activation_weight",
+    ):
+        compound.prop(settings, prop)
+    compound.operator("daf.capture_compound_impact_field", text="Capture Shared Impact Field")
+    compound.operator("daf.rebuild_compound_trauma_event", text="Rebuild Compound Event")
+    row = compound.row(align=True)
+    zero = row.operator("daf.preview_compound_trauma_event", text="Event Zero")
+    zero.weight = 0.0
+    full = row.operator("daf.preview_compound_trauma_event", text="Preview Compound Event")
+    full.weight = 1.0
+    row.operator("daf.clear_compound_trauma_preview", text="Restore Previous")
+    compound.operator("daf.validate_compound_trauma_event", text="Validate Compound Event")
+
+    preview = box.box()
+    preview.label(text="Views, Preview, Sculpt, Sync, and Validation", icon='HIDE_OFF')
+    row = preview.row(align=True)
+    row.operator("daf.show_deformation_attached", text="Attached")
+    row.operator("daf.show_deformation_detached", text="Detached")
+    row.operator("daf.show_deformation_overlay", text="Both")
+    row = preview.row(align=True)
+    row.operator("daf.preview_active_trauma_stamp", text="Preview Active Stamp")
+    row.operator("daf.clear_deformation_seed", text="Clear Temporary Preview")
+    preview.operator("daf.rebuild_active_deformation", text="REBUILD ACTIVE DEFORMATION")
+    preview.operator("daf.build_active_deformation_preset", text="BUILD ACTIVE PRESET")
+    row = preview.row(align=True)
+    row.operator("daf.preview_deformation_seed", text="Preview Legacy Seed")
+    row.operator("daf.commit_deformation_seed", text="Commit Legacy Seed")
+    row = preview.row(align=True)
+    row.operator("daf.begin_deformation_sculpt", text="Begin Sculpt")
+    row.operator("daf.finish_deformation_sculpt", text="Finish Sculpt & Sync")
+    preview.operator("daf.repair_legacy_pair_sync", text="REPAIR LEGACY PAIR SYNC")
+    preview.operator("daf.validate_deformations", text="Validate Morph Targets")
+
+
+def service_cache_counts():
+    return {
+        "geodesicDistances": len(_GEODESIC_CACHE),
+        "geodesicContexts": len(_GEODESIC_CACHE_CONTEXT),
+        "weightedAdjacency": len(_ADJACENCY_CACHE),
+        "seamFactors": len(_SEAM_FACTOR_CACHE),
+        "meshSnapshots": mesh_snapshot.cache_count(),
+        "goreFaceRecords": gore_service.cache_count(),
+        "validationSummaries": validation_service.cache_count(),
+        "serializedPayloads": serialization.cache_count(),
+    }
+
+
+def _clear_service_caches(reason="explicit"):
+    _GEODESIC_CACHE.clear()
+    _GEODESIC_CACHE_CONTEXT.clear()
+    _ADJACENCY_CACHE.clear()
+    _SEAM_FACTOR_CACHE.clear()
+    mesh_snapshot.clear_cache(reason)
+    gore_service.clear_cache(reason)
+    validation_service.clear_cache(reason)
+    serialization.clear_cache()
+
+
+def startup_self_check(context=None):
+    context = context or bpy.context
+    findings = []
+    stale_preview_resources = 0
+    for obj in bpy.data.objects:
+        if obj.type != 'MESH':
+            continue
+        if _key(obj, PREVIEW_KEY_NAME) is not None:
+            stale_preview_resources += 1
+        if obj.data.color_attributes.get(GORE_PREVIEW_ATTRIBUTE) is not None:
+            stale_preview_resources += 1
+    if stale_preview_resources:
+        findings.append(f"cleared {stale_preview_resources} stale preview resources")
+        try:
+            _clear_managed_preview(context)
+        except Exception as exc:
+            findings.append("preview cleanup failed: " + str(exc))
+    try:
+        registry = _load_registry()
+        _cache_registry_summary(registry)
+        active = _region_record(registry, registry.get("activeRegionId", ""))
+        if active is not None:
+            attached, detached = _resolve_region_pair(active)
+            payload = _metadata(attached)
+            _cache_metadata_summary(attached, detached, payload, active.get("regionId", ""))
+    except Exception as exc:
+        findings.append("state cache unavailable: " + str(exc))
+    state = preview_service.state()
+    duplicate_handlers = max(0, sum(
+        1 for handler in bpy.app.handlers.load_post
+        if getattr(handler, "__name__", "") == "_load_post"
+        and getattr(handler, "__module__", "").endswith("deformation.preview_service")
+    ) - 1)
+    if duplicate_handlers:
+        findings.append(f"detected {duplicate_handlers} duplicate Forge load handlers")
+    result = {
+        "status": "PASS" if not findings else "REPAIRED",
+        "findings": findings,
+        "timerRegistered": state["timerRegistered"],
+        "cacheCounts": service_cache_counts(),
+    }
+    diagnostics.refresh_summary(_version_string(), DEFORMATION_BUILD_ID)
+    return result
+
+
+def initialize_runtime_services():
+    preview_service.configure(
+        executor=_execute_managed_preview,
+        clearer=_clear_managed_preview,
+        cache_clearer=_clear_service_caches,
+    )
+    diagnostics.configure(cache_provider=service_cache_counts, preview_provider=preview_service.state)
+    preview_service.install_handlers()
+    # Blender's extension installer enables packages while bpy.data is a
+    # restricted proxy. Defer the datablock scan until normal startup/runtime.
+    if not hasattr(bpy.data, "objects"):
+        return {
+            "status": "DEFERRED",
+            "findings": ["startup self-check deferred until Blender runtime"],
+            "timerRegistered": False,
+            "cacheCounts": service_cache_counts(),
+        }
+    return startup_self_check()
+
+
+def shutdown_runtime_services():
+    try:
+        preview_service.clear(bpy.context)
+    except Exception:
+        pass
+    preview_service.shutdown()
+    _clear_service_caches("unregister")
 
 
 CLASSES = (

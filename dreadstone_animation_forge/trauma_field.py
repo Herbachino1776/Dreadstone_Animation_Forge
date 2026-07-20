@@ -1570,7 +1570,7 @@ def raised_gore_face_records(
 
     for face_index, raw_face in enumerate(faces):
         face = tuple(int(index) for index in raw_face)
-        if len(face) < 3 or len(set(face)) < 3:
+        if len(face) < 3 or len(set(face)) != len(face):
             continue
         influence = sum(min(1.0, max(0.0, float(influence_weights[index]))) for index in face) / len(face)
         if influence <= 1e-8:
@@ -1641,13 +1641,40 @@ def raised_gore_face_records(
 
     candidates.sort(key=lambda record: (-float(record["priority"]), int(record["faceIndex"])))
     selected: list[dict[str, object]] = []
+    selected_edge_uses: dict[tuple[int, int], int] = {}
+    boundary_degree: dict[int, int] = {}
     triangles = 0
     for record in candidates:
         count = int(record["estimatedTriangleCount"])
         if triangles + count > maximum_triangles:
             continue
+        vertices = [int(value) for value in record["vertices"]]
+        edges = [
+            tuple(sorted((first, vertices[(index + 1) % len(vertices)])))
+            for index, first in enumerate(vertices)
+        ]
+        # A closed extruded shell cannot be manifold when more than two source
+        # faces share an edge. Keep the highest-priority deterministic subset
+        # instead of constructing invalid final gore on imported non-manifold
+        # surfaces.
+        if any(selected_edge_uses.get(edge, 0) >= 2 for edge in edges):
+            continue
+        degree_changes: dict[int, int] = {}
+        for edge in edges:
+            change = 1 if selected_edge_uses.get(edge, 0) == 0 else -1
+            for vertex in edge:
+                degree_changes[vertex] = degree_changes.get(vertex, 0) + change
+        if any(
+            boundary_degree.get(vertex, 0) + change > 2
+            for vertex, change in degree_changes.items()
+        ):
+            continue
         selected.append(record)
         triangles += count
+        for edge in edges:
+            selected_edge_uses[edge] = selected_edge_uses.get(edge, 0) + 1
+        for vertex, change in degree_changes.items():
+            boundary_degree[vertex] = boundary_degree.get(vertex, 0) + change
     selected.sort(key=lambda record: int(record["faceIndex"]))
     return selected
 

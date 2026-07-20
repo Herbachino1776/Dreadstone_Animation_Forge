@@ -1,7 +1,7 @@
 bl_info = {
     "name": "Dreadstone Animation Forge",
     "author": "Dreadstone Black",
-    "version": (3, 14, 1),
+    "version": (3, 15, 0),
     "blender": (3, 6, 0),
     "location": "3D Viewport > Sidebar > Dreadstone",
     "description": "Animation authoring, protected damage assets, and registered-region trauma-field shape-key authoring.",
@@ -718,13 +718,13 @@ def set_bezier(action, cycles=False):
 def _deformation_preview_property_updated(self, context):
     module = sys.modules.get(f"{__package__}.deformation_authoring")
     if module is not None:
-        module.refresh_live_seed_preview(context)
+        module.request_managed_preview(context, "deformation control changed")
 
 
 def _deformation_metadata_property_updated(self, context):
     module = sys.modules.get(f"{__package__}.deformation_authoring")
     if module is not None:
-        module.update_active_key_metadata(context)
+        module.request_managed_preview(context, "deformation metadata changed")
 
 
 def _deformation_region_items(self, context):
@@ -741,12 +741,24 @@ def _deformation_region_updated(self, context):
     module = sys.modules.get(f"{__package__}.deformation_authoring")
     if module is not None and self.deformation_region not in {"", "NONE"}:
         try:
-            module._set_active_region(self.deformation_region, context)
+            module.request_region_switch(self.deformation_region, context)
         except Exception:
             pass
 
 class DAFSettings(PropertyGroup):
     # Compact interface state. These values are stored in the Blender scene.
+    ui_workspace: EnumProperty(
+        name="Workspace",
+        items=[
+            ('START', "Start / Character", "Prepare a protected character for damage authoring"),
+            ('DAMAGE', "Damage Authoring", "Create, tune, preview, and commit impacts"),
+            ('ANIMATION', "Animation", "Draft, preview, approve, and package Actions"),
+            ('EXPORT', "Validate & Export", "Run focused/full validation and export"),
+            ('ADVANCED', "Advanced", "All manual and legacy Forge controls"),
+        ],
+        default='START',
+    )
+    ui_advanced_legacy_open: BoolProperty(default=False)
     ui_character_open: BoolProperty(default=True)
     ui_ground_open: BoolProperty(default=False)
     ui_rig_open: BoolProperty(default=False)
@@ -1237,7 +1249,7 @@ class DAFSettings(PropertyGroup):
     last_damage_manifest_path: StringProperty(default="", options={'HIDDEN'})
     last_damage_validation_path: StringProperty(default="", options={'HIDDEN'})
 
-    # Trauma Field Authoring v3.14.1.
+    # Trauma Field Authoring v3.15.0.
     deformation_region: EnumProperty(
         name="Active Region",
         items=_deformation_region_items,
@@ -1310,6 +1322,64 @@ class DAFSettings(PropertyGroup):
         description="Refresh the temporary seed morph while sliders change",
         default=True,
     )
+    deformation_live_preview: BoolProperty(
+        name="Live Preview",
+        description="Debounce authoring changes through one managed main-thread preview session",
+        default=True,
+    )
+    deformation_preview_quality: EnumProperty(
+        name="Preview Quality",
+        items=[
+            ('OFF', "Off", "Disable managed live preview"),
+            ('FAST', "Fast", "Affected deformation vertices; no final raised-gore shells"),
+            ('BALANCED', "Balanced", "Complete non-destructive deformation with lightweight gore feedback"),
+            ('FINAL', "Final", "Use explicit Final Preview or Commit for deterministic final output"),
+        ],
+        default='FAST',
+    )
+    deformation_preview_status: StringProperty(default="CLEAN", options={'HIDDEN'})
+    deformation_preview_message: StringProperty(default="", options={'HIDDEN'})
+    deformation_preview_generation: IntProperty(default=0, min=0, options={'HIDDEN'})
+    deformation_preview_elapsed_ms: FloatProperty(default=0.0, min=0.0, options={'HIDDEN'})
+    deformation_preview_affected_vertices: IntProperty(default=0, min=0, options={'HIDDEN'})
+    deformation_preview_estimated_gore_triangles: IntProperty(default=0, min=0, options={'HIDDEN'})
+    deformation_preview_final_gore_triangles: IntProperty(default=0, min=0, options={'HIDDEN'})
+    deformation_impact_semantic_name: StringProperty(
+        name="Impact Name",
+        description="Optional semantic name; Forge creates a safe unique name when blank",
+        default="",
+    )
+    deformation_impact_preset: EnumProperty(
+        name="Impact Preset",
+        items=[
+            ('HEAD_LEFT', "Head Left", "Configure left-head defaults without choosing polygons"),
+            ('HEAD_RIGHT', "Head Right", "Configure right-head defaults without choosing polygons"),
+            ('HEAD_FRONT', "Head Front", "Configure front-head defaults without choosing polygons"),
+            ('HEAD_BACK', "Head Back", "Configure rear-head defaults without choosing polygons"),
+            ('BODY_FRONT', "Body Front", "Configure front-body defaults without choosing polygons"),
+            ('BODY_LEFT', "Body Left", "Configure left-body defaults without choosing polygons"),
+            ('BODY_RIGHT', "Body Right", "Configure right-body defaults without choosing polygons"),
+            ('BODY_BACK', "Body Back", "Configure rear-body defaults without choosing polygons"),
+            ('FOREARM_OUTER', "Forearm Outer", "Configure outer-forearm defaults without choosing polygons"),
+            ('CUSTOM', "Custom Impact", "Use the active region and current controls"),
+        ],
+        default='CUSTOM',
+    )
+    deformation_impact_intensity: EnumProperty(
+        name="Intensity",
+        items=[
+            ('LIGHT', "Light", "Restrained depth and gore"),
+            ('MEDIUM', "Medium", "General-purpose impact"),
+            ('HEAVY', "Heavy", "High-intensity displacement and raised gore"),
+        ],
+        default='MEDIUM',
+    )
+    diagnostics_output_directory: StringProperty(
+        name="Diagnostics Folder",
+        description="Folder for privacy-safe Forge JSON and Markdown support reports",
+        default="//forge_diagnostics/",
+        subtype='DIR_PATH',
+    )
     deformation_seed_radius: FloatProperty(
         name="Seed Radius", default=0.075, min=0.005, max=0.30, unit='LENGTH',
         update=_deformation_preview_property_updated,
@@ -1358,6 +1428,7 @@ class DAFSettings(PropertyGroup):
         name="Enable Surface Gore Overlay",
         description="Author a procedural blunt-trauma coating on the linked captured outer surface",
         default=False,
+        update=_deformation_preview_property_updated,
     )
     deformation_default_heavy_gore: BoolProperty(
         name="Default New Impacts to High-Intensity Gore",
@@ -1376,8 +1447,8 @@ class DAFSettings(PropertyGroup):
         ],
         default='Gore_Crush_Heavy_Clotted',
     )
-    deformation_gore_coverage: FloatProperty(name="Coverage", default=0.72, min=0.0, max=1.0, precision=2)
-    deformation_gore_scatter: FloatProperty(name="Scatter / Breakup", default=0.48, min=0.0, max=1.0, precision=2)
+    deformation_gore_coverage: FloatProperty(name="Coverage", default=0.72, min=0.0, max=1.0, precision=2, update=_deformation_preview_property_updated)
+    deformation_gore_scatter: FloatProperty(name="Scatter / Breakup", default=0.48, min=0.0, max=1.0, precision=2, update=_deformation_preview_property_updated)
     deformation_gore_edge_feather: FloatProperty(name="Edge Feather", default=0.70, min=0.0, max=1.0, precision=2)
     deformation_gore_wetness: FloatProperty(name="Wetness / Gloss", default=0.92, min=0.0, max=1.0, precision=2)
     deformation_gore_darkness: FloatProperty(name="Darkness", default=0.38, min=0.0, max=1.0, precision=2)
@@ -1394,14 +1465,16 @@ class DAFSettings(PropertyGroup):
         name="Enable Raised Gore",
         description="Generate ordinary exportable gore shell meshes above the intact deformed surface",
         default=True,
+        update=_deformation_preview_property_updated,
     )
     deformation_gore_clot_coverage: FloatProperty(name="Clot Coverage", default=0.82, min=0.0, max=1.0, precision=2)
     deformation_gore_core_density: FloatProperty(name="Core Density", default=0.94, min=0.0, max=1.0, precision=2)
     deformation_gore_clot_thickness: FloatProperty(
-        name="Clot Thickness", default=0.0048, min=0.0001, max=0.05, precision=4, unit='LENGTH'
+        name="Clot Thickness", default=0.0048, min=0.0001, max=0.05, precision=4, unit='LENGTH',
+        update=_deformation_preview_property_updated,
     )
     deformation_gore_thickness_variation: FloatProperty(name="Thickness Variation", default=0.88, min=0.0, max=1.0, precision=2)
-    deformation_gore_island_breakup: FloatProperty(name="Island Breakup", default=0.86, min=0.0, max=1.0, precision=2)
+    deformation_gore_island_breakup: FloatProperty(name="Island Breakup", default=0.86, min=0.0, max=1.0, precision=2, update=_deformation_preview_property_updated)
     deformation_gore_peripheral_fragments: FloatProperty(name="Peripheral Fragments", default=0.58, min=0.0, max=1.0, precision=2)
     deformation_gore_surface_offset: FloatProperty(
         name="Surface Offset", default=0.00065, min=0.00015, max=0.012, precision=5, unit='LENGTH'
@@ -3380,13 +3453,13 @@ def exporter_enum_supports(property_name, value):
         return False
 
 
-def select_pack_character(context, wrapper):
+def select_pack_character(context, wrapper, *, include_hidden=False):
     bpy.ops.object.select_all(action='DESELECT')
     selected = []
     for obj in {wrapper} | descendants(wrapper):
         if obj.name == PREVIEW_FLOOR_NAME or obj.type not in {'EMPTY', 'ARMATURE', 'MESH'}:
             continue
-        if obj.hide_get():
+        if obj.hide_get() and not include_hidden:
             continue
         obj.select_set(True)
         selected.append(obj)
@@ -3394,6 +3467,24 @@ def select_pack_character(context, wrapper):
         raise RuntimeError('No character objects were selected for export.')
     context.view_layer.objects.active = wrapper
     return selected
+
+
+def resolve_pack_source(context):
+    """Prefer the preserved original rig/hierarchy in a damage authoring file."""
+
+    try:
+        from . import damage_authoring
+        state = damage_authoring._load_state()
+        armature = bpy.data.objects.get(state.get("source_armature_name", ""))
+        if armature is not None and armature.type == 'ARMATURE':
+            current = armature
+            while current is not None:
+                if current.get("dsb_safe_size_wrapper", False):
+                    return armature, current
+                current = current.parent
+    except Exception:
+        pass
+    return find_armature(context), find_safe_wrapper(context)
 
 
 def build_temporary_export_tracks(armature, actions):
@@ -3450,15 +3541,66 @@ def restore_export_tracks(armature, previous_action, previous_states, temporary)
         pass
 
 
+def configure_gltf_action_filter(actions):
+    """Install a scoped exporter action allow-list and return a cleanup callback."""
+
+    try:
+        from io_scene_gltf2 import GLTF2_filter_action
+    except Exception:
+        return None
+    scene = bpy.data.scenes[0]
+    existed = hasattr(scene, "gltf_action_filter")
+    previous = []
+    previous_active = 0
+    if existed:
+        previous = [(item.action, bool(item.keep)) for item in scene.gltf_action_filter]
+        previous_active = int(getattr(scene, "gltf_action_filter_active", 0))
+        scene.gltf_action_filter.clear()
+    else:
+        bpy.types.Scene.gltf_action_filter = bpy.props.CollectionProperty(type=GLTF2_filter_action)
+        bpy.types.Scene.gltf_action_filter_active = bpy.props.IntProperty()
+    allowed = set(actions)
+    for action in bpy.data.actions:
+        item = scene.gltf_action_filter.add()
+        item.action = action
+        item.keep = action in allowed
+
+    def cleanup():
+        try:
+            scene.gltf_action_filter.clear()
+            if existed:
+                for action, keep in previous:
+                    if action is None or action.name not in bpy.data.actions:
+                        continue
+                    item = scene.gltf_action_filter.add()
+                    item.action = action
+                    item.keep = keep
+                scene.gltf_action_filter_active = previous_active
+            else:
+                del bpy.types.Scene.gltf_action_filter
+                del bpy.types.Scene.gltf_action_filter_active
+        except Exception:
+            pass
+
+    return cleanup
+
+
 def export_approved_glb(context, filepath, actions, force_sampling):
-    armature = find_armature(context)
-    wrapper = find_safe_wrapper(context)
+    armature, wrapper = resolve_pack_source(context)
     selected_before = list(context.selected_objects)
     active_before = context.view_layer.objects.active
     frame_before = context.scene.frame_current
     start_before = context.scene.frame_start
     end_before = context.scene.frame_end
     floor = bpy.data.objects.get(PREVIEW_FLOOR_NAME)
+    export_objects = {
+        obj for obj in ({wrapper} | descendants(wrapper))
+        if obj.name != PREVIEW_FLOOR_NAME and obj.type in {'EMPTY', 'ARMATURE', 'MESH'}
+    }
+    visibility_before = {
+        obj: (bool(obj.hide_viewport), bool(obj.hide_render), bool(obj.hide_get()))
+        for obj in export_objects
+    }
     floor_state = None
     if floor is not None:
         floor_state = (bool(floor.hide_viewport), bool(floor.hide_render), bool(floor.hide_get()))
@@ -3467,9 +3609,16 @@ def export_approved_glb(context, filepath, actions, force_sampling):
         floor.hide_set(True)
         floor.select_set(False)
     previous_action, previous_states, temporary = None, [], []
+    action_filter_cleanup = None
     try:
-        select_pack_character(context, wrapper)
+        for obj in export_objects:
+            obj.hide_viewport = False
+            obj.hide_render = False
+            obj.hide_set(False)
+        context.view_layer.update()
+        select_pack_character(context, wrapper, include_hidden=True)
         previous_action, previous_states, temporary = build_temporary_export_tracks(armature, actions)
+        action_filter_cleanup = configure_gltf_action_filter(actions)
         context.scene.frame_start = int(math.floor(min(action_frame_bounds(a)[0] for a in actions)))
         context.scene.frame_end = int(math.ceil(max(action_frame_bounds(a)[1] for a in actions)))
         supported = exporter_property_names()
@@ -3484,7 +3633,15 @@ def export_approved_glb(context, filepath, actions, force_sampling):
         for key, value in optional.items():
             if key in supported:
                 kwargs[key] = value
-        if 'export_animation_mode' in supported and exporter_enum_supports('export_animation_mode', 'NLA_TRACKS'):
+        if (
+            action_filter_cleanup is not None
+            and 'export_animation_mode' in supported
+            and exporter_enum_supports('export_animation_mode', 'ACTIONS')
+        ):
+            kwargs['export_animation_mode'] = 'ACTIONS'
+            if 'export_action_filter' in supported:
+                kwargs['export_action_filter'] = True
+        elif 'export_animation_mode' in supported and exporter_enum_supports('export_animation_mode', 'NLA_TRACKS'):
             kwargs['export_animation_mode'] = 'NLA_TRACKS'
         elif 'export_nla_strips' in supported:
             kwargs['export_nla_strips'] = True
@@ -3494,7 +3651,15 @@ def export_approved_glb(context, filepath, actions, force_sampling):
         if 'FINISHED' not in result:
             raise RuntimeError('The glTF exporter did not finish successfully.')
     finally:
+        if action_filter_cleanup is not None:
+            action_filter_cleanup()
         restore_export_tracks(armature, previous_action, previous_states, temporary)
+        for obj, (hide_viewport, hide_render, hidden) in visibility_before.items():
+            if obj.name not in bpy.data.objects:
+                continue
+            obj.hide_viewport = hide_viewport
+            obj.hide_render = hide_render
+            obj.hide_set(hidden)
         if floor is not None and floor_state is not None:
             floor.hide_viewport, floor.hide_render = floor_state[0], floor_state[1]
             floor.hide_set(floor_state[2])
@@ -3651,7 +3816,7 @@ def configure_property_box(box):
     box.use_property_decorate = False
 
 
-class DAF_PT_panel(Panel):
+class DAF_PT_legacy_panel(Panel):
     bl_label = "Dreadstone Animation Forge"
     bl_idname = "DAF_PT_panel"
     bl_space_type = 'VIEW_3D'
@@ -3924,7 +4089,7 @@ class DAF_PT_panel(Panel):
             layout,
             s,
             "ui_deformation_authoring_open",
-            "Trauma Field Authoring v3.14.1",
+            "Trauma Field Authoring v3.15.0",
         )
         if opened:
             configure_property_box(box)
@@ -4239,6 +4404,26 @@ importlib.invalidate_caches()
 deformation_authoring = importlib.import_module(".deformation_authoring", __package__)
 DEFORMATION_AUTHORING_CLASSES = deformation_authoring.CLASSES
 
+_TASK_UI_MODULE_NAME = f"{__package__}.ui"
+task_ui = importlib.import_module(".ui", __package__)
+TASK_UI_CLASSES = task_ui.CLASSES
+
+
+class DAF_PT_panel(Panel):
+    bl_label = "Dreadstone Animation Forge"
+    bl_idname = "DAF_PT_panel"
+    bl_space_type = 'VIEW_3D'
+    bl_region_type = 'UI'
+    bl_category = "Dreadstone"
+
+    def draw(self, context):
+        task_ui.panels.draw_main_panel(
+            self.layout,
+            context,
+            context.scene.daf_settings,
+            deformation_authoring.draw_panel,
+        )
+
 CLASSES = (
     DAFSettings,
     DAF_OT_create_preview_floor,
@@ -4262,17 +4447,77 @@ CLASSES = (
     *DAMAGE_READINESS_CLASSES,
     *DAMAGE_AUTHORING_CLASSES,
     *DEFORMATION_AUTHORING_CLASSES,
+    *TASK_UI_CLASSES,
     DAF_PT_panel,
 )
 
+_REGISTERED_CLASS_NAMES = []
+
+
+def _registered_class_named(cls):
+    if bool(getattr(cls, "is_registered", False)):
+        return cls
+    existing = getattr(bpy.types, cls.__name__, None)
+    if existing is not None and bool(getattr(existing, "is_registered", True)):
+        return existing
+    for base in cls.__mro__[1:]:
+        try:
+            candidates = base.__subclasses__()
+        except (AttributeError, TypeError):
+            continue
+        for candidate in candidates:
+            if candidate.__name__ == cls.__name__ and bool(getattr(candidate, "is_registered", False)):
+                return candidate
+    return None
+
+
 def register():
-    for c in CLASSES: bpy.utils.register_class(c)
-    bpy.types.Scene.daf_settings=PointerProperty(type=DAFSettings)
-def unregister():
+    global _REGISTERED_CLASS_NAMES
+    if hasattr(bpy.types.Scene, "daf_settings"):
+        del bpy.types.Scene.daf_settings
+    registered = []
     try:
-        deformation_authoring.clear_surface_gore_preview(all_regions=True)
+        for cls in CLASSES:
+            existing = _registered_class_named(cls)
+            if existing is not None and existing is not cls:
+                try:
+                    bpy.utils.unregister_class(existing)
+                except (RuntimeError, ValueError):
+                    pass
+            if not bool(getattr(cls, "is_registered", False)):
+                bpy.utils.register_class(cls)
+            registered.append(cls.__name__)
+        bpy.types.Scene.daf_settings = PointerProperty(type=DAFSettings)
+        _REGISTERED_CLASS_NAMES = registered
+        deformation_authoring.initialize_runtime_services()
     except Exception:
-        pass
-    if hasattr(bpy.types.Scene,"daf_settings"): del bpy.types.Scene.daf_settings
-    for c in reversed(CLASSES): bpy.utils.unregister_class(c)
+        if hasattr(bpy.types.Scene, "daf_settings"):
+            del bpy.types.Scene.daf_settings
+        for cls in reversed(CLASSES[:len(registered)]):
+            existing = _registered_class_named(cls)
+            if existing is not None:
+                try:
+                    bpy.utils.unregister_class(existing)
+                except (RuntimeError, ValueError):
+                    pass
+        _REGISTERED_CLASS_NAMES = []
+        raise
+
+
+def unregister():
+    global _REGISTERED_CLASS_NAMES
+    try:
+        deformation_authoring.shutdown_runtime_services()
+    finally:
+        if hasattr(bpy.types.Scene, "daf_settings"):
+            del bpy.types.Scene.daf_settings
+        for cls in reversed(CLASSES):
+            existing = _registered_class_named(cls)
+            if existing is None:
+                continue
+            try:
+                bpy.utils.unregister_class(existing)
+            except (RuntimeError, ValueError):
+                pass
+        _REGISTERED_CLASS_NAMES = []
 if __name__=="__main__": register()

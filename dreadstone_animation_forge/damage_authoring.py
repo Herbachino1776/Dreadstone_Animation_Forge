@@ -282,6 +282,17 @@ def _clear_existing_authoring():
     text = bpy.data.texts.get(STATE_TEXT_NAME)
     if text:
         bpy.data.texts.remove(text)
+    # Region/event registries own generated authoring object identities. An
+    # explicit authoring rebuild replaces those objects, so retaining the old
+    # scene registry would silently bind new meshes to stale topology/weights.
+    scene = getattr(bpy.context, "scene", None)
+    if scene is not None:
+        for key in (
+            "dsb_deformation_region_registry_json",
+            "dsb_compound_trauma_preview_json",
+        ):
+            if key in scene:
+                del scene[key]
 
     # Restore original source visibility before checking for collisions.
     for obj in list(bpy.data.objects):
@@ -1422,6 +1433,35 @@ def _validate_current_source(state):
     return source
 
 
+def _evaluated_hidden_world_matrix(obj):
+    """Evaluate a hidden source hierarchy without changing its saved visibility.
+
+    Blender can leave parented objects with ``hide_viewport`` disabled out of the
+    dependency graph after reopening a file.  Their unevaluated ``matrix_world``
+    then reads as identity even though the saved local transform and parent chain
+    are intact.  Explicit validation may briefly make the chain evaluable, but it
+    must restore the exact visibility contract before returning.
+    """
+
+    hierarchy = []
+    current = obj
+    while current is not None:
+        hierarchy.append(current)
+        current = current.parent
+    visibility = [(item, bool(item.hide_viewport), bool(item.hide_get())) for item in hierarchy]
+    try:
+        for item, _viewport, _hidden in visibility:
+            item.hide_viewport = False
+            item.hide_set(False)
+        bpy.context.view_layer.update()
+        return obj.matrix_world.copy()
+    finally:
+        for item, viewport, hidden in reversed(visibility):
+            item.hide_viewport = viewport
+            item.hide_set(hidden)
+        bpy.context.view_layer.update()
+
+
 def _mesh_edge_face_counts(mesh):
     counts = defaultdict(int)
     for polygon in mesh.polygons:
@@ -1434,9 +1474,10 @@ def _mesh_edge_face_counts(mesh):
 
 
 def _world_kdtree(obj):
+    world = _evaluated_hidden_world_matrix(obj)
     tree = KDTree(len(obj.data.vertices))
     for index, vertex in enumerate(obj.data.vertices):
-        tree.insert(obj.matrix_world @ vertex.co, index)
+        tree.insert(world @ vertex.co, index)
     tree.balance()
     return tree
 
@@ -1453,14 +1494,15 @@ def _maximum_world_point_error(obj, expected_world_points):
 
 
 def _cap_world_normal_in_source_space(cap, source):
-    source_inverse = source.matrix_world.inverted_safe()
+    source_inverse = _evaluated_hidden_world_matrix(source).inverted_safe()
+    cap_world = _evaluated_hidden_world_matrix(cap)
     normal = Vector((0.0, 0.0, 0.0))
     for polygon in cap.data.polygons:
         if len(polygon.vertices) < 3:
             continue
-        a = source_inverse @ (cap.matrix_world @ cap.data.vertices[polygon.vertices[0]].co)
-        b = source_inverse @ (cap.matrix_world @ cap.data.vertices[polygon.vertices[1]].co)
-        c = source_inverse @ (cap.matrix_world @ cap.data.vertices[polygon.vertices[2]].co)
+        a = source_inverse @ (cap_world @ cap.data.vertices[polygon.vertices[0]].co)
+        b = source_inverse @ (cap_world @ cap.data.vertices[polygon.vertices[1]].co)
+        c = source_inverse @ (cap_world @ cap.data.vertices[polygon.vertices[2]].co)
         normal += (b - a).cross(c - a)
     return normal.normalized() if normal.length_squared > 1e-12 else normal
 
@@ -1492,6 +1534,7 @@ def _validate_cap_mesh(cap, seam_label, expected_count, expected_normal, source,
 
 def _validate_authoring(state, gap_tolerance=0.0005):
     source = _validate_current_source(state)
+    source_world = _evaluated_hidden_world_matrix(source)
     errors, warnings = [], []
     required = [
         BODY_CORE_NAME,
@@ -1543,9 +1586,10 @@ def _validate_authoring(state, gap_tolerance=0.0005):
     if protected is None or protected.type != 'MESH':
         errors.append("Protected authoring source mesh is missing.")
     else:
-        source_matrix = Matrix(state.get("source_object_matrix_world", source.matrix_world))
+        protected_world = _evaluated_hidden_world_matrix(protected)
+        source_matrix = Matrix(state.get("source_object_matrix_world", source_world))
         matrix_error = max(
-            abs(float(source.matrix_world[row][column] - source_matrix[row][column]))
+            abs(float(source_world[row][column] - source_matrix[row][column]))
             for row in range(4) for column in range(4)
         )
         if matrix_error > 1e-6:
@@ -1560,7 +1604,7 @@ def _validate_authoring(state, gap_tolerance=0.0005):
         for seam_id, seam_state in state.get("seams", {}).items():
             label = SEAM_SPECS[seam_id]["label"]
             expected_local = [Vector(point) for point in seam_state.get("contour_points_object", [])]
-            expected_world = [protected.matrix_world @ point for point in expected_local]
+            expected_world = [protected_world @ point for point in expected_local]
             if len(expected_world) < 3:
                 errors.append(f"{label} has an incomplete stored contour.")
                 continue
