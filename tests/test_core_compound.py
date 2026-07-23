@@ -452,9 +452,10 @@ class BlenderIntegrationSourceTests(unittest.TestCase):
         self.assertIn('failed.append(f"{region_id}/{key_name}: {exc}")', self.deformation)
         self.assertIn('return {"applied": applied, "skipped": skipped, "failed": failed}', self.deformation)
 
-    def test_compound_preview_restores_previous_values(self):
-        self.assertIn('"previous": previous', self.deformation)
-        self.assertIn('key.value = float(value)', self.deformation)
+    def test_compound_preview_uses_one_atomic_damage_state(self):
+        self.assertIn('clear_damage_preview(context, update_status=False)', self.deformation)
+        self.assertIn('damage_state = {"kind": "COMPOUND", "entries": entries}', self.deformation)
+        self.assertIn('_store_damage_preview_state(context, damage_state)', self.deformation)
 
     def test_compound_blend_feathers_inward_without_weld(self):
         self.assertIn("def _feather_compound_seam_inward", self.deformation)

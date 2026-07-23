@@ -61,8 +61,8 @@ class DAF_OT_revert_impact(_PreviewOperator):
 
 class DAF_OT_clear_managed_preview(_PreviewOperator):
     bl_idname = "daf.clear_managed_preview"
-    bl_label = "Clear Preview"
-    bl_description = "Cancel pending work, remove temporary resources, and restore exact pre-preview state"
+    bl_label = "CLEAR DAMAGE PREVIEW"
+    bl_description = "Atomically zero managed damage morphs, remove stain preview resources, and hide raised gore without deleting recipes or export geometry"
     bl_options = {'REGISTER'}
 
     def execute(self, context):

@@ -1,4 +1,4 @@
-"""Dreadstone Animation Forge v3.15.1 trauma-field authoring.
+"""Dreadstone Animation Forge v3.16.2 trauma-field authoring.
 
 The workbench edits explicitly registered paired-segment or core-single regions
 on the generated protected Damage Asset. Paired morph targets remain exact-index
@@ -12,6 +12,7 @@ import hashlib
 import json
 import math
 import re
+import secrets
 from pathlib import Path
 from mathutils import Vector
 from bpy.props import BoolProperty, EnumProperty, FloatProperty, IntProperty, StringProperty
@@ -33,18 +34,23 @@ from .deformation import (
 )
 
 DEFORMATION_SCHEMA = "dreadstone.damage_deformation.v1"
-DEFORMATION_VERSION = (3, 15, 1)
-DEFORMATION_BUILD_ID = "2026-07-20.healing.2"
+DEFORMATION_VERSION = (3, 16, 2)
+DEFORMATION_BUILD_ID = "2026-07-21.animation-ui-foldouts.1"
 ATTACHED_HEAD_NAME = "DSB_ATTACHED_HEAD"
 DETACHED_HEAD_NAME = "DSB_SEGMENT_HEAD"
 PREVIEW_KEY_NAME = "__DSB_DEFORMATION_SEED_PREVIEW"
 METADATA_PROPERTY = "dsb_deformation_manifest_json"
 REGISTRY_PROPERTY = "dsb_deformation_region_registry_json"
 GORE_PREVIEW_STATE_PROPERTY = "dsb_surface_gore_preview_json"
+DAMAGE_PREVIEW_STATE_PROPERTY = "dsb_damage_preview_state_json"
 GORE_PREVIEW_ATTRIBUTE = "DSB_Surface_Gore_Mask"
 GORE_MATERIAL_PREFIX = "DSB_SURFACE_GORE_PREVIEW_"
 GORE_OBJECT_ROLE = "raised_gore"
 GORE_MESH_ID_PREFIX = "gore_mesh_"
+GORE_TEXTURE_ATLAS_PATH = (
+    Path(__file__).resolve().parent / "assets" / "gore_textures" / "muscle_fibers_macro_atlas.png"
+)
+GORE_TEXTURE_ATLAS_IMAGE = "DSB_Muscle_Fibers_Macro_Atlas"
 PAIRED_SEGMENT = "PAIRED_SEGMENT"
 CORE_SINGLE = "CORE_SINGLE"
 COMPOUND_PREVIEW_PROPERTY = "dsb_compound_trauma_preview_json"
@@ -1058,10 +1064,233 @@ def _object_visible_in_view_layer(obj, view_layer):
         return bool(obj.visible_get())
 
 
+def _damage_preview_state(context=None):
+    scene = getattr(context, "scene", None) if context is not None else getattr(bpy.context, "scene", None)
+    raw = scene.get(DAMAGE_PREVIEW_STATE_PROPERTY, "") if scene is not None else ""
+    if not raw:
+        return {"kind": "NONE", "entries": []}
+    try:
+        state = json.loads(raw)
+    except (TypeError, json.JSONDecodeError):
+        return {"kind": "BROKEN", "entries": []}
+    return state if isinstance(state, dict) else {"kind": "BROKEN", "entries": []}
+
+
+def _store_damage_preview_state(context, state):
+    scene = getattr(context, "scene", None)
+    if scene is None:
+        return
+    entries = list(state.get("entries", [])) if isinstance(state, dict) else []
+    if not entries:
+        scene.pop(DAMAGE_PREVIEW_STATE_PROPERTY, None)
+        return
+    scene[DAMAGE_PREVIEW_STATE_PROPERTY] = json.dumps(
+        {"kind": str(state.get("kind", "SINGLE")), "entries": entries},
+        sort_keys=True,
+        separators=(",", ":"),
+    )
+
+
+def _preview_entry(region_id, key_name, weight, mode):
+    resolved_mode = str(mode).upper()
+    if resolved_mode not in {"ATTACHED", "DETACHED", "BOTH", "CORE"}:
+        raise RuntimeError(f"Unsupported damage preview inspection mode {resolved_mode!r}.")
+    return {
+        "regionId": str(region_id),
+        "keyName": str(key_name),
+        "weight": max(0.0, float(weight)),
+        "mode": resolved_mode,
+    }
+
+
+def _zero_all_damage_preview_weights(*, include_preview=True):
+    registry = _load_registry()
+    for region in registry.get("regions", []):
+        attached, _detached = _resolve_region_pair(region)
+        _zero_managed_weights(attached, include_preview=include_preview)
+
+
+def _enforce_damage_preview_weights(context, state):
+    """Keep one single key, or the declared compound child set, active per region."""
+
+    registry = _load_registry()
+    regions = {str(region.get("regionId", "")): region for region in registry.get("regions", [])}
+    allowed = {}
+    for entry in state.get("entries", []):
+        allowed.setdefault(str(entry.get("regionId", "")), set()).add(str(entry.get("keyName", "")))
+    active = False
+    state_changed = False
+    for region_id, region in regions.items():
+        attached, _detached = _resolve_region_pair(region)
+        allowed_names = allowed.get(region_id, set())
+        for key_name in (*_managed_names(attached), PREVIEW_KEY_NAME):
+            key = _key(attached, key_name)
+            if key is not None and key_name not in allowed_names and abs(float(key.value)) > 1e-8:
+                key.value = 0.0
+        for entry in state.get("entries", []):
+            if str(entry.get("regionId", "")) != region_id:
+                continue
+            key = _key(attached, str(entry.get("keyName", "")))
+            actual = float(key.value) if key is not None else 0.0
+            active = active or actual > 1e-8
+            if abs(float(entry.get("weight", 0.0)) - actual) > 1e-8:
+                entry["weight"] = actual
+                state_changed = True
+    if state_changed:
+        _store_damage_preview_state(context, state)
+    return active
+
+
+def _hide_all_generated_gore():
+    for obj in generated_gore_objects():
+        obj.hide_viewport = False
+        obj.hide_set(True)
+
+
+def _sync_generated_gore_visibility(context=None, state=None):
+    """Derive viewport gore visibility from preview state plus live morph weight."""
+
+    context = context or bpy.context
+    state = state or _damage_preview_state(context)
+    entries = {
+        (str(entry.get("regionId", "")), str(entry.get("keyName", ""))): entry
+        for entry in state.get("entries", [])
+    }
+    registry = _load_registry()
+    regions = {str(region.get("regionId", "")): region for region in registry.get("regions", [])}
+    for gore_obj in generated_gore_objects():
+        region_id = str(gore_obj.get("dsb_gore_region_id", ""))
+        key_name = str(gore_obj.get("dsb_gore_deformation_key", ""))
+        entry = entries.get((region_id, key_name))
+        show = False
+        if entry is not None and float(entry.get("weight", 0.0)) > 1e-8:
+            region = regions.get(region_id)
+            if region is not None:
+                attached, _detached = _resolve_region_pair(region)
+                key = _key(attached, key_name)
+                actual_weight = float(key.value) if key is not None else 0.0
+                role = str(gore_obj.get("dsb_gore_pair_role", "")).upper()
+                mode = str(entry.get("mode", "ATTACHED")).upper()
+                role_visible = (
+                    (mode == "ATTACHED" and role == "ATTACHED")
+                    or (mode == "DETACHED" and role == "DETACHED")
+                    or (mode == "BOTH" and role in {"ATTACHED", "DETACHED"})
+                    or (mode == "CORE" and role == "CORE")
+                )
+                show = actual_weight > 1e-8 and role_visible
+        if gore_obj.hide_viewport:
+            gore_obj.hide_viewport = False
+        if bool(gore_obj.hide_get()) != (not show):
+            gore_obj.hide_set(not show)
+
+
+def _set_single_damage_preview_state(context, region_id, key_name, weight, mode):
+    state = {"kind": "SINGLE", "entries": [_preview_entry(region_id, key_name, weight, mode)]}
+    _store_damage_preview_state(context, state)
+    _enforce_damage_preview_weights(context, state)
+    _sync_generated_gore_visibility(context, state)
+    return state
+
+
+def clear_damage_preview(context=None, *, update_status=True):
+    """Clear deformation, stain, and gore presentation without deleting authored data."""
+
+    global _PREVIEW_RESTORE_STATE
+    context = context or bpy.context
+    preview_service.cancel_timer()
+    try:
+        clear_seed_preview(all_regions=True)
+    finally:
+        try:
+            clear_surface_gore_preview(all_regions=True)
+        finally:
+            _zero_all_damage_preview_weights(include_preview=True)
+            _hide_all_generated_gore()
+            _store_damage_preview_state(context, {"kind": "NONE", "entries": []})
+            if COMPOUND_PREVIEW_PROPERTY in context.scene:
+                del context.scene[COMPOUND_PREVIEW_PROPERTY]
+            _PREVIEW_RESTORE_STATE = {}
+    if update_status:
+        settings = getattr(context.scene, "daf_settings", None)
+        if settings is not None:
+            settings.deformation_status = "DAMAGE PREVIEW CLEARED"
+    return {"morphWeight": 0.0, "stainCleared": True, "goreHidden": True}
+
+
+def capture_damage_preview_snapshot(context=None):
+    """Capture viewport presentation separately from export ownership metadata."""
+
+    context = context or bpy.context
+    registry = _load_registry()
+    source_objects = []
+    shape_values = {}
+    stain_entries = []
+    for region in registry.get("regions", []):
+        attached, detached = _resolve_region_pair(region)
+        for obj in tuple(value for value in (attached, detached) if value is not None):
+            source_objects.append(obj)
+            if obj.data.shape_keys:
+                shape_values[obj.name] = {
+                    key.name: float(key.value) for key in obj.data.shape_keys.key_blocks
+                }
+            gore_state = _gore_state(obj)
+            if gore_state and not gore_state.get("broken"):
+                record = (str(region.get("regionId", "")), str(gore_state.get("keyName", "")))
+                if record[1] and record not in stain_entries:
+                    stain_entries.append(record)
+    visibility_objects = {obj.name: obj for obj in (*source_objects, *generated_gore_objects())}
+    return {
+        "damagePreviewState": copy.deepcopy(_damage_preview_state(context)),
+        "compoundPreview": str(context.scene.get(COMPOUND_PREVIEW_PROPERTY, "")),
+        "shapeValues": shape_values,
+        "visibility": {
+            name: {
+                "hideViewport": bool(obj.hide_viewport),
+                "hideRender": bool(obj.hide_render),
+                "hideGet": bool(obj.hide_get()),
+            }
+            for name, obj in visibility_objects.items()
+        },
+        "stainEntries": [list(value) for value in stain_entries],
+    }
+
+
+def restore_damage_preview_snapshot(context, snapshot):
+    clear_surface_gore_preview(all_regions=True)
+    for object_name, values in snapshot.get("shapeValues", {}).items():
+        obj = _object(object_name)
+        if obj is None or obj.data.shape_keys is None:
+            continue
+        for key_name, value in values.items():
+            key = _key(obj, key_name)
+            if key is not None:
+                key.value = float(value)
+    for object_name, record in snapshot.get("visibility", {}).items():
+        obj = _object(object_name)
+        if obj is None:
+            continue
+        obj.hide_viewport = bool(record.get("hideViewport", False))
+        obj.hide_render = bool(record.get("hideRender", False))
+        obj.hide_set(bool(record.get("hideGet", False)))
+    state = copy.deepcopy(snapshot.get("damagePreviewState", {"kind": "NONE", "entries": []}))
+    _store_damage_preview_state(context, state)
+    raw_compound = str(snapshot.get("compoundPreview", ""))
+    if raw_compound:
+        context.scene[COMPOUND_PREVIEW_PROPERTY] = raw_compound
+    else:
+        context.scene.pop(COMPOUND_PREVIEW_PROPERTY, None)
+    for region_id, key_name in snapshot.get("stainEntries", []):
+        _install_existing_surface_stain_preview(context, str(region_id), str(key_name))
+    _store_damage_preview_state(context, state)
+    _sync_generated_gore_visibility(context, state)
+
+
 def _set_authoring_view(attached, detached, mode='ATTACHED', context=None):
     """Normalize viewport-only visibility for one explicit registered region."""
 
-    if mode not in {'ATTACHED', 'DETACHED', 'BOTH'}:
+    if detached is None and mode == 'ATTACHED':
+        mode = 'CORE'
+    if mode not in {'ATTACHED', 'DETACHED', 'BOTH', 'CORE'}:
         raise RuntimeError(f"Unsupported Trauma Field authoring view {mode!r}.")
     context = context or bpy.context
     if getattr(context, "view_layer", None) is None or getattr(context, "scene", None) is None:
@@ -1097,7 +1326,7 @@ def _set_authoring_view(attached, detached, mode='ATTACHED', context=None):
         if obj.name not in context.view_layer.objects:
             raise RuntimeError(_visibility_blocker(context, obj))
 
-    show_attached = mode in {'ATTACHED', 'BOTH'}
+    show_attached = mode in {'ATTACHED', 'BOTH', 'CORE'}
     show_detached = detached is not None and mode in {'DETACHED', 'BOTH'}
     attached.hide_set(not show_attached)
     if detached is not None:
@@ -1105,17 +1334,35 @@ def _set_authoring_view(attached, detached, mode='ATTACHED', context=None):
     for obj, should_show in tuple((obj, show) for obj, show in ((attached, show_attached), (detached, show_detached)) if obj is not None):
         if should_show and not _object_visible_in_view_layer(obj, context.view_layer):
             raise RuntimeError(_visibility_blocker(context, obj))
-    settings = getattr(context.scene, "daf_settings", None)
-    active_key = str(getattr(settings, "deformation_active_key", ""))
     region_id = str(attached.get("dsb_deformation_region", ""))
-    for gore_obj in generated_gore_objects(region_id=region_id):
-        role = str(gore_obj.get("dsb_gore_pair_role", "")).upper()
-        show = (
-            str(gore_obj.get("dsb_gore_deformation_key", "")) == active_key
-            and ((role in {"ATTACHED", "CORE"} and show_attached) or (role == "DETACHED" and show_detached))
-        )
-        gore_obj.hide_viewport = False
-        gore_obj.hide_set(not show)
+    state = _damage_preview_state(context)
+    changed = False
+    for entry in state.get("entries", []):
+        if str(entry.get("regionId", "")) == region_id:
+            entry["mode"] = mode
+            changed = True
+    if changed:
+        _store_damage_preview_state(context, state)
+    _sync_generated_gore_visibility(context, state)
+
+
+def set_damage_preview_inspection_mode(context, mode):
+    _registry, region, attached, detached = _resolve_active_region(context)
+    settings = context.scene.daf_settings
+    key_name = str(settings.deformation_active_key)
+    state = _damage_preview_state(context)
+    matching = any(
+        str(entry.get("regionId", "")) == str(region.get("regionId", ""))
+        and str(entry.get("keyName", "")) == key_name
+        for entry in state.get("entries", [])
+    )
+    if not matching and key_name:
+        key = _key(attached, key_name)
+        weight = float(key.value) if key is not None else 0.0
+        if weight > 1e-8:
+            _set_single_damage_preview_state(context, region.get("regionId", ""), key_name, weight, mode)
+    _set_authoring_view(attached, detached, mode, context)
+    return attached, detached
 
 
 def _zero_managed_weights(attached, include_preview=False):
@@ -1445,6 +1692,8 @@ def preview_seed(context, quiet=False):
     if getattr(context, "mode", "OBJECT") != 'OBJECT':
         raise RuntimeError("Switch to Object Mode before previewing a deformation seed.")
     settings = context.scene.daf_settings
+    clear_damage_preview(context, update_status=False)
+    _registry, region, _source, _paired = _resolve_active_region(context)
     attached, detached, attached_preview, _detached_preview = _ensure_key_pair(PREVIEW_KEY_NAME, preview=True)
     _zero_managed_weights(attached)
     _set_authoring_view(attached, detached, 'ATTACHED')
@@ -1454,6 +1703,9 @@ def preview_seed(context, quiet=False):
         _sync_exact_index_key_pair(attached, detached, PREVIEW_KEY_NAME)
     attached_preview.value = 1.0
     attached_preview.slider_max = 1.0
+    inspection = 'CORE' if detached is None else 'ATTACHED'
+    _set_single_damage_preview_state(context, region.get("regionId", ""), PREVIEW_KEY_NAME, 1.0, inspection)
+    _set_authoring_view(attached, detached, inspection, context)
     settings.deformation_status = "LIVE SEED PREVIEW"
     if not quiet:
         return {"vertexCount": len(coordinates), "key": settings.deformation_active_key}
@@ -1473,6 +1725,14 @@ def request_managed_preview(context, reason="property update"):
 def request_region_switch(region_id, context=None):
     global _PENDING_REGION_ID
     _PENDING_REGION_ID = str(region_id)
+    context = context or bpy.context
+    settings = getattr(getattr(context, "scene", None), "daf_settings", None)
+    if settings is not None and (
+        not bool(settings.deformation_auto_preview)
+        or not bool(settings.deformation_live_preview)
+        or str(settings.deformation_preview_quality) == 'OFF'
+    ):
+        _apply_pending_region(context)
     return preview_service.request_refresh(context, "region switch")
 
 
@@ -1482,6 +1742,7 @@ def _apply_pending_region(context):
         return
     region_id = _PENDING_REGION_ID
     _PENDING_REGION_ID = ""
+    clear_damage_preview(context, update_status=False)
     if region_id != _active_region_id(context):
         _set_active_region(region_id, context)
     registry, region, attached, _detached = _resolve_active_region(context, region_id)
@@ -1568,7 +1829,7 @@ def _preview_stamp_stack(context, quality):
             if stamp.get("enabled", True)
         ]
     weights, distances = _stamp_weights(attached, region, current)
-    _capture_preview_restore_state(context, attached, detached)
+    clear_damage_preview(context, update_status=False)
     attached, detached, attached_preview, _detached_preview = _ensure_key_pair(PREVIEW_KEY_NAME, preview=True)
     _zero_managed_weights(attached)
     coordinates = (
@@ -1585,7 +1846,9 @@ def _preview_stamp_stack(context, quality):
         _sync_exact_index_key_pair(attached, detached, PREVIEW_KEY_NAME)
     attached_preview.value = 1.0
     attached_preview.slider_max = 1.0
-    _set_authoring_view(attached, detached, 'ATTACHED', context)
+    inspection = 'CORE' if detached is None else 'ATTACHED'
+    _set_single_damage_preview_state(context, region.get("regionId", ""), PREVIEW_KEY_NAME, 1.0, inspection)
+    _set_authoring_view(attached, detached, inspection, context)
     estimated = 0
     if settings.deformation_gore_enabled and settings.deformation_gore_raised_enabled:
         estimated = min(
@@ -1606,6 +1869,7 @@ def _execute_managed_preview(context, quality, _generation):
     _apply_pending_region(context)
     settings = getattr(getattr(context, "scene", None), "daf_settings", None)
     if settings is None or not settings.deformation_active_key or not settings.deformation_seed_center_valid:
+        clear_damage_preview(context, update_status=False)
         return {"message": "Select a region, deformation, stamp, and captured surface"}
     if quality == "FINAL":
         result = commit_current_tuning(context)
@@ -1618,13 +1882,7 @@ def _execute_managed_preview(context, quality, _generation):
 
 
 def _clear_managed_preview(context, **_flags):
-    try:
-        clear_seed_preview(all_regions=True)
-    finally:
-        try:
-            clear_surface_gore_preview(all_regions=True)
-        finally:
-            _restore_preview_state(context)
+    return clear_damage_preview(context)
 
 
 def commit_current_tuning(context):
@@ -1909,6 +2167,14 @@ def _load_gore_into_settings(settings, overlay):
     settings.deformation_gore_dark_clot_bias = float(recipe["goreDarkClotBias"])
     settings.deformation_gore_rough_edge_bias = float(recipe["goreRoughEdgeBias"])
     settings.deformation_gore_color_intensity = float(recipe["goreColorIntensity"])
+    settings.deformation_gore_organic_irregularity = float(recipe["goreOrganicIrregularity"])
+    settings.deformation_gore_surface_roundness = float(recipe["goreSurfaceRoundness"])
+    settings.deformation_gore_texture_enabled = bool(recipe["goreTextureEnabled"])
+    settings.deformation_gore_fiber_texture_strength = float(recipe["goreFiberTextureStrength"])
+    settings.deformation_gore_base_color_strength = float(recipe["goreBaseColorStrength"])
+    settings.deformation_gore_inner_rim_enabled = bool(recipe["goreInnerRimEnabled"])
+    settings.deformation_gore_inner_rim_width = float(recipe["goreInnerRimWidth"])
+    settings.deformation_gore_inner_rim_strength = float(recipe["goreInnerRimStrength"])
     settings.deformation_gore_maximum_triangles = int(recipe["goreMaximumTriangles"])
     settings.deformation_gore_user_customized = bool(recipe["goreUserCustomized"])
     settings.deformation_gore_mask_seed = int(recipe["goreMaskSeed"])
@@ -1943,6 +2209,14 @@ def apply_gore_preset_to_settings(context):
     settings.deformation_gore_dark_clot_bias = float(raised["goreDarkClotBias"])
     settings.deformation_gore_rough_edge_bias = float(raised["goreRoughEdgeBias"])
     settings.deformation_gore_color_intensity = float(raised["goreColorIntensity"])
+    settings.deformation_gore_organic_irregularity = float(raised["goreOrganicIrregularity"])
+    settings.deformation_gore_surface_roundness = float(raised["goreSurfaceRoundness"])
+    settings.deformation_gore_texture_enabled = bool(raised["goreTextureEnabled"])
+    settings.deformation_gore_fiber_texture_strength = float(raised["goreFiberTextureStrength"])
+    settings.deformation_gore_base_color_strength = float(raised["goreBaseColorStrength"])
+    settings.deformation_gore_inner_rim_enabled = bool(raised["goreInnerRimEnabled"])
+    settings.deformation_gore_inner_rim_width = float(raised["goreInnerRimWidth"])
+    settings.deformation_gore_inner_rim_strength = float(raised["goreInnerRimStrength"])
     settings.deformation_gore_maximum_triangles = int(raised["goreMaximumTriangles"])
     settings.deformation_gore_user_customized = False
 
@@ -2299,6 +2573,14 @@ def _gore_overlay_from_settings(context):
         "goreDarkClotBias": float(settings.deformation_gore_dark_clot_bias),
         "goreRoughEdgeBias": float(settings.deformation_gore_rough_edge_bias),
         "goreColorIntensity": float(settings.deformation_gore_color_intensity),
+        "goreOrganicIrregularity": float(settings.deformation_gore_organic_irregularity),
+        "goreSurfaceRoundness": float(settings.deformation_gore_surface_roundness),
+        "goreTextureEnabled": bool(settings.deformation_gore_texture_enabled),
+        "goreFiberTextureStrength": float(settings.deformation_gore_fiber_texture_strength),
+        "goreBaseColorStrength": float(settings.deformation_gore_base_color_strength),
+        "goreInnerRimEnabled": bool(settings.deformation_gore_inner_rim_enabled),
+        "goreInnerRimWidth": float(settings.deformation_gore_inner_rim_width),
+        "goreInnerRimStrength": float(settings.deformation_gore_inner_rim_strength),
         "goreMaximumTriangles": int(settings.deformation_gore_maximum_triangles),
         "goreDefaultVisible": False,
         "goreActivationWeight": 0.01,
@@ -3111,6 +3393,9 @@ def _remove_generated_gore_objects(region_id=None, key_name=None, pair_role=None
     for material in list(bpy.data.materials):
         if material.get("dsb_gore_material", False) and material.users == 0:
             bpy.data.materials.remove(material)
+    for image in list(bpy.data.images):
+        if image.get("dsb_gore_composed_texture", False) and image.users == 0:
+            bpy.data.images.remove(image)
     return removed
 
 
@@ -3161,6 +3446,74 @@ def _gore_material_name(material_id, overlay):
     return f"{material_id}_{trauma_field.gore_overlay_digest(overlay)[:8]}"
 
 
+def _ensure_gore_texture_atlas():
+    """Load the packaged four-direction fiber atlas without touching user images."""
+
+    if not GORE_TEXTURE_ATLAS_PATH.is_file():
+        raise RuntimeError(
+            f"Packaged muscle-fiber atlas is missing: {GORE_TEXTURE_ATLAS_PATH}"
+        )
+    resolved = str(GORE_TEXTURE_ATLAS_PATH.resolve())
+    image = next(
+        (
+            candidate for candidate in bpy.data.images
+            if bool(candidate.get("dsb_gore_texture_atlas", False))
+            and str(Path(bpy.path.abspath(candidate.filepath)).resolve()) == resolved
+        ),
+        None,
+    )
+    if image is None:
+        image = bpy.data.images.load(resolved, check_existing=True)
+    occupied = bpy.data.images.get(GORE_TEXTURE_ATLAS_IMAGE)
+    if occupied is not None and occupied is not image and not bool(occupied.get("dsb_gore_texture_atlas", False)):
+        raise RuntimeError(f"Image name {GORE_TEXTURE_ATLAS_IMAGE!r} is occupied by user data.")
+    image.name = GORE_TEXTURE_ATLAS_IMAGE
+    image.filepath = resolved
+    image["dsb_gore_texture_atlas"] = True
+    image["dsb_generated_role"] = "raised_gore_texture_atlas"
+    try:
+        image.colorspace_settings.name = 'sRGB'
+    except TypeError:
+        pass
+    return image
+
+
+def _ensure_gore_composed_texture(material_id, overlay, base_color):
+    """Bake independent additive fiber and gore-color contributions for glTF."""
+
+    atlas = _ensure_gore_texture_atlas()
+    digest = trauma_field.gore_overlay_digest(overlay)
+    name = f"DSB_GORE_COMPOSED_{material_id}_{digest[:10]}"
+    image = bpy.data.images.get(name)
+    if image is not None and not bool(image.get("dsb_gore_composed_texture", False)):
+        raise RuntimeError(f"Image name {name!r} is occupied by non-Forge data.")
+    if image is not None:
+        return image
+    width, height = (int(value) for value in atlas.size)
+    if width <= 0 or height <= 0:
+        raise RuntimeError("The packaged muscle-fiber atlas has not loaded any pixels.")
+    fiber_strength = float(overlay["goreFiberTextureStrength"])
+    color_strength = float(overlay["goreBaseColorStrength"])
+    source_pixels = list(atlas.pixels[:])
+    composed = [0.0] * len(source_pixels)
+    for offset in range(0, len(source_pixels), 4):
+        composed[offset] = min(1.0, source_pixels[offset] * fiber_strength + float(base_color[0]) * color_strength)
+        composed[offset + 1] = min(1.0, source_pixels[offset + 1] * fiber_strength + float(base_color[1]) * color_strength)
+        composed[offset + 2] = min(1.0, source_pixels[offset + 2] * fiber_strength + float(base_color[2]) * color_strength)
+        composed[offset + 3] = source_pixels[offset + 3]
+    image = bpy.data.images.new(name=name, width=width, height=height, alpha=True)
+    image.pixels[:] = composed
+    image["dsb_gore_composed_texture"] = True
+    image["dsb_gore_texture_atlas"] = True
+    image["dsb_generated_role"] = "raised_gore_composed_texture"
+    image["dsb_gore_recipe_digest"] = digest
+    image["dsb_gore_material_id"] = material_id
+    image["dsb_gore_fiber_texture_strength"] = fiber_strength
+    image["dsb_gore_base_color_strength"] = color_strength
+    image.pack()
+    return image
+
+
 def _ensure_gore_material(material_id, overlay):
     if material_id not in trauma_field.GORE_MATERIAL_SPECS:
         raise RuntimeError(f"Unsupported raised gore material ID {material_id!r}.")
@@ -3174,6 +3527,9 @@ def _ensure_gore_material(material_id, overlay):
     material["dsb_generated_role"] = "raised_gore_material"
     material["dsb_gore_material_id"] = material_id
     material["dsb_gore_recipe_digest"] = trauma_field.gore_overlay_digest(overlay)
+    material["dsb_gore_textured"] = bool(overlay["goreTextureEnabled"])
+    material["dsb_gore_fiber_texture_strength"] = float(overlay["goreFiberTextureStrength"])
+    material["dsb_gore_base_color_strength"] = float(overlay["goreBaseColorStrength"])
     nodes = material.node_tree.nodes
     nodes.clear()
     output = nodes.new('ShaderNodeOutputMaterial')
@@ -3208,6 +3564,15 @@ def _ensure_gore_material(material_id, overlay):
     if shader.inputs.get("Coat Weight") is not None:
         coat = 0.28 * float(overlay["goreWetness"]) if material_id == trauma_field.GORE_MATERIAL_IDS[0] else 0.0
         shader.inputs["Coat Weight"].default_value = coat
+    if bool(overlay["goreTextureEnabled"]):
+        texture = nodes.new('ShaderNodeTexImage')
+        texture.name = "DSB Additive Fiber + Gore Color Composition"
+        texture.label = "Independent fiber and gore-color contributions; direction chosen per face"
+        texture.image = _ensure_gore_composed_texture(material_id, overlay, base)
+        texture.interpolation = 'Linear'
+        texture.extension = 'REPEAT'
+        material.node_tree.links.new(texture.outputs["Color"], shader.inputs["Base Color"])
+        material["dsb_gore_composed_texture"] = texture.image.name
     material.node_tree.links.new(shader.outputs["BSDF"], output.inputs["Surface"])
     material.diffuse_color = tuple(base)
     return material
@@ -3246,7 +3611,9 @@ def _local_vertex_normals(positions, faces):
     return normals
 
 
-def _copy_gore_skinning(source, target, generated_source_indices):
+def _copy_gore_skinning(source, target, generated_source_blends):
+    """Interpolate source skin weights for corners and newly refined surface points."""
+
     target.parent = source.parent
     target.parent_type = source.parent_type
     target.parent_bone = source.parent_bone
@@ -3254,10 +3621,24 @@ def _copy_gore_skinning(source, target, generated_source_indices):
     groups = []
     for source_group in source.vertex_groups:
         groups.append(target.vertex_groups.new(name=source_group.name))
-    for generated_index, source_index in enumerate(generated_source_indices):
-        for membership in source.data.vertices[source_index].groups:
-            if 0 <= membership.group < len(groups) and membership.weight > 0.0:
-                groups[membership.group].add([generated_index], float(membership.weight), 'REPLACE')
+    for generated_index, raw_blend in enumerate(generated_source_blends):
+        blend = raw_blend if isinstance(raw_blend, dict) else {int(raw_blend): 1.0}
+        combined = {}
+        total = sum(max(0.0, float(weight)) for weight in blend.values())
+        if total <= 1e-12:
+            continue
+        for source_index, source_factor in blend.items():
+            factor = max(0.0, float(source_factor)) / total
+            if factor <= 0.0:
+                continue
+            for membership in source.data.vertices[int(source_index)].groups:
+                if 0 <= membership.group < len(groups) and membership.weight > 0.0:
+                    combined[membership.group] = (
+                        combined.get(membership.group, 0.0) + factor * float(membership.weight)
+                    )
+        for group_index, weight in combined.items():
+            if weight > 0.0:
+                groups[group_index].add([generated_index], weight, 'REPLACE')
     for source_modifier in source.modifiers:
         if source_modifier.type != 'ARMATURE':
             continue
@@ -3317,6 +3698,46 @@ def _smoothed_gore_thickness(face_records):
     return thickness
 
 
+def _gore_unit(seed, *values):
+    payload = "|".join(str(int(value)) for value in (seed, *values)).encode("ascii")
+    return int.from_bytes(hashlib.sha256(payload).digest()[:8], "big") / float((1 << 64) - 1)
+
+
+def _normalized_source_blend(blend):
+    merged = {}
+    for source_index, weight in blend.items():
+        value = max(0.0, float(weight))
+        if value > 0.0:
+            merged[int(source_index)] = merged.get(int(source_index), 0.0) + value
+    total = sum(merged.values())
+    if total <= 1e-12:
+        raise RuntimeError("Organic gore refinement produced an empty source blend.")
+    return {source_index: weight / total for source_index, weight in merged.items()}
+
+
+def _lerp_source_blends(first, second, factor):
+    amount = min(1.0, max(0.0, float(factor)))
+    combined = {}
+    for source_index, weight in first.items():
+        combined[int(source_index)] = combined.get(int(source_index), 0.0) + float(weight) * (1.0 - amount)
+    for source_index, weight in second.items():
+        combined[int(source_index)] = combined.get(int(source_index), 0.0) + float(weight) * amount
+    return _normalized_source_blend(combined)
+
+
+def _gore_atlas_uv(local_uv, variant):
+    """Map zero-to-one local UVs into one padded quadrant of the 2x2 atlas."""
+
+    index = int(variant) % len(trauma_field.GORE_TEXTURE_VARIANTS)
+    quadrant_x = index % 2
+    # Image files are assembled top-to-bottom; Blender UV origin is bottom-left.
+    quadrant_y = 1 - (index // 2)
+    padding = 0.018
+    u = padding + min(1.0, max(0.0, float(local_uv[0]))) * (1.0 - padding * 2.0)
+    v = padding + min(1.0, max(0.0, float(local_uv[1]))) * (1.0 - padding * 2.0)
+    return ((quadrant_x + u) * 0.5, (quadrant_y + v) * 0.5)
+
+
 def _build_gore_shell_object(source, key_name, region_id, pair_role, overlay, face_records):
     name = trauma_field.gore_generated_object_name(region_id, key_name, pair_role)
     if bpy.data.objects.get(name) is not None:
@@ -3364,58 +3785,255 @@ def _build_gore_shell_object(source, key_name, region_id, pair_role, overlay, fa
     inverse = source_world.inverted()
     normal_matrix = source_world.to_3x3().inverted().transposed()
     offset = float(overlay["goreSurfaceOffset"])
+    base_thickness = float(overlay["goreClotThickness"])
+    organic = float(overlay["goreOrganicIrregularity"])
+    roundness = float(overlay["goreSurfaceRoundness"])
+    master_seed = int(overlay["goreMaskSeed"])
+    textured = bool(overlay["goreTextureEnabled"])
     vertices = []
     generated_source_indices = []
+    generated_source_blends = []
+    generated_surface_positions = []
     material_lookup = {material_id: index for index, material_id in enumerate(trauma_field.GORE_MATERIAL_IDS)}
     faces = []
     material_indices = []
+    face_uvs = []
+    face_texture_variants = []
+    face_layers = []
+
+    world_points = {index: source_world @ point for index, point in enumerate(positions)}
+    world_normals = {}
+    for index, normal in enumerate(normals):
+        normal_world = normal_matrix @ normal
+        if normal_world.length_squared <= 1e-16:
+            normal_world = Vector((0.0, 0.0, 1.0))
+        world_normals[index] = normal_world.normalized()
+
+    def blended_surface(blend):
+        result = Vector((0.0, 0.0, 0.0))
+        for source_index, weight in blend.items():
+            result += world_points[int(source_index)] * float(weight)
+        return result
+
+    def blended_normal(blend):
+        result = Vector((0.0, 0.0, 0.0))
+        for source_index, weight in blend.items():
+            result += world_normals[int(source_index)] * float(weight)
+        if result.length_squared <= 1e-16:
+            return Vector((0.0, 0.0, 1.0))
+        return result.normalized()
+
+    def add_vertex(surface_world, normal_world, height, blend):
+        normalized = _normalized_source_blend(blend)
+        index = len(vertices)
+        vertices.append(tuple(inverse @ (surface_world + normal_world * float(height))))
+        generated_surface_positions.append(tuple(inverse @ surface_world))
+        generated_source_blends.append(normalized)
+        generated_source_indices.append(max(normalized, key=lambda value: (normalized[value], -value)))
+        return index
+
+    def choose_variant(face_index, subface_index):
+        if not textured:
+            return 0
+        return trauma_field.gore_texture_variant_index(master_seed, face_index, subface_index)
+
+    def add_face(indices, material_index, local_uvs, variant, layer):
+        faces.append(tuple(int(index) for index in indices))
+        material_indices.append(int(material_index))
+        face_uvs.append(tuple(tuple(float(value) for value in uv) for uv in local_uvs))
+        face_texture_variants.append(int(variant))
+        face_layers.append(int(layer))
+
+    triangle_uv = ((0.05, 0.05), (0.95, 0.05), (0.50, 0.95))
+    quad_uv = ((0.04, 0.04), (0.96, 0.04), (0.96, 0.96), (0.04, 0.96))
+
     for component in components:
         source_indices = sorted({
             int(index)
             for record_index in component
             for index in face_records[record_index]["vertices"]
         })
-        bottom_index = {}
-        top_index = {}
-        for source_index in source_indices:
-            normal_world = normal_matrix @ normals[source_index]
-            if normal_world.length_squared <= 1e-16:
-                normal_world = Vector((0.0, 0.0, 1.0))
-            normal_world.normalize()
-            surface_world = source_world @ positions[source_index]
-            bottom_index[source_index] = len(vertices)
-            vertices.append(tuple(inverse @ (surface_world + normal_world * offset)))
-            generated_source_indices.append(source_index)
-        for source_index in source_indices:
-            normal_world = normal_matrix @ normals[source_index]
-            if normal_world.length_squared <= 1e-16:
-                normal_world = Vector((0.0, 0.0, 1.0))
-            normal_world.normalize()
-            surface_world = source_world @ positions[source_index]
-            top_index[source_index] = len(vertices)
-            vertices.append(tuple(inverse @ (
-                surface_world + normal_world * (offset + thickness_by_vertex[source_index])
-            )))
-            generated_source_indices.append(source_index)
-
-        selected_edge_uses = {}
+        component_edges = {}
+        face_data = {}
         for record_index in component:
-            record = face_records[record_index]
-            face = [int(index) for index in record["vertices"]]
-            faces.append(tuple(top_index[index] for index in face))
-            material_indices.append(material_lookup[str(record["materialId"])])
-            faces.append(tuple(bottom_index[index] for index in reversed(face)))
-            material_indices.append(material_lookup[trauma_field.GORE_MATERIAL_IDS[1]])
+            face = [int(index) for index in face_records[record_index]["vertices"]]
+            center_blend = {index: 1.0 / len(face) for index in face}
+            center_shift = 0.12 * organic * _gore_unit(master_seed, record_index, 901)
+            target_index = face[min(len(face) - 1, int(_gore_unit(master_seed, record_index, 907) * len(face)))]
+            center_blend = _lerp_source_blends(center_blend, {target_index: 1.0}, center_shift)
+            face_data[record_index] = {
+                "vertices": face,
+                "centerBlend": center_blend,
+                "centerWorld": blended_surface(center_blend),
+                "normalWorld": blended_normal(center_blend),
+            }
             for edge_index, first in enumerate(face):
                 second = face[(edge_index + 1) % len(face)]
-                edge_key = tuple(sorted((first, second)))
-                selected_edge_uses.setdefault(edge_key, []).append((first, second))
-        for uses in selected_edge_uses.values():
+                component_edges.setdefault(tuple(sorted((first, second))), []).append(
+                    (record_index, first, second)
+                )
+
+        corner_bottom = {}
+        corner_top = {}
+        for source_index in source_indices:
+            blend = {source_index: 1.0}
+            surface = world_points[source_index]
+            normal = world_normals[source_index]
+            corner_bottom[source_index] = add_vertex(surface, normal, offset, blend)
+            corner_top[source_index] = add_vertex(
+                surface, normal, offset + thickness_by_vertex[source_index], blend
+            )
+
+        edge_bottom = {}
+        edge_top = {}
+        edge_blends = {}
+        for edge, uses in sorted(component_edges.items()):
+            first, second = edge
+            ratio = 0.5 + (_gore_unit(master_seed, first, second, 101) - 0.5) * 0.28 * organic
+            blend = _normalized_source_blend({first: 1.0 - ratio, second: ratio})
+            surface = blended_surface(blend)
+            normal = blended_normal(blend)
+            edge_length = (world_points[second] - world_points[first]).length
+            if len(uses) == 1 and edge_length > 1e-12:
+                owner_center = face_data[uses[0][0]]["centerWorld"]
+                outward = surface - owner_center
+                outward -= normal * outward.dot(normal)
+                if outward.length_squared > 1e-16:
+                    signed = _gore_unit(master_seed, first, second, 109) * 2.0 - 1.0
+                    surface += outward.normalized() * edge_length * 0.16 * organic * signed
+            edge_blends[edge] = blend
+            edge_thickness = (
+                thickness_by_vertex[first] * (1.0 - ratio)
+                + thickness_by_vertex[second] * ratio
+                + base_thickness * roundness * (0.12 + 0.24 * _gore_unit(master_seed, first, second, 113))
+            )
+            edge_bottom[edge] = add_vertex(surface, normal, offset, blend)
+            edge_top[edge] = add_vertex(surface, normal, offset + edge_thickness, blend)
+
+        center_bottom = {}
+        center_top = {}
+        for record_index in component:
+            data = face_data[record_index]
+            face = data["vertices"]
+            average_thickness = sum(thickness_by_vertex[index] for index in face) / len(face)
+            center_thickness = average_thickness + base_thickness * roundness * (
+                0.28 + 0.42 * _gore_unit(master_seed, record_index, 127)
+            )
+            center_bottom[record_index] = add_vertex(
+                data["centerWorld"], data["normalWorld"], offset, data["centerBlend"]
+            )
+            center_top[record_index] = add_vertex(
+                data["centerWorld"], data["normalWorld"], offset + center_thickness, data["centerBlend"]
+            )
+
+        for record_index in component:
+            record = face_records[record_index]
+            face = face_data[record_index]["vertices"]
+            top_material = material_lookup[str(record["materialId"])]
+            for edge_index, first in enumerate(face):
+                second = face[(edge_index + 1) % len(face)]
+                edge = tuple(sorted((first, second)))
+                subface = edge_index * 2
+                add_face(
+                    (corner_top[first], edge_top[edge], center_top[record_index]),
+                    top_material,
+                    triangle_uv,
+                    choose_variant(int(record["faceIndex"]), subface),
+                    1,
+                )
+                add_face(
+                    (edge_top[edge], corner_top[second], center_top[record_index]),
+                    top_material,
+                    triangle_uv,
+                    choose_variant(int(record["faceIndex"]), subface + 1),
+                    1,
+                )
+                add_face(
+                    (center_bottom[record_index], edge_bottom[edge], corner_bottom[first]),
+                    material_lookup[trauma_field.GORE_MATERIAL_IDS[1]],
+                    triangle_uv,
+                    choose_variant(int(record["faceIndex"]), 1000 + subface),
+                    0,
+                )
+                add_face(
+                    (center_bottom[record_index], corner_bottom[second], edge_bottom[edge]),
+                    material_lookup[trauma_field.GORE_MATERIAL_IDS[1]],
+                    triangle_uv,
+                    choose_variant(int(record["faceIndex"]), 1001 + subface),
+                    0,
+                )
+
+        for edge, uses in sorted(component_edges.items()):
             if len(uses) != 1:
                 continue
-            first, second = uses[0]
-            faces.append((bottom_index[first], bottom_index[second], top_index[second], top_index[first]))
-            material_indices.append(material_lookup[trauma_field.GORE_MATERIAL_IDS[2]])
+            record_index, first, second = uses[0]
+            face_index = int(face_records[record_index]["faceIndex"])
+            add_face(
+                (corner_bottom[first], edge_bottom[edge], edge_top[edge], corner_top[first]),
+                material_lookup[trauma_field.GORE_MATERIAL_IDS[2]],
+                quad_uv,
+                choose_variant(face_index, 2000 + first),
+                0,
+            )
+            add_face(
+                (edge_bottom[edge], corner_bottom[second], corner_top[second], edge_top[edge]),
+                material_lookup[trauma_field.GORE_MATERIAL_IDS[2]],
+                quad_uv,
+                choose_variant(face_index, 2000 + second),
+                0,
+            )
+
+        rim_enabled = bool(overlay["goreInnerRimEnabled"]) and float(overlay["goreInnerRimStrength"]) > 1e-8
+        if rim_enabled:
+            rim_strength = float(overlay["goreInnerRimStrength"])
+            requested_width = float(overlay["goreInnerRimWidth"])
+            rim_offset = max(0.00008, offset * 0.58)
+            for edge, uses in sorted(component_edges.items()):
+                if len(uses) != 1:
+                    continue
+                record_index, first, second = uses[0]
+                face_index = int(face_records[record_index]["faceIndex"])
+                center_blend = face_data[record_index]["centerBlend"]
+                center_world = face_data[record_index]["centerWorld"]
+                edge_length = (world_points[second] - world_points[first]).length
+                if edge_length <= 1e-10:
+                    continue
+                width = min(requested_width, edge_length * 0.32)
+                first_distance = (center_world - world_points[first]).length
+                second_distance = (center_world - world_points[second]).length
+                first_amount = min(0.45, width / max(first_distance, 1e-12))
+                second_amount = min(0.45, width / max(second_distance, 1e-12))
+                outer_first_blend = {first: 1.0}
+                outer_second_blend = {second: 1.0}
+                inner_first_blend = _lerp_source_blends(outer_first_blend, center_blend, first_amount)
+                inner_second_blend = _lerp_source_blends(outer_second_blend, center_blend, second_amount)
+                rim_height = min(base_thickness * 0.28, width * 0.38) * (0.35 + 0.65 * rim_strength)
+                prism_blends = (
+                    outer_first_blend, outer_second_blend, inner_second_blend, inner_first_blend
+                )
+                lower = []
+                upper = []
+                for blend in prism_blends:
+                    surface = blended_surface(blend)
+                    normal = blended_normal(blend)
+                    lower.append(add_vertex(surface, normal, rim_offset, blend))
+                    upper.append(add_vertex(surface, normal, rim_offset + rim_height, blend))
+                rim_faces = (
+                    (upper[0], upper[1], upper[2], upper[3]),
+                    (lower[3], lower[2], lower[1], lower[0]),
+                    (lower[0], lower[1], upper[1], upper[0]),
+                    (lower[1], lower[2], upper[2], upper[1]),
+                    (lower[2], lower[3], upper[3], upper[2]),
+                    (lower[3], lower[0], upper[0], upper[3]),
+                )
+                for prism_face_index, prism_face in enumerate(rim_faces):
+                    add_face(
+                        prism_face,
+                        material_lookup[trauma_field.GORE_MATERIAL_IDS[2]],
+                        quad_uv,
+                        choose_variant(face_index, 3000 + prism_face_index + first * 7),
+                        2,
+                    )
 
     constructed_edge_counts = {}
     for face in faces:
@@ -3436,18 +4054,32 @@ def _build_gore_shell_object(source, key_name, region_id, pair_role, overlay, fa
     obj = bpy.data.objects.new(name, mesh)
     target_collection = source.users_collection[0] if source.users_collection else bpy.context.scene.collection
     target_collection.objects.link(obj)
-    _copy_gore_skinning(source, obj, generated_source_indices)
+    _copy_gore_skinning(source, obj, generated_source_blends)
     material_names = []
     for material_id in trauma_field.GORE_MATERIAL_IDS:
         material = _ensure_gore_material(material_id, overlay)
         mesh.materials.append(material)
         material_names.append(material.name)
-    for polygon, material_index in zip(mesh.polygons, material_indices):
+    for polygon_index, (polygon, material_index) in enumerate(zip(mesh.polygons, material_indices)):
         polygon.material_index = material_index
-        polygon.use_smooth = material_index != material_lookup[trauma_field.GORE_MATERIAL_IDS[2]]
+        polygon.use_smooth = face_layers[polygon_index] == 1
+    uv_layer = mesh.uv_layers.new(name="UVMap")
+    for polygon_index, polygon in enumerate(mesh.polygons):
+        local_uvs = face_uvs[polygon_index]
+        variant = face_texture_variants[polygon_index]
+        for loop_index, local_uv in zip(polygon.loop_indices, local_uvs):
+            uv_layer.data[loop_index].uv = _gore_atlas_uv(local_uv, variant)
     source_attribute = mesh.attributes.new(name="DSB_Gore_Source_Vertex", type='INT', domain='POINT')
     for index, source_index in enumerate(generated_source_indices):
         source_attribute.data[index].value = int(source_index)
+    surface_attribute = mesh.attributes.new(name="DSB_Gore_Source_Position", type='FLOAT_VECTOR', domain='POINT')
+    for index, source_position in enumerate(generated_surface_positions):
+        surface_attribute.data[index].vector = source_position
+    variant_attribute = mesh.attributes.new(name="DSB_Gore_Texture_Variant", type='INT', domain='FACE')
+    layer_attribute = mesh.attributes.new(name="DSB_Gore_Layer", type='INT', domain='FACE')
+    for index, variant in enumerate(face_texture_variants):
+        variant_attribute.data[index].value = int(variant)
+        layer_attribute.data[index].value = int(face_layers[index])
     mesh.calc_loop_triangles()
     triangle_count = len(mesh.loop_triangles)
     mesh_id = GORE_MESH_ID_PREFIX + hashlib.sha256(
@@ -3466,10 +4098,13 @@ def _build_gore_shell_object(source, key_name, region_id, pair_role, overlay, fa
     obj["dsb_gore_recipe_digest"] = trauma_field.gore_overlay_digest(overlay)
     obj["dsb_gore_material_ids"] = json.dumps(list(trauma_field.GORE_MATERIAL_IDS))
     obj["dsb_gore_material_names"] = json.dumps(material_names)
+    obj["dsb_gore_texture_enabled"] = textured
+    obj["dsb_gore_texture_variants"] = json.dumps(list(trauma_field.GORE_TEXTURE_VARIANTS))
+    obj["dsb_gore_inner_rim_enabled"] = bool(overlay["goreInnerRimEnabled"])
     obj["dsb_gore_default_visible"] = False
     obj["dsb_gore_activation_weight"] = float(overlay["goreActivationWeight"])
     obj["dsb_gore_triangle_count"] = triangle_count
-    obj["dsb_gore_shell_quality"] = "SMOOTH_TAPERED_V2"
+    obj["dsb_gore_shell_quality"] = "ORGANIC_REFINED_TEXTURED_RIM_V3"
     obj["dsb_gore_mesh_geometry_digest"] = _mesh_digest(obj)
     obj.hide_render = True
     obj.hide_set(True)
@@ -3733,7 +4368,7 @@ def apply_heavy_gore_to_all_deformations(context):
     return {"applied": applied, "skipped": skipped, "failed": failed}
 
 
-def _gltf_gore_material_errors(material, expected_id):
+def _gltf_gore_material_errors(material, expected_id, overlay):
     errors = []
     if material is None:
         return [f"Raised gore material {expected_id} is missing."]
@@ -3744,7 +4379,7 @@ def _gltf_gore_material_errors(material, expected_id):
     if not material.use_nodes or material.node_tree is None:
         errors.append(f"Material {material.name} has no glTF-safe node surface.")
         return errors
-    allowed = {'ShaderNodeOutputMaterial', 'ShaderNodeBsdfPrincipled'}
+    allowed = {'ShaderNodeOutputMaterial', 'ShaderNodeBsdfPrincipled', 'ShaderNodeTexImage'}
     unsupported = sorted({node.bl_idname for node in material.node_tree.nodes if node.bl_idname not in allowed})
     if unsupported:
         errors.append(f"Material {material.name} uses unsupported glTF nodes: {', '.join(unsupported)}.")
@@ -3771,6 +4406,26 @@ def _gltf_gore_material_errors(material, expected_id):
                 or trauma_field.has_effective_emission(emission.default_value, strength)
             ):
                 errors.append(f"Material {material.name} must not use emission to fake wetness.")
+        texture_nodes = [node for node in material.node_tree.nodes if node.bl_idname == 'ShaderNodeTexImage']
+        textured = bool(overlay["goreTextureEnabled"])
+        if bool(material.get("dsb_gore_textured", False)) != textured:
+            errors.append(f"Material {material.name} has stale textured-gore metadata.")
+        for field in ("goreFiberTextureStrength", "goreBaseColorStrength"):
+            metadata_field = (
+                "dsb_gore_fiber_texture_strength"
+                if field == "goreFiberTextureStrength" else "dsb_gore_base_color_strength"
+            )
+            if abs(float(material.get(metadata_field, -1.0)) - float(overlay[field])) > 1e-8:
+                errors.append(f"Material {material.name} has stale {field} composition metadata.")
+        if textured:
+            if len(texture_nodes) != 1 or texture_nodes[0].image is None:
+                errors.append(f"Material {material.name} has no composed fiber/color texture.")
+            elif not bool(texture_nodes[0].image.get("dsb_gore_composed_texture", False)):
+                errors.append(f"Material {material.name} uses an unowned fiber/color composition.")
+            if not shader.inputs["Base Color"].is_linked:
+                errors.append(f"Material {material.name} does not feed the fiber atlas into Base Color.")
+        elif texture_nodes:
+            errors.append(f"Material {material.name} retains texture nodes although texturing is disabled.")
     return errors
 
 
@@ -3805,9 +4460,29 @@ def _raised_gore_mesh_errors(obj, source, key_name, overlay, expected_role):
         errors.append(f"Raised gore object {obj.name} has a missing or reordered material assignment.")
     for index, material_id in enumerate(trauma_field.GORE_MATERIAL_IDS):
         material = mesh.materials[index] if index < len(mesh.materials) else None
-        errors.extend(_gltf_gore_material_errors(material, material_id))
+        errors.extend(_gltf_gore_material_errors(material, material_id, overlay))
     if any(int(polygon.material_index) >= len(mesh.materials) for polygon in mesh.polygons):
         errors.append(f"Raised gore object {obj.name} contains an invalid material index.")
+    if bool(overlay["goreTextureEnabled"]):
+        if not mesh.uv_layers or mesh.uv_layers.active is None:
+            errors.append(f"Raised gore object {obj.name} has no fiber-atlas UV map.")
+        variant_attribute = mesh.attributes.get("DSB_Gore_Texture_Variant")
+        if variant_attribute is None or len(variant_attribute.data) != len(mesh.polygons):
+            errors.append(f"Raised gore object {obj.name} has no per-face fiber direction attribute.")
+        elif any(
+            int(record.value) < 0 or int(record.value) >= len(trauma_field.GORE_TEXTURE_VARIANTS)
+            for record in variant_attribute.data
+        ):
+            errors.append(f"Raised gore object {obj.name} contains an invalid fiber direction index.")
+    layer_attribute = mesh.attributes.get("DSB_Gore_Layer")
+    if layer_attribute is None or len(layer_attribute.data) != len(mesh.polygons):
+        errors.append(f"Raised gore object {obj.name} has no multilayer gore classification.")
+    elif (
+        bool(overlay["goreInnerRimEnabled"])
+        and float(overlay["goreInnerRimStrength"]) > 1e-8
+        and not any(int(record.value) == 2 for record in layer_attribute.data)
+    ):
+        errors.append(f"Raised gore object {obj.name} has no compromised inner-reddening layer.")
 
     duplicate_faces = set()
     seen_faces = set()
@@ -3846,17 +4521,20 @@ def _raised_gore_mesh_errors(obj, source, key_name, overlay, expected_role):
     if source_armatures != gore_armatures:
         errors.append(f"Raised gore object {obj.name} does not preserve the source armature linkage.")
     attribute = mesh.attributes.get("DSB_Gore_Source_Vertex")
+    surface_attribute = mesh.attributes.get("DSB_Gore_Source_Position")
     if attribute is None or len(attribute.data) != len(mesh.vertices):
         errors.append(f"Raised gore object {obj.name} has no valid source-vertex ownership attribute.")
+    elif surface_attribute is None or len(surface_attribute.data) != len(mesh.vertices):
+        errors.append(f"Raised gore object {obj.name} has no refined source-surface position attribute.")
     else:
         deformed = _deformation_local_points(source, key_name)
         maximum_distance = 0.0
-        for vertex, source_record in zip(mesh.vertices, attribute.data):
+        for vertex, source_record, surface_record in zip(mesh.vertices, attribute.data, surface_attribute.data):
             source_index = int(source_record.value)
             if source_index < 0 or source_index >= len(deformed):
                 errors.append(f"Raised gore object {obj.name} references an invalid source vertex.")
                 break
-            distance = ((obj_world @ vertex.co) - (source_world @ deformed[source_index])).length
+            distance = ((obj_world @ vertex.co) - (source_world @ Vector(surface_record.vector))).length
             maximum_distance = max(maximum_distance, distance)
         allowed = float(overlay["goreSurfaceOffset"]) + float(overlay["goreClotThickness"]) * 4.0 + 0.002
         if maximum_distance > allowed:
@@ -4078,10 +4756,7 @@ def _gore_preview_errors(attached, detached, key_name, overlay):
     return errors
 
 
-def preview_surface_gore(context):
-    if getattr(context, "mode", "OBJECT") != 'OBJECT':
-        raise RuntimeError("Switch to Object Mode before previewing surface gore.")
-    settings, _registry, region, attached, detached, payload, name, entry = _active_key_context(context)
+def _surface_gore_preview_data(region, attached, entry):
     overlay = trauma_field.normalize_gore_overlay(entry.get("surfaceGoreOverlay", {}))
     if not overlay["goreOverlayEnabled"]:
         raise RuntimeError("Enable Surface Gore Overlay and apply its settings before previewing it.")
@@ -4105,7 +4780,6 @@ def preview_surface_gore(context):
         errors.extend(_capture_errors(capture, region, attached))
     if errors:
         raise RuntimeError(" ".join(errors))
-    clear_surface_gore_preview()
     weights, _distances = _stamp_weights(attached, region, stamp)
     positions = _basis_world_positions(attached)
     mask_values = [
@@ -4114,6 +4788,12 @@ def preview_surface_gore(context):
     ]
     if max(mask_values, default=0.0) <= 1e-6:
         raise RuntimeError("The linked capture produced no usable surface gore preview mask.")
+    return overlay, mask_values
+
+
+def _install_surface_stain_preview(region, attached, detached, payload, key_name, entry):
+    overlay, mask_values = _surface_gore_preview_data(region, attached, entry)
+    _clear_gore_preview_pair(attached, detached)
     try:
         original_fake_user_by_name = {
             slot.material.name: bool(slot.material.use_fake_user)
@@ -4121,12 +4801,79 @@ def preview_surface_gore(context):
             for slot in obj.material_slots
             if slot.material is not None
         }
-        _install_gore_preview(attached, mask_values, overlay, name, original_fake_user_by_name)
+        _install_gore_preview(attached, mask_values, overlay, key_name, original_fake_user_by_name)
         if detached is not None:
-            _install_gore_preview(detached, mask_values, overlay, name, original_fake_user_by_name)
+            _install_gore_preview(detached, mask_values, overlay, key_name, original_fake_user_by_name)
+    except Exception:
+        _clear_gore_preview_pair(attached, detached)
+        raise
+    overlay["previewStatus"] = "READY"
+    overlay["previewObjectNames"] = [obj.name for obj in (attached, detached) if obj is not None]
+    overlay["previewAttributeName"] = GORE_PREVIEW_ATTRIBUTE
+    overlay["validationStatus"] = "NOT_VALIDATED"
+    entry["surfaceGoreOverlay"] = overlay
+    entry["goreOverlayDigest"] = trauma_field.gore_overlay_digest(overlay)
+    _store_metadata(attached, detached, payload)
+    return overlay, mask_values
+
+
+def _install_existing_surface_stain_preview(context, region_id, key_name):
+    registry = _load_registry()
+    region = _region_record(registry, region_id)
+    if region is None:
+        return None
+    attached, detached = _resolve_region_pair(region)
+    payload = _metadata(attached)
+    entry = payload.get("keys", {}).get(key_name)
+    if not isinstance(entry, dict):
+        return None
+    raw_overlay = entry.get("surfaceGoreOverlay")
+    if not isinstance(raw_overlay, dict) or not raw_overlay.get("goreOverlayEnabled", False):
+        return None
+    return _install_surface_stain_preview(region, attached, detached, payload, key_name, entry)
+
+
+def preview_managed_deformation(context, key_name=None, mode=None):
+    settings, _registry, region, attached, detached, payload, active_name, entry = _active_key_context(context)
+    name = str(key_name or active_name)
+    if name != active_name:
+        entry = payload.get("keys", {}).get(name)
+        if not isinstance(entry, dict):
+            raise RuntimeError(f"Managed deformation {name!r} has no recipe metadata.")
+    clear_damage_preview(context, update_status=False)
+    mask_values = []
+    raw_overlay = entry.get("surfaceGoreOverlay")
+    if isinstance(raw_overlay, dict) and raw_overlay.get("goreOverlayEnabled", False):
+        _overlay, mask_values = _install_surface_stain_preview(
+            region, attached, detached, payload, name, entry
+        )
+    key = _key(attached, name)
+    if key is None:
+        raise RuntimeError(f"Managed deformation key {name!r} is missing from {attached.name}.")
+    key.value = min(1.0, float(key.slider_max)) if _max_displacement(attached, name) > 1e-7 else 0.0
+    inspection = mode or ('CORE' if detached is None else 'ATTACHED')
+    _set_single_damage_preview_state(context, region.get("regionId", ""), name, key.value, inspection)
+    _set_authoring_view(attached, detached, inspection, context)
+    return {
+        "key": name,
+        "weight": float(key.value),
+        "maskedVertexCount": sum(value > 1e-4 for value in mask_values),
+    }
+
+
+def preview_surface_gore(context, *, rebuild_raised=True):
+    if getattr(context, "mode", "OBJECT") != 'OBJECT':
+        raise RuntimeError("Switch to Object Mode before previewing surface gore.")
+    settings, _registry, region, attached, detached, payload, name, entry = _active_key_context(context)
+    clear_damage_preview(context, update_status=False)
+    overlay, mask_values = _install_surface_stain_preview(
+        region, attached, detached, payload, name, entry
+    )
+    try:
         raised_objects = (
             rebuild_raised_gore_for_key(region, attached, detached, name, entry)
-            if overlay["goreRaisedEnabled"] else []
+            if rebuild_raised and overlay["goreRaisedEnabled"]
+            else generated_gore_objects(str(region.get("regionId", "")), name)
         )
     except Exception:
         _clear_gore_preview_pair(attached, detached)
@@ -4135,16 +4882,11 @@ def preview_surface_gore(context):
     key = _key(attached, name)
     if key is not None:
         key.value = min(1.0, key.slider_max)
-    overlay["previewStatus"] = "READY"
-    overlay["previewObjectNames"] = [
-        obj.name for obj in (attached, detached) if obj is not None
-    ]
-    overlay["previewAttributeName"] = GORE_PREVIEW_ATTRIBUTE
-    overlay["validationStatus"] = "NOT_VALIDATED"
-    entry["surfaceGoreOverlay"] = overlay
-    entry["goreOverlayDigest"] = trauma_field.gore_overlay_digest(overlay)
-    _store_metadata(attached, detached, payload)
-    _set_authoring_view(attached, detached, 'ATTACHED', context)
+    inspection = 'CORE' if detached is None else 'ATTACHED'
+    _set_single_damage_preview_state(
+        context, region.get("regionId", ""), name, key.value if key is not None else 0.0, inspection
+    )
+    _set_authoring_view(attached, detached, inspection, context)
     screen = getattr(context, "screen", None)
     for area in getattr(screen, "areas", ()):
         if area.type == 'VIEW_3D':
@@ -4161,17 +4903,20 @@ def preview_surface_gore(context):
 def preview_active_stamp(context, quiet=False):
     if getattr(context, "mode", "OBJECT") != 'OBJECT':
         raise RuntimeError("Switch to Object Mode before previewing a trauma stamp.")
-    settings, _registry, _region, attached, detached, _payload, _name, entry = _active_key_context(context)
+    settings, _registry, region, attached, detached, _payload, _name, entry = _active_key_context(context)
     stamp = _active_stamp(settings, entry)
     preview_stamp = dict(stamp)
     preview_stamp["orderIndex"] = 0
+    clear_damage_preview(context, update_status=False)
     attached, detached, attached_preview, _detached_preview = _ensure_key_pair(PREVIEW_KEY_NAME, preview=True)
     _zero_managed_weights(attached)
     _set_key_coordinates(attached_preview, _stamp_local_coordinates(attached, [preview_stamp]))
     sync_key_to_detached(PREVIEW_KEY_NAME)
     attached_preview.value = 1.0
     attached_preview.slider_max = 1.0
-    _set_authoring_view(attached, detached, 'ATTACHED')
+    inspection = 'CORE' if detached is None else 'ATTACHED'
+    _set_single_damage_preview_state(context, region.get("regionId", ""), PREVIEW_KEY_NAME, 1.0, inspection)
+    _set_authoring_view(attached, detached, inspection, context)
     settings.deformation_status = f"STAMP PREVIEW — {stamp.get('displayName', stamp.get('stampId'))}"
     if not quiet:
         return {"stampId": stamp.get("stampId"), "vertexCount": len(attached_preview.data)}
@@ -4228,6 +4973,7 @@ def rebuild_active_deformation(context):
     errors = trauma_field.validate_stamp_stack(stamps)
     if errors:
         raise RuntimeError(" ".join(errors))
+    clear_damage_preview(context, update_status=False)
     coordinates = _stamp_local_coordinates(attached, stamps)
     target = _key(attached, name)
     _set_key_coordinates(target, coordinates)
@@ -4248,7 +4994,11 @@ def rebuild_active_deformation(context):
     clear_seed_preview()
     _zero_managed_weights(attached)
     target.value = min(1.0, target.slider_max)
-    _set_authoring_view(attached, detached, 'ATTACHED')
+    if raw_overlay and raw_overlay.get("goreOverlayEnabled", False):
+        _install_existing_surface_stain_preview(context, str(region.get("regionId", "")), name)
+    inspection = 'CORE' if detached is None else 'ATTACHED'
+    _set_single_damage_preview_state(context, region.get("regionId", ""), name, target.value, inspection)
+    _set_authoring_view(attached, detached, inspection, context)
     validation = validate_active_deformation(context)
     if validation["status"] != "PASS":
         raise RuntimeError("Rebuilt deformation failed validation: " + "; ".join(validation["errors"][:4]))
@@ -4800,18 +5550,12 @@ def rebuild_compound_event(context):
 
 def preview_compound_event(context, weight=1.0):
     registry, event = _active_compound_event(context)
-    raw_previous = context.scene.get(COMPOUND_PREVIEW_PROPERTY, "")
-    try:
-        preview_state = json.loads(raw_previous) if raw_previous else {}
-    except (TypeError, json.JSONDecodeError):
-        preview_state = {}
-    if preview_state and str(preview_state.get("eventId", "")) != str(event.get("eventId", "")):
-        clear_compound_preview(context)
-        preview_state = {}
-    previous = list(preview_state.get("previous", []))
-    previous_regions = {str(record.get("regionId", "")) for record in previous}
+    clear_damage_preview(context, update_status=False)
     event_digest = trauma_field.compound_event_digest(event)
     recomputed = 0
+    entries = []
+    source_views = []
+    preview_weight = max(0.0, float(weight))
     for participant in event.get("participants", []):
         region = _region_record(registry, str(participant.get("regionId", "")))
         if region is None:
@@ -4822,12 +5566,6 @@ def preview_compound_event(context, weight=1.0):
         if key is None:
             raise RuntimeError(f"Compound child key {key_name!r} is missing on {attached.name}.")
         region_id = str(region.get("regionId", ""))
-        if region_id not in previous_regions:
-            previous.append({
-                "regionId": region_id,
-                "values": {name: float(_key(attached, name).value) for name in _managed_names(attached)},
-            })
-            previous_regions.add(region_id)
         preview_digest = compound_service.participant_digest(
             region_fingerprint=str(region.get("topologyFingerprint", "")),
             target_topology=_topology_fingerprint(attached),
@@ -4836,20 +5574,32 @@ def preview_compound_event(context, weight=1.0):
             seam_mapping_digest=json.dumps(sorted(participant.get("seamIds", []))),
             gore_recipe_digest=str(participant.get("goreRecipeDigest", "")),
         )
-        if not compound_service.is_dirty(event.get("eventId", ""), region_id, preview_digest):
-            continue
         _zero_managed_weights(attached, include_preview=True)
-        key.value = max(0.0, min(float(key.slider_max), float(weight)))
-        _set_authoring_view(attached, detached, 'BOTH' if detached is not None else 'ATTACHED', context)
+        key.value = min(float(key.slider_max), preview_weight)
+        inspection = 'ATTACHED' if detached is not None else 'CORE'
+        entries.append(_preview_entry(region_id, key_name, key.value, inspection))
+        source_views.append((attached, detached, inspection))
+        if key.value > 1e-8:
+            payload = _metadata(attached)
+            entry = payload.get("keys", {}).get(key_name, {})
+            overlay = entry.get("surfaceGoreOverlay") if isinstance(entry, dict) else None
+            if isinstance(overlay, dict) and overlay.get("goreOverlayEnabled", False):
+                _install_surface_stain_preview(region, attached, detached, payload, key_name, entry)
         compound_service.mark_clean(event.get("eventId", ""), region_id, preview_digest, preview_service.state().get("generation", 0))
         recomputed += 1
+    damage_state = {"kind": "COMPOUND", "entries": entries}
+    _store_damage_preview_state(context, damage_state)
+    for attached, detached, inspection in source_views:
+        _set_authoring_view(attached, detached, inspection, context)
+    _sync_generated_gore_visibility(context, damage_state)
     context.scene[COMPOUND_PREVIEW_PROPERTY] = json.dumps({
-        "eventId": event["eventId"], "previous": previous,
+        "eventId": event["eventId"],
+        "entries": entries,
     }, sort_keys=True, separators=(",", ":"))
     context.scene.daf_settings.deformation_status = f"COMPOUND PREVIEW {float(weight):.2f} — {event['eventId']}"
     return {
         "eventId": event["eventId"],
-        "participantCount": len(previous),
+        "participantCount": len(entries),
         "recomputedParticipantCount": recomputed,
         "weight": float(weight),
     }
@@ -4858,27 +5608,16 @@ def preview_compound_event(context, weight=1.0):
 def clear_compound_preview(context):
     raw = context.scene.get(COMPOUND_PREVIEW_PROPERTY, "")
     if not raw:
+        clear_damage_preview(context)
         return 0
     try:
         state = json.loads(raw)
     except (TypeError, json.JSONDecodeError):
         state = {}
-    registry = _load_registry()
-    restored = 0
-    for record in state.get("previous", []):
-        region = _region_record(registry, str(record.get("regionId", "")))
-        if region is None:
-            continue
-        attached, _detached = _resolve_region_pair(region)
-        for name, value in record.get("values", {}).items():
-            key = _key(attached, str(name))
-            if key is not None:
-                key.value = float(value)
-        restored += 1
-    if COMPOUND_PREVIEW_PROPERTY in context.scene:
-        del context.scene[COMPOUND_PREVIEW_PROPERTY]
+    restored = len(state.get("entries", []))
+    clear_damage_preview(context, update_status=False)
     compound_service.clear_cache("compound preview cleared")
-    context.scene.daf_settings.deformation_status = "COMPOUND PREVIEW CLEARED"
+    context.scene.daf_settings.deformation_status = "DAMAGE PREVIEW CLEARED"
     return restored
 
 
@@ -5295,8 +6034,7 @@ def validate_deformations(require_keys=False):
 
 
 def prepare_for_export():
-    clear_surface_gore_preview(all_regions=True)
-    clear_seed_preview(all_regions=True)
+    clear_damage_preview(bpy.context, update_status=False)
     registry = _load_registry()
     for region in registry.get("regions", []):
         attached, _detached = _resolve_region_pair(region)
@@ -6147,6 +6885,28 @@ class DAF_OT_apply_surface_gore_preset(Operator):
             return {'CANCELLED'}
 
 
+class DAF_OT_randomize_gore_seed(Operator):
+    bl_idname = "daf.randomize_gore_seed"
+    bl_label = "Randomize Master Gore Seed"
+    bl_description = (
+        "Choose a new master seed for overlay breakup, islands, fragments, thickness, "
+        "organic shape, material response, and muscle-fiber directions"
+    )
+    bl_options = {'REGISTER', 'UNDO'}
+
+    def execute(self, context):
+        settings = context.scene.daf_settings
+        previous = int(settings.deformation_gore_mask_seed)
+        value = secrets.randbelow(2147483648)
+        while value == previous:
+            value = secrets.randbelow(2147483648)
+        settings.deformation_gore_mask_seed = value
+        settings.deformation_gore_user_customized = True
+        settings.deformation_status = f"MASTER GORE SEED {value} - PREVIEW TO REBUILD FULL OVERLAY"
+        self.report({'INFO'}, f"Master gore seed changed to {value}; preview to rebuild the full overlay.")
+        return {'FINISHED'}
+
+
 class DAF_OT_update_surface_gore_overlay(Operator):
     bl_idname = "daf.update_surface_gore_overlay"
     bl_label = "Apply Gore Overlay Settings"
@@ -6406,11 +7166,12 @@ class DAF_OT_preview_compound_trauma_event(Operator):
 class DAF_OT_clear_compound_trauma_preview(Operator):
     bl_idname = "daf.clear_compound_trauma_preview"
     bl_label = "Clear Compound Preview"
+    bl_description = "Atomically zero every compound child and hide its stains and gore without deleting authored data"
     bl_options = {'REGISTER'}
 
     def execute(self, context):
-        restored = clear_compound_preview(context)
-        self.report({'INFO'}, f"Restored preview values for {restored} compound participants.")
+        cleared = clear_compound_preview(context)
+        self.report({'INFO'}, f"Cleared damage preview for {cleared} compound participants.")
         return {'FINISHED'}
 
 
@@ -6572,14 +7333,9 @@ class DAF_OT_select_deformation_key(Operator):
 
     def execute(self, context):
         try:
-            attached, detached = _resolve_pair()
-            clear_surface_gore_preview()
-            _zero_managed_weights(attached, include_preview=True)
-            _set_authoring_view(attached, detached, 'ATTACHED')
+            clear_damage_preview(context, update_status=False)
             _select_key(context.scene.daf_settings, self.key_name)
-            key = _key(attached, self.key_name)
-            if key and _max_displacement(attached, self.key_name) > 1e-7:
-                key.value = min(1.0, key.slider_max)
+            preview_managed_deformation(context, self.key_name)
             return {'FINISHED'}
         except Exception as exc:
             self.report({'ERROR'}, str(exc))
@@ -6594,13 +7350,9 @@ class DAF_OT_solo_deformation_key(Operator):
 
     def execute(self, context):
         try:
-            attached, _detached = _resolve_pair()
-            for name in _managed_names(attached):
-                _key(attached, name).value = 1.0 if name == self.key_name else 0.0
-            preview = _key(attached, PREVIEW_KEY_NAME)
-            if preview:
-                preview.value = 0.0
+            clear_damage_preview(context, update_status=False)
             _select_key(context.scene.daf_settings, self.key_name)
+            preview_managed_deformation(context, self.key_name)
             return {'FINISHED'}
         except Exception as exc:
             self.report({'ERROR'}, str(exc))
@@ -6610,17 +7362,12 @@ class DAF_OT_solo_deformation_key(Operator):
 class DAF_OT_zero_deformations(Operator):
     bl_idname = "daf.zero_deformations"
     bl_label = "Zero All Deformations"
-    bl_description = "Set every managed deformation preview weight to zero"
+    bl_description = "Atomically clear deformation weights, stain resources, and raised-gore visibility without deleting recipes or meshes"
     bl_options = {'REGISTER'}
 
     def execute(self, context):
         try:
-            attached, _detached = _resolve_pair()
-            if attached.data.shape_keys:
-                for key in attached.data.shape_keys.key_blocks:
-                    if key.name != "Basis":
-                        key.value = 0.0
-            context.scene.daf_settings.deformation_status = "ALL WEIGHTS ZERO"
+            clear_damage_preview(context)
             return {'FINISHED'}
         except Exception as exc:
             self.report({'ERROR'}, str(exc))
@@ -6782,7 +7529,13 @@ class DAF_OT_commit_deformation_seed(Operator):
             clear_seed_preview()
             _zero_managed_weights(attached)
             target.value = min(1.0, target.slider_max)
-            _set_authoring_view(attached, detached, 'ATTACHED')
+            _registry, region, _source, _paired = _resolve_active_region(context)
+            raw_overlay = entry.get("surfaceGoreOverlay")
+            if isinstance(raw_overlay, dict) and raw_overlay.get("goreOverlayEnabled", False):
+                _install_existing_surface_stain_preview(context, str(region.get("regionId", "")), name)
+            inspection = 'CORE' if detached is None else 'ATTACHED'
+            _set_single_damage_preview_state(context, region.get("regionId", ""), name, target.value, inspection)
+            _set_authoring_view(attached, detached, inspection, context)
             settings.deformation_status = f"PRESET COMMITTED — {name} / {_max_displacement(attached, name):.3f} m"
             return {'FINISHED'}
         except Exception as exc:
@@ -6936,8 +7689,7 @@ class DAF_OT_show_deformation_attached(Operator):
 
     def execute(self, context):
         try:
-            attached, detached = _resolve_pair()
-            _set_authoring_view(attached, detached, 'ATTACHED', context)
+            attached, detached = set_damage_preview_inspection_mode(context, 'ATTACHED')
             _set_active_object(context, attached)
             context.scene.daf_settings.deformation_status = "VIEWING ATTACHED REGION"
             return {'FINISHED'}
@@ -6953,8 +7705,7 @@ class DAF_OT_show_deformation_detached(Operator):
 
     def execute(self, context):
         try:
-            attached, detached = _resolve_pair()
-            _set_authoring_view(attached, detached, 'DETACHED', context)
+            attached, detached = set_damage_preview_inspection_mode(context, 'DETACHED')
             _set_active_object(context, detached)
             context.scene.daf_settings.deformation_status = "VIEWING DETACHED REGION"
             return {'FINISHED'}
@@ -6970,8 +7721,7 @@ class DAF_OT_show_deformation_overlay(Operator):
 
     def execute(self, context):
         try:
-            attached, detached = _resolve_pair()
-            _set_authoring_view(attached, detached, 'BOTH', context)
+            _attached, _detached = set_damage_preview_inspection_mode(context, 'BOTH')
             context.scene.daf_settings.deformation_status = "PAIR OVERLAY ENABLED"
             return {'FINISHED'}
         except Exception as exc:
@@ -7088,18 +7838,19 @@ def _legacy_draw_panel_source(box, context, settings):
     names = _managed_names(attached)
     if names:
         for name in names:
-            key = _key(attached, name)
             row = library.row(align=True)
             select = row.operator("daf.select_deformation_key", text=name, depress=settings.deformation_active_key == name)
             select.key_name = name
-            row.prop(key, "value", text="", slider=True)
             solo = row.operator("daf.solo_deformation_key", text="Solo")
             solo.key_name = name
     else:
         library.label(text="No managed deformation keys yet", icon='INFO')
 
+    clear = library.column()
+    clear.scale_y = 1.3
+    clear.alert = True
+    clear.operator("daf.clear_managed_preview", text="CLEAR DAMAGE PREVIEW", icon='X')
     row = library.row(align=True)
-    row.operator("daf.zero_deformations", text="Zero All", icon='LOOP_BACK')
     row.operator("daf.delete_managed_deformation", text="Delete Active", icon='TRASH')
     row.operator("daf.create_mirrored_deformation", text="Mirror Active", icon='MOD_MIRROR')
 
@@ -7202,6 +7953,23 @@ def _legacy_draw_panel_source(box, context, settings):
                 raised.prop(settings, "deformation_gore_surface_offset")
                 raised.prop(settings, "deformation_gore_geometry_density", slider=True)
                 raised.prop(settings, "deformation_gore_maximum_triangles")
+                shape = raised.box()
+                shape.label(text="Organic Shape Refinement")
+                shape.prop(settings, "deformation_gore_organic_irregularity", slider=True)
+                shape.prop(settings, "deformation_gore_surface_roundness", slider=True)
+                shape.prop(settings, "deformation_gore_texture_enabled")
+                if settings.deformation_gore_texture_enabled:
+                    composition = shape.box()
+                    composition.label(text="Additive Surface Composition")
+                    composition.prop(settings, "deformation_gore_fiber_texture_strength", slider=True)
+                    composition.prop(settings, "deformation_gore_base_color_strength", slider=True)
+                    composition.label(text="Both contributions accumulate; neither replaces the other.", icon='INFO')
+                rim = raised.box()
+                rim.label(text="Compromised Inner Barrier")
+                rim.prop(settings, "deformation_gore_inner_rim_enabled")
+                if settings.deformation_gore_inner_rim_enabled:
+                    rim.prop(settings, "deformation_gore_inner_rim_width")
+                    rim.prop(settings, "deformation_gore_inner_rim_strength", slider=True)
             response = gore.box()
             response.label(text="Material Variation")
             response.prop(settings, "deformation_gore_wetness", slider=True)
@@ -7213,7 +7981,10 @@ def _legacy_draw_panel_source(box, context, settings):
             response.prop(settings, "deformation_gore_color_bias")
             variation = gore.box()
             variation.label(text="Variation")
-            variation.prop(settings, "deformation_gore_mask_seed")
+            seed_row = variation.row(align=True)
+            seed_row.prop(settings, "deformation_gore_mask_seed")
+            seed_row.operator("daf.randomize_gore_seed", text="", icon='FILE_REFRESH')
+            variation.label(text="Master seed changes the entire overlay, including fiber directions.", icon='INFO')
             variation.prop(settings, "deformation_gore_user_customized")
         gore.operator("daf.update_surface_gore_overlay", text="Apply Gore Overlay Settings", icon='CHECKMARK')
         actions = gore.box()
@@ -7294,7 +8065,7 @@ def _legacy_draw_panel_source(box, context, settings):
         preview_zero.weight = 0.0
         preview_full = row.operator("daf.preview_compound_trauma_event", text="Preview Compound Event", icon='PLAY')
         preview_full.weight = 1.0
-        row.operator("daf.clear_compound_trauma_preview", text="Restore Previous", icon='RECOVER_LAST')
+        row.operator("daf.clear_compound_trauma_preview", text="Clear Event Preview", icon='X')
         compound.operator("daf.validate_compound_trauma_event", text="Validate Compound Event", icon='CHECKMARK')
         compound.label(text="One semantic event; one mesh-local morph per participant", icon='INFO')
 
@@ -7308,7 +8079,10 @@ def _legacy_draw_panel_source(box, context, settings):
     detached_controls.operator("daf.show_deformation_overlay", text="Both", icon='HIDE_OFF')
     row = preview.row(align=True)
     row.operator("daf.preview_active_trauma_stamp", text="Preview Active Stamp", icon='PLAY')
-    row.operator("daf.clear_deformation_seed", text="Clear Temporary Preview", icon='X')
+    clear = preview.column()
+    clear.scale_y = 1.3
+    clear.alert = True
+    clear.operator("daf.clear_managed_preview", text="CLEAR DAMAGE PREVIEW", icon='X')
     preview.operator("daf.rebuild_active_deformation", text="REBUILD ACTIVE DEFORMATION", icon='FILE_REFRESH')
     preview.label(text="Rebuild always replays enabled stamps from Basis", icon='INFO')
     if not stamps:
@@ -7342,6 +8116,23 @@ def _legacy_draw_panel_source(box, context, settings):
     validation_box.label(text="Source mesh and rig remain protected", icon='LOCKED')
 
 
+def _advanced_authoring_foldout(box, settings, property_name, title, icon):
+    section = box.box()
+    row = section.row(align=True)
+    opened = bool(getattr(settings, property_name))
+    row.prop(
+        settings,
+        property_name,
+        text=title,
+        icon='TRIA_DOWN' if opened else 'TRIA_RIGHT',
+        emboss=False,
+    )
+    if not opened:
+        return None
+    section.label(text=title, icon=icon)
+    return section
+
+
 def draw_panel(box, context, settings):
     """Draw every expert workflow from deliberately cached, mesh-free state."""
 
@@ -7351,162 +8142,189 @@ def draw_panel(box, context, settings):
     region = summary.get("region", {})
     active_key = summary.get("key", {})
 
-    regions = box.box()
-    regions.label(text="Manual Region Registration", icon='MESH_DATA')
-    regions.prop(settings, "deformation_region")
-    row = regions.row(align=True)
-    row.operator("daf.select_deformation_region", text="Use Selected Region")
-    row.operator("daf.validate_deformation_region", text="Validate Region")
-    regions.prop(settings, "deformation_region_id")
-    regions.prop(settings, "deformation_related_seam_id")
-    row = regions.row(align=True)
-    row.operator("daf.register_deformation_region", text="Register Selected Pair")
-    row.operator("daf.register_core_deformation_region", text="Register Selected Core Mesh")
-    regions.operator("daf.remove_deformation_region", text="Remove Registration")
-    if region:
-        regions.label(text=f"{region.get('regionId')}: {region.get('regionMode')} / {region.get('validationStatus')}")
-        regions.label(text=f"Cached inventory: {int(region.get('vertexCount', 0)):,} vertices / {int(region.get('polygonCount', 0)):,} polygons")
+    regions = _advanced_authoring_foldout(
+        box, settings, "ui_advanced_regions_open", "Manual Region Registration", 'MESH_DATA'
+    )
+    if regions is not None:
+        regions.prop(settings, "deformation_region")
+        row = regions.row(align=True)
+        row.operator("daf.select_deformation_region", text="Use Selected Region")
+        row.operator("daf.validate_deformation_region", text="Validate Region")
+        regions.prop(settings, "deformation_region_id")
+        regions.prop(settings, "deformation_related_seam_id")
+        row = regions.row(align=True)
+        row.operator("daf.register_deformation_region", text="Register Selected Pair")
+        row.operator("daf.register_core_deformation_region", text="Register Selected Core Mesh")
+        regions.operator("daf.remove_deformation_region", text="Remove Registration")
+        if region:
+            regions.label(text=f"{region.get('regionId')}: {region.get('regionMode')} / {region.get('validationStatus')}")
+            regions.label(text=f"Cached inventory: {int(region.get('vertexCount', 0)):,} vertices / {int(region.get('polygonCount', 0)):,} polygons")
 
-    keys = box.box()
-    keys.label(text="Managed Deformations and Legacy Presets", icon='SHAPEKEY_DATA')
-    keys.prop(settings, "deformation_key_name")
-    row = keys.row(align=True)
-    row.operator("daf.create_damage_shape_key", text="Create Damage Shape Key")
-    row.operator("daf.create_standard_head_deformations", text="Create Standard Head Set")
-    keys.operator("daf.create_blunt_gore_head_deformations", text="Create Blunt Gore Head Set")
-    row = keys.row(align=True)
-    row.operator("daf.create_body_impact_starters", text="Create Body Impact Starters")
-    row.operator("daf.create_forearm_impact_starter", text="Create Forearm Impact Starter")
-    for record in metadata.get("keys", []):
-        select = keys.operator(
-            "daf.select_deformation_key",
-            text=record.get("name", "<unnamed>"),
-            depress=record.get("name") == settings.deformation_active_key,
-        )
-        select.key_name = record.get("name", "")
-    row = keys.row(align=True)
-    row.operator("daf.zero_deformations", text="Zero All")
-    row.operator("daf.delete_managed_deformation", text="Delete Active")
-    row.operator("daf.create_mirrored_deformation", text="Mirror Active")
+    keys = _advanced_authoring_foldout(
+        box, settings, "ui_advanced_deformations_open", "Managed Deformations & Legacy Presets", 'SHAPEKEY_DATA'
+    )
+    if keys is not None:
+        keys.prop(settings, "deformation_key_name")
+        row = keys.row(align=True)
+        row.operator("daf.create_damage_shape_key", text="Create Damage Shape Key")
+        row.operator("daf.create_standard_head_deformations", text="Create Standard Head Set")
+        keys.operator("daf.create_blunt_gore_head_deformations", text="Create Blunt Gore Head Set")
+        row = keys.row(align=True)
+        row.operator("daf.create_body_impact_starters", text="Create Body Impact Starters")
+        row.operator("daf.create_forearm_impact_starter", text="Create Forearm Impact Starter")
+        for record in metadata.get("keys", []):
+            select = keys.operator(
+                "daf.select_deformation_key",
+                text=record.get("name", "<unnamed>"),
+                depress=record.get("name") == settings.deformation_active_key,
+            )
+            select.key_name = record.get("name", "")
+        clear = keys.column()
+        clear.scale_y = 1.3
+        clear.alert = True
+        clear.operator("daf.clear_managed_preview", text="CLEAR DAMAGE PREVIEW", icon='X')
+        row = keys.row(align=True)
+        row.operator("daf.delete_managed_deformation", text="Delete Active")
+        row.operator("daf.create_mirrored_deformation", text="Mirror Active")
 
-    capture = box.box()
-    capture.label(text="Exact Placement and Capture", icon='FACESEL')
-    capture.prop(settings, "deformation_capture_mode")
-    capture.prop(settings, "deformation_influence_mode")
-    capture.prop(settings, "deformation_distance_mode")
-    capture.prop(settings, "deformation_feather_distance")
-    row = capture.row(align=True)
-    row.operator("daf.capture_deformation_selected_face", text="Capture Single Face")
-    row.operator("daf.capture_deformation_selected_patch", text="Capture Connected Face Patch")
-    row = capture.row(align=True)
-    row.operator("daf.capture_deformation_selected_vertices", text="Capture Selected Vertices")
-    row.operator("daf.capture_deformation_cursor", text="Capture 3D Cursor")
+    capture = _advanced_authoring_foldout(
+        box, settings, "ui_advanced_capture_open", "Exact Placement & Capture", 'FACESEL'
+    )
+    if capture is not None:
+        capture.prop(settings, "deformation_capture_mode")
+        capture.prop(settings, "deformation_influence_mode")
+        capture.prop(settings, "deformation_distance_mode")
+        capture.prop(settings, "deformation_feather_distance")
+        row = capture.row(align=True)
+        row.operator("daf.capture_deformation_selected_face", text="Capture Single Face")
+        row.operator("daf.capture_deformation_selected_patch", text="Capture Connected Face Patch")
+        row = capture.row(align=True)
+        row.operator("daf.capture_deformation_selected_vertices", text="Capture Selected Vertices")
+        row.operator("daf.capture_deformation_cursor", text="Capture 3D Cursor")
 
-    stamps = box.box()
-    stamps.label(text="Stamp Stack Ordering and Portable Libraries", icon='MOD_DISPLACE')
-    for stamp in active_key.get("stamps", []):
-        select = stamps.operator(
-            "daf.select_trauma_stamp",
-            text=f"{int(stamp.get('orderIndex', 0)) + 1}. {stamp.get('displayName', '<stamp>')}",
-            depress=stamp.get("stampId") == settings.deformation_active_stamp_id,
-        )
-        select.stamp_id = stamp.get("stampId", "")
-    row = stamps.row(align=True)
-    row.operator("daf.add_trauma_stamp", text="Add Stamp")
-    row.operator("daf.duplicate_trauma_stamp", text="Duplicate")
-    row.operator("daf.remove_trauma_stamp", text="Remove")
-    row = stamps.row(align=True)
-    row.operator("daf.move_trauma_stamp_up", text="Move Up")
-    row.operator("daf.move_trauma_stamp_down", text="Move Down")
-    row.operator("daf.toggle_trauma_stamp", text="Enable / Disable")
-    row = stamps.row(align=True)
-    row.operator("daf.save_trauma_stamp_library", text="Save Stamp Library...")
-    row.operator("daf.load_trauma_stamp_library", text="Load Stamp Library...")
-    for prop in (
-        "deformation_stamp_name", "deformation_stamp_family", "deformation_seed_radius",
-        "deformation_seed_depth", "deformation_seed_falloff", "deformation_stamp_strength",
-        "deformation_seed_direction_mode", "deformation_seed_custom_direction",
-        "deformation_seed_seam_protection", "deformation_max_vertex_displacement",
-        "deformation_maximum_influence",
-    ):
-        stamps.prop(settings, prop)
-    stamps.operator("daf.update_trauma_stamp", text="Update Active Stamp")
+    stamps = _advanced_authoring_foldout(
+        box, settings, "ui_advanced_stamps_open", "Stamp Stack & Portable Libraries", 'MOD_DISPLACE'
+    )
+    if stamps is not None:
+        for stamp in active_key.get("stamps", []):
+            select = stamps.operator(
+                "daf.select_trauma_stamp",
+                text=f"{int(stamp.get('orderIndex', 0)) + 1}. {stamp.get('displayName', '<stamp>')}",
+                depress=stamp.get("stampId") == settings.deformation_active_stamp_id,
+            )
+            select.stamp_id = stamp.get("stampId", "")
+        row = stamps.row(align=True)
+        row.operator("daf.add_trauma_stamp", text="Add Stamp")
+        row.operator("daf.duplicate_trauma_stamp", text="Duplicate")
+        row.operator("daf.remove_trauma_stamp", text="Remove")
+        row = stamps.row(align=True)
+        row.operator("daf.move_trauma_stamp_up", text="Move Up")
+        row.operator("daf.move_trauma_stamp_down", text="Move Down")
+        row.operator("daf.toggle_trauma_stamp", text="Enable / Disable")
+        row = stamps.row(align=True)
+        row.operator("daf.save_trauma_stamp_library", text="Save Stamp Library...")
+        row.operator("daf.load_trauma_stamp_library", text="Load Stamp Library...")
+        for prop in (
+            "deformation_stamp_name", "deformation_stamp_family", "deformation_seed_radius",
+            "deformation_seed_depth", "deformation_seed_falloff", "deformation_stamp_strength",
+            "deformation_seed_direction_mode", "deformation_seed_custom_direction",
+            "deformation_seed_seam_protection", "deformation_max_vertex_displacement",
+            "deformation_maximum_influence",
+        ):
+            stamps.prop(settings, prop)
+        stamps.operator("daf.update_trauma_stamp", text="Update Active Stamp")
 
-    gore = box.box()
-    gore.label(text="Detailed Raised Gore", icon='MATERIAL')
-    for prop in (
-        "deformation_gore_enabled", "deformation_default_heavy_gore", "deformation_gore_preset",
-        "deformation_gore_coverage", "deformation_gore_scatter", "deformation_gore_edge_feather",
-        "deformation_gore_raised_enabled", "deformation_gore_clot_coverage", "deformation_gore_core_density",
-        "deformation_gore_clot_thickness", "deformation_gore_thickness_variation",
-        "deformation_gore_island_breakup", "deformation_gore_peripheral_fragments",
-        "deformation_gore_surface_offset", "deformation_gore_geometry_density",
-        "deformation_gore_maximum_triangles", "deformation_gore_wetness",
-        "deformation_gore_wetness_variation", "deformation_gore_dark_clot_bias",
-        "deformation_gore_rough_edge_bias", "deformation_gore_color_intensity",
-        "deformation_gore_darkness", "deformation_gore_color_bias", "deformation_gore_mask_seed",
-        "deformation_gore_user_customized",
-    ):
-        gore.prop(settings, prop)
-    row = gore.row(align=True)
-    row.operator("daf.apply_surface_gore_preset", text="Use Preset Defaults")
-    row.operator("daf.update_surface_gore_overlay", text="Apply Gore Overlay Settings")
-    gore.operator("daf.preview_surface_gore_overlay", text="Preview / Rebuild Current Gore")
-    gore.operator("daf.apply_heavy_gore_all_deformations", text="Apply Heavy Gore to All Deformations")
-    row = gore.row(align=True)
-    row.operator("daf.clear_current_generated_gore", text="Clear Current Generated Gore")
-    row.operator("daf.clear_surface_gore_overlay_preview", text="Clear Stain Preview")
-    gore.operator("daf.rebuild_all_generated_gore", text="Rebuild All Generated Gore")
-    gore.operator("daf.validate_gore_geometry", text="Validate Gore Geometry")
+    gore = _advanced_authoring_foldout(
+        box, settings, "ui_advanced_gore_open", "Detailed Raised Gore", 'MATERIAL'
+    )
+    if gore is not None:
+        for prop in (
+            "deformation_gore_enabled", "deformation_default_heavy_gore", "deformation_gore_preset",
+            "deformation_gore_coverage", "deformation_gore_scatter", "deformation_gore_edge_feather",
+            "deformation_gore_raised_enabled", "deformation_gore_clot_coverage", "deformation_gore_core_density",
+            "deformation_gore_clot_thickness", "deformation_gore_thickness_variation",
+            "deformation_gore_island_breakup", "deformation_gore_peripheral_fragments",
+            "deformation_gore_surface_offset", "deformation_gore_geometry_density",
+            "deformation_gore_maximum_triangles", "deformation_gore_wetness",
+            "deformation_gore_wetness_variation", "deformation_gore_dark_clot_bias",
+            "deformation_gore_rough_edge_bias", "deformation_gore_color_intensity",
+            "deformation_gore_organic_irregularity", "deformation_gore_surface_roundness",
+            "deformation_gore_texture_enabled", "deformation_gore_fiber_texture_strength",
+            "deformation_gore_base_color_strength", "deformation_gore_inner_rim_enabled",
+            "deformation_gore_inner_rim_width", "deformation_gore_inner_rim_strength",
+            "deformation_gore_darkness", "deformation_gore_color_bias",
+            "deformation_gore_user_customized",
+        ):
+            gore.prop(settings, prop)
+        seed_row = gore.row(align=True)
+        seed_row.prop(settings, "deformation_gore_mask_seed")
+        seed_row.operator("daf.randomize_gore_seed", text="Randomize Seed")
+        row = gore.row(align=True)
+        row.operator("daf.apply_surface_gore_preset", text="Use Preset Defaults")
+        row.operator("daf.update_surface_gore_overlay", text="Apply Gore Overlay Settings")
+        gore.operator("daf.preview_surface_gore_overlay", text="Preview / Rebuild Current Gore")
+        gore.operator("daf.apply_heavy_gore_all_deformations", text="Apply Heavy Gore to All Deformations")
+        row = gore.row(align=True)
+        row.operator("daf.clear_current_generated_gore", text="Clear Current Generated Gore")
+        row.operator("daf.clear_surface_gore_overlay_preview", text="Clear Stain Preview")
+        gore.operator("daf.rebuild_all_generated_gore", text="Rebuild All Generated Gore")
+        gore.operator("daf.validate_gore_geometry", text="Validate Gore Geometry")
 
-    compound = box.box()
-    compound.label(text="Compound Participants and Cross-Seam Settings", icon='LINKED')
-    compound.prop(settings, "compound_event_id")
-    compound.prop(settings, "compound_display_name")
-    row = compound.row(align=True)
-    row.operator("daf.new_compound_trauma_event", text="New Compound Trauma Event")
-    row.operator("daf.add_active_region_to_compound_event", text="Add Active Region to Event")
-    compound.operator("daf.remove_active_region_from_compound_event", text="Remove Region from Event")
-    for event in registry.get("compoundEvents", []):
-        select = compound.operator("daf.select_compound_trauma_event", text=event.get("displayName", event.get("eventId", "")))
-        select.event_id = event.get("eventId", "")
-    for prop in (
-        "compound_trauma_family", "compound_semantic_direction", "compound_severity",
-        "compound_impact_origin", "compound_impact_direction", "compound_impact_radius",
-        "compound_impact_depth", "compound_impact_falloff", "compound_impact_strength",
-        "compound_displacement_limit", "compound_event_seed", "compound_linked_seam_ids",
-        "compound_continuity_mode", "compound_activation_weight",
-    ):
-        compound.prop(settings, prop)
-    compound.operator("daf.capture_compound_impact_field", text="Capture Shared Impact Field")
-    compound.operator("daf.rebuild_compound_trauma_event", text="Rebuild Compound Event")
-    row = compound.row(align=True)
-    zero = row.operator("daf.preview_compound_trauma_event", text="Event Zero")
-    zero.weight = 0.0
-    full = row.operator("daf.preview_compound_trauma_event", text="Preview Compound Event")
-    full.weight = 1.0
-    row.operator("daf.clear_compound_trauma_preview", text="Restore Previous")
-    compound.operator("daf.validate_compound_trauma_event", text="Validate Compound Event")
+    compound = _advanced_authoring_foldout(
+        box, settings, "ui_advanced_compound_open", "Compound Participants & Cross-Seam Settings", 'LINKED'
+    )
+    if compound is not None:
+        compound.prop(settings, "compound_event_id")
+        compound.prop(settings, "compound_display_name")
+        row = compound.row(align=True)
+        row.operator("daf.new_compound_trauma_event", text="New Compound Trauma Event")
+        row.operator("daf.add_active_region_to_compound_event", text="Add Active Region to Event")
+        compound.operator("daf.remove_active_region_from_compound_event", text="Remove Region from Event")
+        for event in registry.get("compoundEvents", []):
+            select = compound.operator("daf.select_compound_trauma_event", text=event.get("displayName", event.get("eventId", "")))
+            select.event_id = event.get("eventId", "")
+        for prop in (
+            "compound_trauma_family", "compound_semantic_direction", "compound_severity",
+            "compound_impact_origin", "compound_impact_direction", "compound_impact_radius",
+            "compound_impact_depth", "compound_impact_falloff", "compound_impact_strength",
+            "compound_displacement_limit", "compound_event_seed", "compound_linked_seam_ids",
+            "compound_continuity_mode", "compound_activation_weight",
+        ):
+            compound.prop(settings, prop)
+        compound.operator("daf.capture_compound_impact_field", text="Capture Shared Impact Field")
+        compound.operator("daf.rebuild_compound_trauma_event", text="Rebuild Compound Event")
+        row = compound.row(align=True)
+        zero = row.operator("daf.preview_compound_trauma_event", text="Event Zero")
+        zero.weight = 0.0
+        full = row.operator("daf.preview_compound_trauma_event", text="Preview Compound Event")
+        full.weight = 1.0
+        row.operator("daf.clear_compound_trauma_preview", text="Clear Event Preview")
+        compound.operator("daf.validate_compound_trauma_event", text="Validate Compound Event")
 
-    preview = box.box()
-    preview.label(text="Views, Preview, Sculpt, Sync, and Validation", icon='HIDE_OFF')
-    row = preview.row(align=True)
-    row.operator("daf.show_deformation_attached", text="Attached")
-    row.operator("daf.show_deformation_detached", text="Detached")
-    row.operator("daf.show_deformation_overlay", text="Both")
-    row = preview.row(align=True)
-    row.operator("daf.preview_active_trauma_stamp", text="Preview Active Stamp")
-    row.operator("daf.clear_deformation_seed", text="Clear Temporary Preview")
-    preview.operator("daf.rebuild_active_deformation", text="REBUILD ACTIVE DEFORMATION")
-    preview.operator("daf.build_active_deformation_preset", text="BUILD ACTIVE PRESET")
-    row = preview.row(align=True)
-    row.operator("daf.preview_deformation_seed", text="Preview Legacy Seed")
-    row.operator("daf.commit_deformation_seed", text="Commit Legacy Seed")
-    row = preview.row(align=True)
-    row.operator("daf.begin_deformation_sculpt", text="Begin Sculpt")
-    row.operator("daf.finish_deformation_sculpt", text="Finish Sculpt & Sync")
-    preview.operator("daf.repair_legacy_pair_sync", text="REPAIR LEGACY PAIR SYNC")
-    preview.operator("daf.validate_deformations", text="Validate Morph Targets")
+    preview = _advanced_authoring_foldout(
+        box, settings, "ui_advanced_preview_open", "Views, Preview, Sculpt, Sync & Validation", 'HIDE_OFF'
+    )
+    if preview is not None:
+        row = preview.row(align=True)
+        row.operator("daf.show_deformation_attached", text="Attached")
+        row.operator("daf.show_deformation_detached", text="Detached")
+        row.operator("daf.show_deformation_overlay", text="Both")
+        row = preview.row(align=True)
+        row.operator("daf.preview_active_trauma_stamp", text="Preview Active Stamp")
+        clear = preview.column()
+        clear.scale_y = 1.3
+        clear.alert = True
+        clear.operator("daf.clear_managed_preview", text="CLEAR DAMAGE PREVIEW", icon='X')
+        preview.operator("daf.rebuild_active_deformation", text="REBUILD ACTIVE DEFORMATION")
+        preview.operator("daf.build_active_deformation_preset", text="BUILD ACTIVE PRESET")
+        row = preview.row(align=True)
+        row.operator("daf.preview_deformation_seed", text="Preview Legacy Seed")
+        row.operator("daf.commit_deformation_seed", text="Commit Legacy Seed")
+        row = preview.row(align=True)
+        row.operator("daf.begin_deformation_sculpt", text="Begin Sculpt")
+        row.operator("daf.finish_deformation_sculpt", text="Finish Sculpt & Sync")
+        preview.operator("daf.repair_legacy_pair_sync", text="REPAIR LEGACY PAIR SYNC")
+        preview.operator("daf.validate_deformations", text="Validate Morph Targets")
 
 
 def service_cache_counts():
@@ -7578,6 +8396,33 @@ def startup_self_check(context=None):
     return result
 
 
+def _damage_preview_depsgraph_update(_scene, _depsgraph):
+    try:
+        state = _damage_preview_state(bpy.context)
+        if state.get("entries"):
+            active = _enforce_damage_preview_weights(bpy.context, state)
+            if active:
+                _sync_generated_gore_visibility(bpy.context, state)
+            else:
+                clear_damage_preview(bpy.context, update_status=False)
+    except Exception:
+        pass
+
+
+def _install_damage_preview_handler():
+    handlers = bpy.app.handlers.depsgraph_update_post
+    for handler in tuple(handlers):
+        if getattr(handler, "__name__", "") == _damage_preview_depsgraph_update.__name__:
+            handlers.remove(handler)
+    handlers.append(_damage_preview_depsgraph_update)
+
+
+def _remove_damage_preview_handler():
+    for handler in tuple(bpy.app.handlers.depsgraph_update_post):
+        if getattr(handler, "__name__", "") == _damage_preview_depsgraph_update.__name__:
+            bpy.app.handlers.depsgraph_update_post.remove(handler)
+
+
 def initialize_runtime_services():
     preview_service.configure(
         executor=_execute_managed_preview,
@@ -7586,6 +8431,7 @@ def initialize_runtime_services():
     )
     diagnostics.configure(cache_provider=service_cache_counts, preview_provider=preview_service.state)
     preview_service.install_handlers()
+    _install_damage_preview_handler()
     # Blender's extension installer enables packages while bpy.data is a
     # restricted proxy. Defer the datablock scan until normal startup/runtime.
     if not hasattr(bpy.data, "objects"):
@@ -7604,6 +8450,7 @@ def shutdown_runtime_services():
     except Exception:
         pass
     preview_service.shutdown()
+    _remove_damage_preview_handler()
     _clear_service_caches("unregister")
 
 
@@ -7639,6 +8486,7 @@ CLASSES = (
     DAF_OT_preview_active_trauma_stamp,
     DAF_OT_rebuild_active_deformation,
     DAF_OT_apply_surface_gore_preset,
+    DAF_OT_randomize_gore_seed,
     DAF_OT_update_surface_gore_overlay,
     DAF_OT_preview_surface_gore_overlay,
     DAF_OT_clear_surface_gore_overlay_preview,

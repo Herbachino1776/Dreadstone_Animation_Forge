@@ -85,6 +85,9 @@ def main():
             str(obj["dsb_gore_pair_role"]): int(obj["dsb_gore_triangle_count"])
             for obj in objects
         }
+        deformation_authoring._set_single_damage_preview_state(
+            bpy.context, "head", key_name, key.value, "ATTACHED"
+        )
         deformation_authoring._set_authoring_view(attached, detached, 'ATTACHED', bpy.context)
         attached_visible = any(
             obj.get("dsb_gore_pair_role") == "ATTACHED" and not obj.hide_get()
@@ -156,7 +159,7 @@ def main():
 
     report = {
         "status": "PASS",
-        "forgeVersion": "3.15.1",
+        "forgeVersion": "3.16.2",
         "sourceBlend": source_blend,
         "headTriangleCounts": counts,
         "previewChecks": preview_checks,

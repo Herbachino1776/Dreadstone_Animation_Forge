@@ -67,6 +67,7 @@ def request_refresh(context=None, reason="property update"):
     if settings is None:
         return 0
     if not bool(getattr(settings, "deformation_auto_preview", True)):
+        clear(context, disabled=True)
         return _GENERATION
     _GENERATION += 1
     _REQUESTED_AT = time.monotonic()
@@ -74,6 +75,7 @@ def request_refresh(context=None, reason="property update"):
     _set_status(settings, PreviewStatus.DIRTY, message=reason)
     quality = str(getattr(settings, "deformation_preview_quality", PreviewQuality.FAST.value))
     if not bool(getattr(settings, "deformation_live_preview", True)) or quality == PreviewQuality.OFF.value:
+        clear(context, disabled=True)
         return _GENERATION
     if not _TIMER_REGISTERED:
         bpy.app.timers.register(_timer_callback, first_interval=QUIET_INTERVAL_SECONDS)
@@ -105,12 +107,12 @@ def _timer_callback():
     if settings is None:
         return None
     if not bool(getattr(settings, "deformation_live_preview", True)):
-        _set_status(settings, PreviewStatus.CLEAN, message="Live preview disabled")
+        clear(bpy.context, disabled=True)
         return None
     requested_quality = str(getattr(settings, "deformation_preview_quality", PreviewQuality.FAST.value))
     quality = PreviewQuality.BALANCED.value if requested_quality == PreviewQuality.FINAL.value else requested_quality
     if quality == PreviewQuality.OFF.value:
-        _set_status(settings, PreviewStatus.CLEAN, message="Preview quality is Off")
+        clear(bpy.context, disabled=True)
         return None
     run_now(bpy.context, quality=quality, generation=_GENERATION)
     return None

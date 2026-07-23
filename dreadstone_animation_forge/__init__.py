@@ -1,7 +1,7 @@
 bl_info = {
     "name": "Dreadstone Animation Forge",
     "author": "Dreadstone Black",
-    "version": (3, 15, 1),
+    "version": (3, 16, 2),
     "blender": (3, 6, 0),
     "location": "3D Viewport > Sidebar > Dreadstone",
     "description": "Animation authoring, protected damage assets, and registered-region trauma-field shape-key authoring.",
@@ -758,6 +758,16 @@ class DAFSettings(PropertyGroup):
         ],
         default='START',
     )
+    ui_advanced_character_open: BoolProperty(default=True)
+    ui_advanced_trauma_open: BoolProperty(default=False)
+    ui_advanced_diagnostics_open: BoolProperty(default=False)
+    ui_advanced_regions_open: BoolProperty(default=True)
+    ui_advanced_deformations_open: BoolProperty(default=False)
+    ui_advanced_capture_open: BoolProperty(default=False)
+    ui_advanced_stamps_open: BoolProperty(default=False)
+    ui_advanced_gore_open: BoolProperty(default=False)
+    ui_advanced_compound_open: BoolProperty(default=False)
+    ui_advanced_preview_open: BoolProperty(default=False)
     ui_advanced_legacy_open: BoolProperty(default=False)
     ui_character_open: BoolProperty(default=True)
     ui_ground_open: BoolProperty(default=False)
@@ -1249,7 +1259,7 @@ class DAFSettings(PropertyGroup):
     last_damage_manifest_path: StringProperty(default="", options={'HIDDEN'})
     last_damage_validation_path: StringProperty(default="", options={'HIDDEN'})
 
-    # Trauma Field Authoring v3.15.1.
+    # Trauma Field Authoring v3.16.2.
     deformation_region: EnumProperty(
         name="Active Region",
         items=_deformation_region_items,
@@ -1321,11 +1331,13 @@ class DAFSettings(PropertyGroup):
         name="Live Seed Preview",
         description="Refresh the temporary seed morph while sliders change",
         default=True,
+        update=_deformation_preview_property_updated,
     )
     deformation_live_preview: BoolProperty(
         name="Live Preview",
         description="Debounce authoring changes through one managed main-thread preview session",
         default=True,
+        update=_deformation_preview_property_updated,
     )
     deformation_preview_quality: EnumProperty(
         name="Preview Quality",
@@ -1336,6 +1348,7 @@ class DAFSettings(PropertyGroup):
             ('FINAL', "Final", "Use explicit Final Preview or Commit for deterministic final output"),
         ],
         default='FAST',
+        update=_deformation_preview_property_updated,
     )
     deformation_preview_status: StringProperty(default="CLEAN", options={'HIDDEN'})
     deformation_preview_message: StringProperty(default="", options={'HIDDEN'})
@@ -1484,6 +1497,64 @@ class DAFSettings(PropertyGroup):
     deformation_gore_dark_clot_bias: FloatProperty(name="Dark-Clot Bias", default=0.72, min=0.0, max=1.0, precision=2)
     deformation_gore_rough_edge_bias: FloatProperty(name="Rough-Edge Bias", default=0.56, min=0.0, max=1.0, precision=2)
     deformation_gore_color_intensity: FloatProperty(name="Color Intensity", default=1.0, min=0.0, max=1.0, precision=2)
+    deformation_gore_organic_irregularity: FloatProperty(
+        name="Organic Irregularity",
+        description="Break up straight polygon edges and shift refined gore facets without changing the source mesh",
+        default=0.78,
+        min=0.0,
+        max=1.0,
+        precision=2,
+    )
+    deformation_gore_surface_roundness: FloatProperty(
+        name="Surface Roundness",
+        description="Round and bulge refined clot surfaces so the source triangulation is less visible",
+        default=0.82,
+        min=0.0,
+        max=1.0,
+        precision=2,
+    )
+    deformation_gore_texture_enabled: BoolProperty(
+        name="Use Muscle-Fiber Textures",
+        description="Wrap every refined gore face in a master-seed-selected muscle-fiber direction",
+        default=True,
+    )
+    deformation_gore_fiber_texture_strength: FloatProperty(
+        name="Muscle Fiber Contribution",
+        description="Independent additive contribution from the muscle-fiber texture set",
+        default=0.82,
+        min=0.0,
+        max=1.0,
+        precision=2,
+    )
+    deformation_gore_base_color_strength: FloatProperty(
+        name="Gore Color Contribution",
+        description="Independent additive contribution from the original procedural gore color",
+        default=0.30,
+        min=0.0,
+        max=1.0,
+        precision=2,
+    )
+    deformation_gore_inner_rim_enabled: BoolProperty(
+        name="Compromised Inner Reddening",
+        description="Generate a second reddened barrier just inside each deformed gore-island edge",
+        default=True,
+    )
+    deformation_gore_inner_rim_width: FloatProperty(
+        name="Inner Reddening Width",
+        default=0.0032,
+        min=0.0001,
+        max=0.03,
+        precision=4,
+        unit='LENGTH',
+    )
+    deformation_gore_inner_rim_strength: FloatProperty(
+        name="Barrier Compromise",
+        description="Control the height and visibility of the breached inner reddening layer",
+        default=0.88,
+        min=0.0,
+        max=1.0,
+        precision=2,
+    )
     deformation_gore_maximum_triangles: IntProperty(
         name="Maximum Triangles", default=12000, min=128, max=100000
     )
@@ -1493,8 +1564,8 @@ class DAFSettings(PropertyGroup):
         default=False,
     )
     deformation_gore_mask_seed: IntProperty(
-        name="Variation Seed",
-        description="Repeatable procedural breakup seed",
+        name="Master Gore Seed",
+        description="Repeatable seed for overlay breakup, islands, fragments, thickness, organic shape, materials, and fiber directions",
         default=1776,
         min=0,
         max=2147483647,
@@ -2935,11 +3006,13 @@ def generate_mace_guard_action(context, kind):
         (schedule["Guard_Hold_End"], 0.96),
         (schedule["Brace_End"], 0.42),
     )
+    side_axis = vectors(settings)[1]
     variant = MACE_GUARD_VARIANTS[kind]
     for frame, intensity in stages:
         context.scene.frame_set(frame)
         reset_pose(arm, mapping)
         _apply_mace_guard_pose(arm, mapping, settings, variant, intensity)
+        apply_arm_hand_pose_polish(arm, mapping, settings, side_axis)
         key_pose(arm, mapping, frame)
     for marker_name in ("Brace_Start", "Guard_Active", "Brace_End"):
         _set_action_marker(action, marker_name, schedule[marker_name])
@@ -4089,7 +4162,7 @@ class DAF_PT_legacy_panel(Panel):
             layout,
             s,
             "ui_deformation_authoring_open",
-            "Trauma Field Authoring v3.15.1",
+            "Trauma Field Authoring v3.16.2",
         )
         if opened:
             configure_property_box(box)

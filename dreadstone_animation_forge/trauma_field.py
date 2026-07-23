@@ -73,8 +73,9 @@ COMPOUND_CONTINUITY_MODES = (
     "PROTECT_SEAM",
 )
 
-GORE_RECIPE_VERSION = 2
+GORE_RECIPE_VERSION = 3
 GORE_OVERLAY_MODES = ("SURFACE_STAIN", "STAIN_AND_RAISED")
+GORE_TEXTURE_VARIANTS = ("000", "090", "180", "270")
 GORE_MATERIAL_IDS = (
     "DSB_GORE_WET_CRIMSON",
     "DSB_GORE_DARK_CLOT",
@@ -130,6 +131,14 @@ RAISED_GORE_DEFAULTS = {
     "goreDarkClotBias": 0.0,
     "goreRoughEdgeBias": 0.0,
     "goreColorIntensity": 1.0,
+    "goreOrganicIrregularity": 0.0,
+    "goreSurfaceRoundness": 0.0,
+    "goreTextureEnabled": False,
+    "goreFiberTextureStrength": 0.0,
+    "goreBaseColorStrength": 1.0,
+    "goreInnerRimEnabled": False,
+    "goreInnerRimWidth": 0.0025,
+    "goreInnerRimStrength": 0.0,
     "goreMaximumTriangles": GORE_MAX_TRIANGLES_PER_DEFORMATION,
     "goreDefaultVisible": False,
     "goreActivationWeight": 0.01,
@@ -205,6 +214,14 @@ GORE_PRESETS = {
         "goreDarkClotBias": 0.72,
         "goreRoughEdgeBias": 0.56,
         "goreColorIntensity": 1.0,
+        "goreOrganicIrregularity": 0.78,
+        "goreSurfaceRoundness": 0.82,
+        "goreTextureEnabled": True,
+        "goreFiberTextureStrength": 0.82,
+        "goreBaseColorStrength": 0.30,
+        "goreInnerRimEnabled": True,
+        "goreInnerRimWidth": 0.0032,
+        "goreInnerRimStrength": 0.88,
         "goreMaximumTriangles": 12000,
         "goreDefaultVisible": False,
         "goreActivationWeight": 0.01,
@@ -1218,6 +1235,7 @@ def normalize_gore_overlay(overlay: Mapping[str, object]) -> dict[str, object]:
         for field in (
             "goreRaisedEnabled", "goreClotCoverage", "goreCoreDensity",
             "goreClotThickness", "goreGeometryDensity", "goreOverlayMode",
+            "goreOrganicIrregularity", "goreTextureEnabled", "goreInnerRimEnabled",
         )
     )
     raised_defaults = dict(RAISED_GORE_DEFAULTS)
@@ -1260,6 +1278,14 @@ def normalize_gore_overlay(overlay: Mapping[str, object]) -> dict[str, object]:
             "goreDarkClotBias": float(overlay.get("goreDarkClotBias", raised_defaults["goreDarkClotBias"])),
             "goreRoughEdgeBias": float(overlay.get("goreRoughEdgeBias", raised_defaults["goreRoughEdgeBias"])),
             "goreColorIntensity": float(overlay.get("goreColorIntensity", raised_defaults["goreColorIntensity"])),
+            "goreOrganicIrregularity": float(overlay.get("goreOrganicIrregularity", raised_defaults["goreOrganicIrregularity"])),
+            "goreSurfaceRoundness": float(overlay.get("goreSurfaceRoundness", raised_defaults["goreSurfaceRoundness"])),
+            "goreTextureEnabled": bool(overlay.get("goreTextureEnabled", raised_defaults["goreTextureEnabled"])),
+            "goreFiberTextureStrength": float(overlay.get("goreFiberTextureStrength", raised_defaults["goreFiberTextureStrength"])),
+            "goreBaseColorStrength": float(overlay.get("goreBaseColorStrength", raised_defaults["goreBaseColorStrength"])),
+            "goreInnerRimEnabled": bool(overlay.get("goreInnerRimEnabled", raised_defaults["goreInnerRimEnabled"])),
+            "goreInnerRimWidth": float(overlay.get("goreInnerRimWidth", raised_defaults["goreInnerRimWidth"])),
+            "goreInnerRimStrength": float(overlay.get("goreInnerRimStrength", raised_defaults["goreInnerRimStrength"])),
             "goreMaximumTriangles": int(overlay.get("goreMaximumTriangles", raised_defaults["goreMaximumTriangles"])),
             "goreDefaultVisible": bool(overlay.get("goreDefaultVisible", raised_defaults["goreDefaultVisible"])),
             "goreActivationWeight": float(overlay.get("goreActivationWeight", raised_defaults["goreActivationWeight"])),
@@ -1300,6 +1326,8 @@ def validate_gore_overlay(
         "goreClotCoverage", "goreCoreDensity", "goreThicknessVariation", "goreIslandBreakup",
         "gorePeripheralFragments", "goreGeometryDensity", "goreWetnessVariation",
         "goreDarkClotBias", "goreRoughEdgeBias", "goreColorIntensity",
+        "goreOrganicIrregularity", "goreSurfaceRoundness", "goreInnerRimStrength",
+        "goreFiberTextureStrength", "goreBaseColorStrength",
     ):
         try:
             value = float(overlay.get(field, math.nan))
@@ -1316,6 +1344,7 @@ def validate_gore_overlay(
     for field, minimum, maximum in (
         ("goreClotThickness", 0.0001, 0.05),
         ("goreSurfaceOffset", GORE_MIN_SURFACE_OFFSET, GORE_MAX_SURFACE_OFFSET),
+        ("goreInnerRimWidth", 0.0001, 0.03),
         ("goreActivationWeight", 0.0, 2.0),
     ):
         try:
@@ -1422,6 +1451,22 @@ def _gore_hash(x: int, y: int, z: int, seed: int) -> float:
     value = ((value ^ (value >> 13)) * 1274126177) & 0xFFFFFFFF
     value ^= value >> 16
     return value / 4294967295.0
+
+
+def gore_texture_variant_index(
+    seed: int,
+    face_index: int,
+    subface_index: int,
+    *,
+    variant_count: int = len(GORE_TEXTURE_VARIANTS),
+) -> int:
+    """Choose one repeatable, unconstrained fiber direction for a gore face."""
+
+    count = int(variant_count)
+    if count <= 0:
+        raise ValueError("gore texture variant count must be positive")
+    value = _gore_hash(int(face_index), int(subface_index), count, int(seed) + 67867967)
+    return min(count - 1, int(value * count))
 
 
 def _gore_noise(position: Sequence[float], scale: float, seed: int) -> float:
@@ -1626,7 +1671,12 @@ def raised_gore_face_records(
             material_id = GORE_MATERIAL_IDS[1]
         else:
             material_id = GORE_MATERIAL_IDS[0]
-        triangle_count = 4 * len(face) - 4
+        # The organic shell refines both caps into edge/centroid triangles.
+        # A compromised inner-rim segment is a closed prism per open island
+        # edge.  This deliberately conservative estimate keeps the final mesh
+        # below its requested budget even when every source edge is exposed.
+        inner_rim = bool(recipe["goreInnerRimEnabled"]) and float(recipe["goreInnerRimStrength"]) > 1e-8
+        triangle_count = (18 if inner_rim else 6) * len(face)
         candidates.append({
             "faceIndex": face_index,
             "vertices": list(face),
@@ -1634,6 +1684,7 @@ def raised_gore_face_records(
             "deformationResponse": round(deformation_response, 9),
             "thickness": round(thickness, 9),
             "materialId": material_id,
+            "textureVariant": gore_texture_variant_index(seed, face_index, 0),
             "zone": "CORE" if core_gate else "RIM" if rim_gate else "PERIPHERAL",
             "priority": round(deformation_response * 0.68 + organic * 0.32, 9),
             "estimatedTriangleCount": triangle_count,
@@ -1703,6 +1754,7 @@ def raised_gore_geometry_digest(
                 "vertices": [int(value) for value in record["vertices"]],
                 "thickness": round(float(record["thickness"]), 9),
                 "materialId": str(record["materialId"]),
+                "textureVariant": int(record.get("textureVariant", 0)),
                 "zone": str(record["zone"]),
             }
             for record in face_records

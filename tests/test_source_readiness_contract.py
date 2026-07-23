@@ -196,7 +196,7 @@ class SourceReadinessContractTests(unittest.TestCase):
         self.assertEqual(trauma_field.enabled_stamp_contract_errors([], "legacy-manual"), [])
 
     def test_export_never_runs_or_writes_source_readiness(self) -> None:
-        function = function_node(PACKAGE / "damage_authoring.py", "_export_asset")
+        function = function_node(PACKAGE / "damage_authoring.py", "_export_asset_inactive")
         call_names = {
             node.func.attr if isinstance(node.func, ast.Attribute) else node.func.id
             for node in ast.walk(function)
@@ -206,6 +206,14 @@ class SourceReadinessContractTests(unittest.TestCase):
         self.assertNotIn("write_damage_readiness_reports", call_names)
         self.assertNotIn("persist_source_readiness_contract", call_names)
         self.assertIn("_validate_authoring", call_names)
+        wrapper = function_node(PACKAGE / "damage_authoring.py", "_export_asset")
+        wrapper_calls = {
+            node.func.attr if isinstance(node.func, ast.Attribute) else node.func.id
+            for node in ast.walk(wrapper)
+            if isinstance(node, ast.Call) and isinstance(node.func, (ast.Attribute, ast.Name))
+        }
+        self.assertIn("capture_damage_preview_snapshot", wrapper_calls)
+        self.assertIn("restore_damage_preview_snapshot", wrapper_calls)
 
     def test_explicit_rerun_prefers_stored_contract_before_selection(self) -> None:
         source = (PACKAGE / "damage_readiness.py").read_text(encoding="utf-8")

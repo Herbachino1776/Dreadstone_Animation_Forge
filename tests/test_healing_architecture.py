@@ -194,6 +194,69 @@ class HealingArchitectureTests(unittest.TestCase):
         )
         self.assertEqual(len(advanced_call.args), 5)
 
+    def test_animation_workspace_restores_generator_tuning_and_approval_controls(self):
+        panels = (PACKAGE / "ui" / "panels.py").read_text(encoding="utf-8")
+        for contract in (
+            '"daf.adopt_imported_pack"',
+            '"ui_pose_open"', '"left_upper_arm_forward"', '"right_wrist_roll"',
+            '"ui_walk_open"', '"stride"', '"walk_asymmetry"', '"daf.walk"',
+            '"ui_death_open"', '"death_curl_strength"', '"daf.collapse"',
+            '"ui_hurt_open"', '"hurt_hand_reach"', '"daf.hurt_left"', '"daf.hurt_right"',
+            '"ui_mace_guard_open"', '"mace_guard_raise_seconds"',
+            '"daf.generate_mace_head_guards"', '"daf.validate_mace_head_guards"',
+            '"daf.approve_draft"', '"daf.approve_active_legacy"',
+        ):
+            self.assertIn(contract, panels)
+        animation = next(
+            item for item in ast.parse(panels).body
+            if isinstance(item, ast.FunctionDef) and item.name == "_draw_animation"
+        )
+        self.assertNotIn("damage_readiness", ast.unparse(animation))
+
+    def test_advanced_workspace_uses_remembered_collapsible_sections(self):
+        addon = (PACKAGE / "__init__.py").read_text(encoding="utf-8")
+        panels = (PACKAGE / "ui" / "panels.py").read_text(encoding="utf-8")
+        top_level_properties = (
+            "ui_advanced_character_open",
+            "ui_advanced_trauma_open",
+            "ui_advanced_diagnostics_open",
+        )
+        for property_name in top_level_properties:
+            self.assertIn(property_name, addon)
+            self.assertIn(property_name, panels)
+        advanced = next(
+            item for item in ast.parse(panels).body
+            if isinstance(item, ast.FunctionDef) and item.name == "_draw_advanced"
+        )
+        self.assertEqual(ast.unparse(advanced).count("_advanced_foldout"), 3)
+        authoring = (PACKAGE / "deformation_authoring.py").read_text(encoding="utf-8")
+        for property_name in (
+            "ui_advanced_regions_open", "ui_advanced_deformations_open",
+            "ui_advanced_capture_open", "ui_advanced_stamps_open",
+            "ui_advanced_gore_open", "ui_advanced_compound_open",
+            "ui_advanced_preview_open",
+        ):
+            self.assertIn(property_name, addon)
+            self.assertIn(property_name, authoring)
+        draw_panel = next(
+            item for item in ast.parse(authoring).body
+            if isinstance(item, ast.FunctionDef) and item.name == "draw_panel"
+        )
+        self.assertEqual(ast.unparse(draw_panel).count("_advanced_authoring_foldout"), 7)
+
+    def test_mace_guard_generation_applies_arm_and_hand_pose_polish(self):
+        tree = ast.parse((PACKAGE / "__init__.py").read_text(encoding="utf-8"))
+        generator = next(
+            item for item in tree.body
+            if isinstance(item, ast.FunctionDef) and item.name == "generate_mace_guard_action"
+        )
+        called = {
+            node.func.id
+            for node in ast.walk(generator)
+            if isinstance(node, ast.Call) and isinstance(node.func, ast.Name)
+        }
+        self.assertIn("apply_arm_hand_pose_polish", called)
+
     def test_preview_service_has_one_debounced_timer_and_stale_guard(self):
         source = (PACKAGE / "deformation" / "preview_service.py").read_text(encoding="utf-8")
         self.assertIn("QUIET_INTERVAL_SECONDS = 0.2", source)

@@ -132,7 +132,7 @@ class RaisedGoreTests(unittest.TestCase):
             "linkedCaptureTopologyFingerprint": "b" * 64,
         }
         migrated = trauma_field.normalize_gore_overlay(legacy)
-        self.assertEqual(migrated["goreRecipeVersion"], 2)
+        self.assertEqual(migrated["goreRecipeVersion"], 3)
         self.assertEqual(migrated["goreOverlayMode"], "SURFACE_STAIN")
         self.assertFalse(migrated["goreRaisedEnabled"])
 
@@ -152,6 +152,24 @@ class RaisedGoreTests(unittest.TestCase):
         first = [record["faceIndex"] for record in heavy_records(1)[3]]
         second = [record["faceIndex"] for record in heavy_records(2)[3]]
         self.assertNotEqual(first, second)
+
+    def test_master_seed_also_changes_random_fiber_directions(self):
+        first = [trauma_field.gore_texture_variant_index(101, 12, index) for index in range(24)]
+        repeated = [trauma_field.gore_texture_variant_index(101, 12, index) for index in range(24)]
+        second = [trauma_field.gore_texture_variant_index(202, 12, index) for index in range(24)]
+        self.assertEqual(first, repeated)
+        self.assertNotEqual(first, second)
+        self.assertGreaterEqual(len(set(first)), 3)
+        self.assertTrue(all(0 <= value < len(trauma_field.GORE_TEXTURE_VARIANTS) for value in first))
+
+    def test_heavy_preset_enables_organic_texture_and_inner_barrier(self):
+        overlay = heavy_overlay()
+        self.assertGreater(overlay["goreOrganicIrregularity"], 0.5)
+        self.assertGreater(overlay["goreSurfaceRoundness"], 0.5)
+        self.assertTrue(overlay["goreTextureEnabled"])
+        self.assertTrue(overlay["goreInnerRimEnabled"])
+        self.assertGreater(overlay["goreInnerRimWidth"], 0.0)
+        self.assertGreater(overlay["goreInnerRimStrength"], 0.0)
 
     def test_heavy_selection_retains_clean_face_gaps(self):
         _positions, faces, _overlay, records = heavy_records(1776)

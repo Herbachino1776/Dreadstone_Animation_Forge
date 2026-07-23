@@ -1,5 +1,29 @@
 # Changelog
 
+## 3.16.2
+
+- Restored the complete Animation workspace in the task UI: rig mapping, ground preview, arm/hand pose polish, walk, collapse, flank-hurt, mace-guard, approval, safety, and approved-pack controls are available independently of damage-authoring state.
+- Mace head-guard generation now applies the shared rotation-only arm and hand refinement sliders, allowing the two-arm, left-arm, and right-arm guards to be customized before versioning/approval.
+- Split Advanced into remembered collapsible **Character & Source Workflows**, **Trauma, Gore, Compound & Legacy Tools**, and **Diagnostics & Crash Support** sections. Trauma is further divided into collapsible region, deformation, capture, stamp, gore, compound, and preview/validation groups to remove the forced full-panel scroll.
+
+## 3.16.1
+
+- Unified deformation weights, surface stains, raised-gore ownership, and attached/detached/core inspection into one atomic Blender preview state. Inactive or zero-weight deformations can no longer leave generated gore visible through intact skin.
+- Added one prominent **CLEAR DAMAGE PREVIEW** operation across ordinary workflows. It clears temporary stain resources, zeros managed morphs, and hides raised gore while preserving recipes and generated export meshes.
+- Made key/region switching, live-preview disable, preview quality `OFF`, intact/detached presentation, event zero, and compound child activation use the same lifecycle. Compound previews now transition all participant morphs and gore nodes together.
+- Separated viewport presentation from export ownership. Damage export snapshots the exact preview, forces the inactive morph/gore state, exports, and restores the snapshot in `finally` even when validation or export fails.
+- Added independent additive **Muscle Fiber Contribution** and **Gore Color Contribution** sliders. Raised-gore materials use packed exportable textures composed from both signals without one replacing the other.
+- Added atomic lifecycle regression coverage for clear/re-preview, stale-key visibility, preserved recipes/meshes, export snapshot restoration, and 50 repeated cycles without leaked preview resources.
+
+## 3.16.0
+
+- Replaced one-prism-per-source-face raised gore with deterministic edge/centroid refinement, interpolated skin weights, relaxed thickness, rounded center bulges, and seed-driven tangent jitter so imported triangulation no longer dominates the silhouette.
+- Packaged the four supplied muscle-fiber rotations plus a 2x2 atlas. Every refined gore facet receives an independent master-seed-selected direction through exportable glTF UVs and image-texture materials.
+- Added an exportable compromised inner-reddening barrier as a closed secondary layer just inside every open gore-island boundary, with artist controls for width and compromise strength.
+- Added **Randomize Master Gore Seed**. The one master seed changes the complete overlay: stain breakup, selected islands, fragments, thickness, clot/edge material response, organic geometry, and fiber directions.
+- Added organic irregularity, surface roundness, muscle-fiber texture, and inner-barrier settings to normalized recipes, digests, portable metadata, rebuild staleness, UI, and validation.
+- Added Blender 5.1.2 runtime acceptance for manifold multilayer geometry, triangle budgets, atlas UVs, all four fiber directions, three material roles, packaged image paths, and source-surface ownership.
+
 ## 3.15.1
 
 - Fixed the Advanced workspace panel scope so cached diagnostics render correctly while using Preview/Rebuild Current Gore and other expert controls.

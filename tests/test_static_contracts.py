@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import ast
 import importlib.util
+import struct
 import sys
 import unittest
 from pathlib import Path
@@ -16,6 +17,23 @@ import validate_addon as contracts  # noqa: E402
 
 
 class StaticContractTests(unittest.TestCase):
+    def test_packaged_gore_texture_set_and_atlas(self) -> None:
+        root = ROOT / "dreadstone_animation_forge" / "assets" / "gore_textures"
+        names = [
+            "muscle_fibers_macro_rot_000.png",
+            "muscle_fibers_macro_rot_090.png",
+            "muscle_fibers_macro_rot_180.png",
+            "muscle_fibers_macro_rot_270.png",
+        ]
+        for name in names:
+            payload = (root / name).read_bytes()
+            self.assertTrue(payload.startswith(b"\x89PNG\r\n\x1a\n"), name)
+        atlas = (root / "muscle_fibers_macro_atlas.png").read_bytes()
+        self.assertTrue(atlas.startswith(b"\x89PNG\r\n\x1a\n"))
+        source_size = struct.unpack(">II", (root / names[0]).read_bytes()[16:24])
+        atlas_size = struct.unpack(">II", atlas[16:24])
+        self.assertEqual(atlas_size, (source_size[0] * 2, source_size[1] * 2))
+
     def test_surface_gore_overlay_authoring_contract(self) -> None:
         for preset in (
             "Gore_Ooze_Wet",
@@ -46,6 +64,7 @@ class StaticContractTests(unittest.TestCase):
             "daf.clear_current_generated_gore",
             "daf.rebuild_all_generated_gore",
             "daf.validate_gore_geometry",
+            "daf.randomize_gore_seed",
         ):
             self.assertIn(operator, self.deformation)
         for key_name in (
@@ -69,7 +88,14 @@ class StaticContractTests(unittest.TestCase):
         self.assertIn('if existing_recipe and existing_recipe.get("goreUserCustomized", False):', self.deformation)
         self.assertIn('def _region_gore_sources(', self.deformation)
         self.assertIn('return ((attached, "CORE"),)', self.deformation)
-        self.assertIn("allowed = {'ShaderNodeOutputMaterial', 'ShaderNodeBsdfPrincipled'}", self.deformation)
+        self.assertIn(
+            "allowed = {'ShaderNodeOutputMaterial', 'ShaderNodeBsdfPrincipled', 'ShaderNodeTexImage'}",
+            self.deformation,
+        )
+        self.assertIn('GORE_TEXTURE_ATLAS_IMAGE = "DSB_Muscle_Fibers_Macro_Atlas"', self.deformation)
+        self.assertIn('name="DSB_Gore_Texture_Variant"', self.deformation)
+        self.assertIn('name="DSB_Gore_Layer"', self.deformation)
+        self.assertIn('"ORGANIC_REFINED_TEXTURED_RIM_V3"', self.deformation)
         self.assertIn('emission.default_value = (0.0, 0.0, 0.0, 1.0)', self.deformation)
         self.assertIn('emission_strength.default_value = 0.0', self.deformation)
         self.assertIn('trauma_field.has_effective_emission(emission.default_value, strength)', self.deformation)
@@ -116,7 +142,7 @@ class StaticContractTests(unittest.TestCase):
         manifest = contracts.MANIFEST_PATH.read_text(encoding="utf-8")
         self.assertIn('schema_version = "1.0.0"', manifest)
         self.assertIn('id = "dreadstone_animation_forge"', manifest)
-        self.assertIn('version = "3.15.1"', manifest)
+        self.assertIn('version = "3.16.2"', manifest)
         builder = (ROOT / "scripts" / "build_release.py").read_text(encoding="utf-8")
         self.assertIn('ARCHIVE_ENTRIES = ("blender_manifest.toml", *MODULES', builder)
         self.assertNotIn('"dreadstone_animation_forge/__init__.py"', builder)
@@ -137,7 +163,7 @@ class StaticContractTests(unittest.TestCase):
         version = contracts.EXPECTED_VERSION
         self.assertEqual(
             f"Dreadstone_Animation_Forge_v{'_'.join(map(str, version))}.zip",
-            "Dreadstone_Animation_Forge_v3_15_1.zip",
+            "Dreadstone_Animation_Forge_v3_16_2.zip",
         )
 
     def test_authoritative_user_workflow_guide_contract(self) -> None:
@@ -155,8 +181,8 @@ class StaticContractTests(unittest.TestCase):
     def test_release_readme_contains_install_quick_start_and_guide_reference(self) -> None:
         readme = (ROOT / "README.md").read_text(encoding="utf-8")
         for marker in (
-            "3.15.1",
-            "Dreadstone_Animation_Forge_v3_15_1.zip",
+            "3.16.2",
+            "Dreadstone_Animation_Forge_v3_16_2.zip",
             "Install from Disk",
             "## Quick start",
             "docs/USER_WORKFLOW_GUIDE.md",

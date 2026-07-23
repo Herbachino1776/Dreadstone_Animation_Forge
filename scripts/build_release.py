@@ -15,13 +15,18 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 PACKAGE = ROOT / "dreadstone_animation_forge"
 DIST = ROOT / "dist"
-DEFORMATION_BUILD = "2026-07-20.healing.2"
+DEFORMATION_BUILD = "2026-07-21.animation-ui-foldouts.1"
 MODULES = tuple(sorted(
     path.relative_to(PACKAGE).as_posix()
     for path in PACKAGE.rglob("*.py")
     if "__pycache__" not in path.parts
 ))
-ARCHIVE_ENTRIES = ("blender_manifest.toml", *MODULES, "README.txt", "VALIDATION.txt")
+ASSETS = tuple(sorted(
+    path.relative_to(PACKAGE).as_posix()
+    for path in (PACKAGE / "assets").rglob("*")
+    if path.is_file()
+))
+ARCHIVE_ENTRIES = ("blender_manifest.toml", *MODULES, *ASSETS, "README.txt", "VALIDATION.txt")
 ZIP_TIMESTAMP = (1980, 1, 1, 0, 0, 0)
 
 
@@ -94,7 +99,7 @@ def build_zip(target: Path, readme: bytes, validation: bytes) -> None:
         "VALIDATION.txt": validation,
         **{
             name: (PACKAGE / name).read_bytes()
-            for name in MODULES
+            for name in (*MODULES, *ASSETS)
         },
     }
     with zipfile.ZipFile(target, "w") as archive:

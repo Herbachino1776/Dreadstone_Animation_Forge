@@ -1,6 +1,6 @@
 # Raised gore export contract
 
-Forge 3.14 exports raised surface gore as ordinary glTF mesh nodes for paired head/forearm regions, core meshes, and compound-event participants. It does not export cavities, exposed anatomy, runtime code, or zero-scale hiding.
+Forge 3.16 exports raised surface gore as ordinary glTF mesh nodes for paired head/forearm regions, core meshes, and compound-event participants. It does not export cavities, exposed anatomy, runtime code, or zero-scale hiding.
 
 ## Node representation
 
@@ -11,7 +11,7 @@ Each enabled deformation owns exactly two stable nodes when its registered regio
 
 Long or unsafe names are normalized and receive a deterministic hash suffix. Every node is Forge-owned, exportable, not preview-only, hidden for the authoring file's undamaged render state, and carries glTF extras for mesh ID, region ID, deformation key, pair role, source object/topology, linked stamp/capture, recipe/input/mesh digests, material IDs/names, triangle count, activation weight, and `defaultVisible = false`.
 
-The mesh is a closed shell above the intact fully deformed exterior. A point-domain `DSB_Gore_Source_Vertex` attribute records source ownership inside Blender; portable recipes do not contain generated mesh bytes.
+The mesh contains a closed organic refined shell above the intact fully deformed exterior plus, when enabled, closed inner-reddening prisms just inside each open gore-island edge. Point-domain `DSB_Gore_Source_Vertex` and `DSB_Gore_Source_Position` attributes record source ownership and the interpolated refined surface. Face-domain `DSB_Gore_Texture_Variant` and `DSB_Gore_Layer` attributes record master-seed fiber direction and base/shell/inner-barrier classification. Portable recipes do not contain generated mesh bytes.
 
 ## Materials
 
@@ -21,7 +21,9 @@ Every shell has exactly three zero-metallic, non-emissive Principled materials:
 - `DSB_GORE_DARK_CLOT_<recipe>`
 - `DSB_GORE_ROUGH_EDGE_<recipe>`
 
-The suffix is the stable recipe-digest prefix. Only Principled BSDF and Material Output nodes are used, so Blender's glTF exporter can represent the material family. Temporary stain-preview copies and `DSB_Surface_Gore_Mask` are cleared before export.
+The suffix is the stable recipe-digest prefix. Textured recipes add one glTF-safe Image Texture node backed by a packed additive composition of the packaged 2x2 muscle-fiber atlas and the material's procedural gore color. `goreFiberTextureStrength` and `goreBaseColorStrength` contribute independently before clamping. Every refined face gets an independent atlas quadrant chosen by the master gore seed; the source filenames are visual rotations, not anatomical orientation rules. Temporary stain-preview copies and `DSB_Surface_Gore_Mask` are cleared before export.
+
+Viewport presentation state is not export ownership state. Export snapshots the exact morph values, stain links, object visibility, and inspection mode; temporarily zeros managed morphs and forces generated gore to its inactive/default contract; exports; then restores the snapshot in `finally`.
 
 ## Manifest mapping
 
@@ -43,6 +45,6 @@ Forge records this contract but does not implement Folsom Field/Godot runtime ac
 
 ## Validation and rebuild
 
-Export blocks when an enabled raised recipe has missing/wrong nodes, stale recipe/deformation/capture/topology/pairing digests, altered geometry, missing ownership, invalid source-vertex mapping, missing skinning, floating or z-fighting-risk offsets, empty/degenerate/duplicate/non-manifold faces, material/node violations, incorrect inactive/preview flags, or triangle-budget excess.
+Export blocks when an enabled raised recipe has missing/wrong nodes, stale recipe/deformation/capture/topology/pairing digests, altered geometry, missing ownership or refined source positions, invalid source mapping, missing skinning, floating or z-fighting-risk offsets, empty/degenerate/duplicate/non-manifold faces, missing UV/fiber/layer attributes, missing compromised inner barrier, material/image-node violations, incorrect inactive/preview flags, or triangle-budget excess.
 
 **Rebuild All Generated Gore** deletes only Forge-owned shells and recreates them from recipe plus current capture/deformation inputs. It never changes source topology, source materials, shape keys, deformation values, or Source Readiness.

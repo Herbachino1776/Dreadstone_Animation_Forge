@@ -1779,7 +1779,7 @@ def _manifest(state, validation, glb_filename):
     }
 
 
-def _export_asset(context, settings, state):
+def _export_asset_inactive(context, settings, state):
     if getattr(context, "mode", "OBJECT") != 'OBJECT':
         raise RuntimeError("Switch Blender to Object Mode before exporting the Damage GLB.")
     from . import deformation_authoring
@@ -1855,6 +1855,17 @@ def _export_asset(context, settings, state):
     _json_write(manifest_path, _manifest(state, validation, os.path.basename(glb_path)))
     _json_write(validation_path, validation)
     return glb_path, manifest_path, validation_path
+
+
+def _export_asset(context, settings, state):
+    """Export from an inactive damage state, then restore the exact viewport preview."""
+
+    from . import deformation_authoring
+    snapshot = deformation_authoring.capture_damage_preview_snapshot(context)
+    try:
+        return _export_asset_inactive(context, settings, state)
+    finally:
+        deformation_authoring.restore_damage_preview_snapshot(context, snapshot)
 
 
 class DAF_OT_load_damage_readiness_handoff(Operator):
@@ -1938,7 +1949,9 @@ class DAF_OT_preview_damage_intact(Operator):
 
     def execute(self, context):
         try:
+            from . import deformation_authoring
             state = _load_state()
+            deformation_authoring.clear_damage_preview(context, update_status=False)
             _preview_intact(state)
             context.scene.daf_settings.damage_authoring_status = "INTACT PREVIEW"
             return {'FINISHED'}
@@ -1955,8 +1968,10 @@ class DAF_OT_preview_damage_detached(Operator):
 
     def execute(self, context):
         try:
+            from . import deformation_authoring
             settings = context.scene.daf_settings
             state = _load_state()
+            deformation_authoring.clear_damage_preview(context, update_status=False)
             _preview_detached(state, settings.damage_authoring_seam)
             settings.damage_authoring_status = "DETACHED PREVIEW — " + SEAM_SPECS[settings.damage_authoring_seam]["label"]
             return {'FINISHED'}

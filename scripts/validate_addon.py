@@ -33,13 +33,13 @@ ALL_MODULE_PATHS = tuple(sorted(
     if "__pycache__" not in path.parts
 ))
 
-EXPECTED_VERSION = (3, 15, 1)
+EXPECTED_VERSION = (3, 16, 2)
 EXPECTED_READINESS_BUILD = "2026-07-18.source-contract.1"
 EXPECTED_AUTHORING_BUILD = "2026-07-18.source-contract.1"
-EXPECTED_DEFORMATION_BUILD = "2026-07-20.healing.2"
+EXPECTED_DEFORMATION_BUILD = "2026-07-21.animation-ui-foldouts.1"
 
 REQUIRED_GUIDE_HEADINGS = (
-    "## 1. Install Dreadstone Animation Forge 3.15.1",
+    "## 1. Install Dreadstone Animation Forge 3.16.2",
     "## 2. Open the Dreadstone panel",
     "## 3. Import and prepare a source GLB",
     "## 5. Author and approve animation drafts",
@@ -92,6 +92,7 @@ REQUIRED_GUIDE_UI_LABELS = {
     "**Create Blunt Gore Head Set**",
     "**Enable Surface Gore Overlay**",
     "**Use Preset Defaults**",
+    "**Randomize Master Gore Seed**",
     "**Apply Gore Overlay Settings**",
     "**Preview / Rebuild Current Gore**",
     "**Clear Stain Preview**",
@@ -241,7 +242,7 @@ REQUIRED_OPERATORS = {
 REQUIRED_UI_TEXT = {
     "Source Damage Readiness",
     "Damage Segment & Stump Authoring v3.9",
-    "Trauma Field Authoring v3.15.1",
+    "Trauma Field Authoring v3.16.2",
     "5. Surface Gore Overlay",
     "Restore Reimported GLB Intact Preview",
     "Validate Complete Damage Asset",
@@ -419,7 +420,7 @@ def check_extension_manifest() -> None:
         (
             'schema_version = "1.0.0"',
             'id = "dreadstone_animation_forge"',
-            'version = "3.15.1"',
+            'version = "3.16.2"',
             'name = "Dreadstone Animation Forge"',
             'type = "add-on"',
             'blender_version_min = "4.2.0"',
@@ -710,7 +711,7 @@ def check_source_readiness_contracts(sources: dict[str, str], trees: dict[str, a
     )
     export = next(
         node for node in trees["damage_authoring.py"].body
-        if isinstance(node, ast.FunctionDef) and node.name == "_export_asset"
+        if isinstance(node, ast.FunctionDef) and node.name == "_export_asset_inactive"
     )
     called = {
         node.func.attr if isinstance(node.func, ast.Attribute) else node.func.id
@@ -724,6 +725,17 @@ def check_source_readiness_contracts(sources: dict[str, str], trees: dict[str, a
     }
     require(not (called & forbidden), "export reruns or overwrites source readiness")
     require("_validate_authoring" in called, "export does not run generated authoring validation")
+    wrapper = next(
+        node for node in trees["damage_authoring.py"].body
+        if isinstance(node, ast.FunctionDef) and node.name == "_export_asset"
+    )
+    wrapper_called = {
+        node.func.attr if isinstance(node.func, ast.Attribute) else node.func.id
+        for node in ast.walk(wrapper)
+        if isinstance(node, ast.Call) and isinstance(node.func, (ast.Attribute, ast.Name))
+    }
+    require("capture_damage_preview_snapshot" in wrapper_called, "export does not snapshot damage preview")
+    require("restore_damage_preview_snapshot" in wrapper_called, "export does not restore damage preview")
 
 
 def check_glb_morph_hooks(tree: ast.Module) -> None:
@@ -778,14 +790,14 @@ def check_repository_hygiene() -> None:
 
 
 def main() -> int:
-    print("DREADSTONE ANIMATION FORGE v3.15.1 STATIC VALIDATION")
+    print("DREADSTONE ANIMATION FORGE v3.16.2 STATIC VALIDATION")
     print("Blender is not imported; runtime acceptance remains separate.")
 
     sources: dict[str, str] = {}
     trees: dict[str, ast.Module] = {}
     checks: list[tuple[str, Callable[[], None]]] = [
         ("all five package modules exist", check_module_files),
-        ("Blender extension manifest exists and matches v3.15.1", check_extension_manifest),
+        ("Blender extension manifest exists and matches v3.16.2", check_extension_manifest),
         ("all Python modules parse with ast.parse", lambda: check_parse(sources)),
         ("all Python modules compile with py_compile", check_compile),
         ("add-on/deformation version and build contracts", lambda: check_versions(trees)),
