@@ -153,6 +153,7 @@ class ImpactParameterContractTests(unittest.TestCase):
             if identifier.startswith("deformation_gore_")
             and contract.recipe_field
             and contract.recipe_field != "goreMaskSeed"
+            and identifier not in schema.GORE_MACRO_IDENTIFIERS
         } | {"gorePatchScale", "goreMaskSeed"})
         for field in fields:
             contract = schema.recipe_spec(field)
@@ -246,7 +247,7 @@ class ImpactParameterContractTests(unittest.TestCase):
         payload = {
             "schema": trauma.STAMP_LIBRARY_SCHEMA,
             "formatVersion": 4,
-            "producer": {"forgeVersion": "3.17.0", "deformationBuildId": "test"},
+            "producer": {"forgeVersion": "3.18.0", "deformationBuildId": "test"},
             "regions": [{
                 "regionId": "head",
                 "regionMode": "CORE_SINGLE",

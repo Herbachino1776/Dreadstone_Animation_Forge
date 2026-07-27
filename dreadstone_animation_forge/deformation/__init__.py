@@ -1,6 +1,7 @@
 """Blender-facing deformation services used by the compatibility facade."""
 
 from . import (
+    cavity_service,
     compound_service,
     diagnostics,
     gore_service,

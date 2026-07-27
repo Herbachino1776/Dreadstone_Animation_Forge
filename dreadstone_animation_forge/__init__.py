@@ -1,7 +1,7 @@
 bl_info = {
     "name": "Dreadstone Animation Forge",
     "author": "Dreadstone Black",
-    "version": (3, 17, 0),
+    "version": (3, 18, 0),
     "blender": (3, 6, 0),
     "location": "3D Viewport > Sidebar > Dreadstone",
     "description": "Animation authoring, protected damage assets, and registered-region trauma-field shape-key authoring.",
@@ -740,6 +740,24 @@ def _impact_seed_property_updated(self, context):
         module.apply_impact_seed_transaction(context, "master impact seed changed")
 
 
+def _gore_macro_property_updated(self, context):
+    module = sys.modules.get(f"{__package__}.deformation_authoring")
+    if module is not None:
+        module.apply_gore_macro_transaction(context, "Gore Pedal changed")
+
+
+def _gore_seed_property_updated(self, context):
+    module = sys.modules.get(f"{__package__}.deformation_authoring")
+    if module is not None:
+        module.apply_gore_seed_transaction(context, "master gore seed changed")
+
+
+def _gore_identity_property_updated(self, context):
+    module = sys.modules.get(f"{__package__}.deformation_authoring")
+    if module is not None:
+        module.apply_gore_identity_transaction(context)
+
+
 def _deformation_region_items(self, context):
     module = sys.modules.get(f"{__package__}.deformation_authoring")
     if module is None:
@@ -783,6 +801,7 @@ class DAFSettings(PropertyGroup):
     ui_advanced_preview_open: BoolProperty(default=False)
     ui_advanced_legacy_open: BoolProperty(default=False)
     ui_advanced_impact_internals_open: BoolProperty(default=False)
+    ui_advanced_gore_internals_open: BoolProperty(default=False)
     ui_character_open: BoolProperty(default=True)
     ui_ground_open: BoolProperty(default=False)
     ui_rig_open: BoolProperty(default=False)
@@ -1273,7 +1292,7 @@ class DAFSettings(PropertyGroup):
     last_damage_manifest_path: StringProperty(default="", options={'HIDDEN'})
     last_damage_validation_path: StringProperty(default="", options={'HIDDEN'})
 
-    # Trauma Field Authoring v3.17.0.
+    # Trauma Field Authoring v3.18.0.
     deformation_region: EnumProperty(
         name="Active Region",
         items=_deformation_region_items,
@@ -1502,6 +1521,64 @@ class DAFSettings(PropertyGroup):
         default=False,
         update=_deformation_preview_property_updated,
     )
+    deformation_gore_identity: EnumProperty(
+        name="Gore Identity",
+        description="Choose one strongly differentiated Cavity/Inlay Gore identity",
+        items=[
+            ("BRUISED_DENT", "Bruised Dent", "Shallow crushed depression with stain-led damage"),
+            ("BLOODY_CRATER", "Bloody Crater", "Wet recessed bed with restrained clot fill"),
+            ("DARK_CLOT_CAVITY", "Dark Clot Cavity", "Deep recess partially occupied by dark clot"),
+            ("CRUSHED_TISSUE", "Crushed Tissue", "Broad compressed wound with fiber and tissue breakup"),
+            ("EXPOSED_CRANIUM", "Exposed Cranium", "Deep low-fill cavity with an exposed pale plate"),
+            ("RAGGED_IMPACT", "Ragged Impact", "Irregular cavity with bounded peripheral fragments"),
+        ],
+        default="BLOODY_CRATER",
+        update=_gore_identity_property_updated,
+    )
+    deformation_gore_geometry_mode: EnumProperty(
+        name="Geometry Mode",
+        items=[
+            ("STAIN_ONLY", "Stain Only", "Surface stain without generated geometry"),
+            ("CAVITY_INLAY", "Cavity / Inlay", "Recessed liner and optional internal layers"),
+            ("LEGACY_RAISED", "Legacy Raised", "Compatibility mode for existing raised-shell recipes"),
+        ],
+        default="CAVITY_INLAY",
+    )
+    deformation_gore_control_mode: EnumProperty(
+        name="Gore Control Mode",
+        items=[
+            ("MACRO", "MACRO", "The six Gore Pedal controls are authoritative"),
+            ("MANUAL", "MANUAL", "Advanced physical gore values are authoritative"),
+        ],
+        default="MACRO",
+    )
+    deformation_gore_exposure: FloatProperty(
+        **parameter_schema.blender_kwargs("deformation_gore_exposure"),
+        update=_gore_macro_property_updated,
+    )
+    deformation_gore_cavity: FloatProperty(
+        **parameter_schema.blender_kwargs("deformation_gore_cavity"),
+        update=_gore_macro_property_updated,
+    )
+    deformation_gore_clot_fill: FloatProperty(
+        **parameter_schema.blender_kwargs("deformation_gore_clot_fill"),
+        update=_gore_macro_property_updated,
+    )
+    deformation_gore_breakup: FloatProperty(
+        **parameter_schema.blender_kwargs("deformation_gore_breakup"),
+        update=_gore_macro_property_updated,
+    )
+    deformation_gore_wetness_macro: FloatProperty(
+        **parameter_schema.blender_kwargs("deformation_gore_wetness_macro"),
+        update=_gore_macro_property_updated,
+    )
+    deformation_gore_variation: FloatProperty(
+        **parameter_schema.blender_kwargs("deformation_gore_variation"),
+        update=_gore_macro_property_updated,
+    )
+    deformation_gore_dirty: BoolProperty(default=False, options={"HIDDEN"})
+    deformation_gore_identity_digest: StringProperty(default="", options={"HIDDEN"})
+    deformation_gore_transaction_count: IntProperty(default=0, min=0, options={"HIDDEN"})
     deformation_default_heavy_gore: BoolProperty(
         name="Default New Impacts to High-Intensity Gore",
         description="Link the heavy-clotted recipe when the first valid stamp is added to a new deformation",
@@ -1516,8 +1593,14 @@ class DAFSettings(PropertyGroup):
             ('Gore_Speckled_Impact', "Speckled Impact", "Sparse fine impact breakup"),
             ('Gore_Crush_Bloodied', "Crush Bloodied", "Dense dark wet coverage for a crushed surface"),
             ('Gore_Crush_Heavy_Clotted', "Crush Heavy Clotted", "High-intensity raised clots, broken islands, dark recesses, and wet crimson highlights"),
+            ('Gore_Bruised_Dent', "Bruised Dent", "Cavity/inlay identity: shallow compressed dent"),
+            ('Gore_Bloody_Crater', "Bloody Crater", "Cavity/inlay identity: wet crater"),
+            ('Gore_Dark_Clot_Cavity', "Dark Clot Cavity", "Cavity/inlay identity: deep dark clot"),
+            ('Gore_Crushed_Tissue', "Crushed Tissue", "Cavity/inlay identity: crushed fiber layer"),
+            ('Gore_Exposed_Cranium', "Exposed Cranium", "Cavity/inlay identity: exposed pale plate"),
+            ('Gore_Ragged_Impact', "Ragged Impact", "Cavity/inlay identity: torn irregular rim"),
         ],
-        default='Gore_Crush_Heavy_Clotted',
+        default='Gore_Bloody_Crater',
     )
     deformation_gore_coverage: FloatProperty(**parameter_schema.blender_kwargs("deformation_gore_coverage"), update=_deformation_preview_property_updated)
     deformation_gore_scatter: FloatProperty(**parameter_schema.blender_kwargs("deformation_gore_scatter"), update=_deformation_preview_property_updated)
@@ -1530,8 +1613,8 @@ class DAFSettings(PropertyGroup):
         subtype='COLOR',
     )
     deformation_gore_raised_enabled: BoolProperty(
-        name="Enable Raised Gore",
-        description="Generate ordinary exportable gore shell meshes above the intact deformed surface",
+        name="Enable Generated Gore",
+        description="Generate exportable cavity/inlay geometry or an explicit legacy raised shell",
         default=True,
         update=_deformation_preview_property_updated,
     )
@@ -1593,10 +1676,55 @@ class DAFSettings(PropertyGroup):
         description="Prevent Apply Heavy Gore to All Deformations from replacing this key's recipe",
         default=False,
     )
+    deformation_gore_cavity_depth: FloatProperty(
+        **parameter_schema.blender_kwargs("deformation_gore_cavity_depth"),
+    )
+    deformation_gore_liner_separation: FloatProperty(
+        **parameter_schema.blender_kwargs("deformation_gore_liner_separation"),
+    )
+    deformation_gore_rim_width: FloatProperty(
+        **parameter_schema.blender_kwargs("deformation_gore_rim_width"),
+    )
+    deformation_gore_clot_fill_depth: FloatProperty(
+        **parameter_schema.blender_kwargs("deformation_gore_clot_fill_depth"),
+    )
+    deformation_gore_proudness_limit: FloatProperty(
+        **parameter_schema.blender_kwargs("deformation_gore_proudness_limit"),
+    )
+    deformation_gore_host_deformation_contribution: FloatProperty(
+        **parameter_schema.blender_kwargs("deformation_gore_host_deformation_contribution"),
+    )
+    deformation_gore_bone_reveal: FloatProperty(
+        **parameter_schema.blender_kwargs("deformation_gore_bone_reveal"),
+    )
+    deformation_gore_tissue_coverage: FloatProperty(
+        **parameter_schema.blender_kwargs("deformation_gore_tissue_coverage"),
+    )
+    deformation_gore_wound_bed_enabled: BoolProperty(name="Wound Bed", default=True)
+    deformation_gore_clot_layer_enabled: BoolProperty(name="Clot Layer", default=True)
+    deformation_gore_tissue_layer_enabled: BoolProperty(name="Tissue / Fiber Layer", default=False)
+    deformation_gore_bone_layer_enabled: BoolProperty(name="Exposed Bone Plate", default=False)
+    deformation_gore_barrier_layer_enabled: BoolProperty(name="Compromised Barrier", default=True)
+    deformation_gore_raised_rim_opt_in: BoolProperty(
+        name="Explicit Raised Rim",
+        description="Allow only the identity's capped rim proudness",
+        default=False,
+    )
+    deformation_gore_allow_internal_fragments: BoolProperty(
+        name="Internal Fragments",
+        description="Permit deterministic small internal fragments inside the cavity",
+        default=False,
+    )
     deformation_gore_mask_seed: IntProperty(
         description="Repeatable seed for overlay breakup, islands, fragments, thickness, organic shape, materials, and fiber directions",
         **parameter_schema.blender_kwargs("deformation_gore_mask_seed"),
+        update=_gore_seed_property_updated,
     )
+    deformation_gore_geometry_status: StringProperty(default="NOT GENERATED", options={"HIDDEN"})
+    deformation_gore_validation_status: StringProperty(default="NOT VALIDATED", options={"HIDDEN"})
+    deformation_gore_max_proudness: FloatProperty(default=0.0, min=0.0, options={"HIDDEN"})
+    deformation_gore_median_cavity_depth: FloatProperty(default=0.0, min=0.0, options={"HIDDEN"})
+    deformation_gore_minimum_liner_separation: FloatProperty(default=0.0, min=0.0, options={"HIDDEN"})
     deformation_status: StringProperty(default="NOT INITIALIZED", options={'HIDDEN'})
     last_deformation_validation: StringProperty(default="NOT VALIDATED", options={'HIDDEN'})
 
@@ -4189,7 +4317,7 @@ class DAF_PT_legacy_panel(Panel):
             layout,
             s,
             "ui_deformation_authoring_open",
-            "Trauma Field Authoring v3.17.0",
+            "Trauma Field Authoring v3.18.0",
         )
         if opened:
             configure_property_box(box)

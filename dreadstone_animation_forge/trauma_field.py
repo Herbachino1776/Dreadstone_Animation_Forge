@@ -89,13 +89,21 @@ COMPOUND_CONTINUITY_MODES = (
     "PROTECT_SEAM",
 )
 
-GORE_RECIPE_VERSION = 3
+GORE_RECIPE_VERSION = 4
 GORE_OVERLAY_MODES = ("SURFACE_STAIN", "STAIN_AND_RAISED")
+GORE_GEOMETRY_MODES = ("STAIN_ONLY", "CAVITY_INLAY", "LEGACY_RAISED")
 GORE_TEXTURE_VARIANTS = ("000", "090", "180", "270")
-GORE_MATERIAL_IDS = (
+LEGACY_GORE_MATERIAL_IDS = (
     "DSB_GORE_WET_CRIMSON",
     "DSB_GORE_DARK_CLOT",
     "DSB_GORE_ROUGH_EDGE",
+)
+GORE_MATERIAL_IDS = LEGACY_GORE_MATERIAL_IDS
+CAVITY_GORE_MATERIAL_IDS = (
+    *LEGACY_GORE_MATERIAL_IDS,
+    "DSB_GORE_DEEP_WOUND_BED",
+    "DSB_GORE_CRUSHED_TISSUE",
+    "DSB_GORE_EXPOSED_BONE",
 )
 GORE_MATERIAL_SPECS = {
     "DSB_GORE_WET_CRIMSON": {
@@ -113,7 +121,30 @@ GORE_MATERIAL_SPECS = {
         "roughness": 0.78,
         "metallic": 0.0,
     },
+    "DSB_GORE_DEEP_WOUND_BED": {
+        "baseColor": (0.055, 0.0012, 0.0010, 1.0),
+        "roughness": 0.52,
+        "metallic": 0.0,
+    },
+    "DSB_GORE_CRUSHED_TISSUE": {
+        "baseColor": (0.24, 0.020, 0.012, 1.0),
+        "roughness": 0.58,
+        "metallic": 0.0,
+    },
+    "DSB_GORE_EXPOSED_BONE": {
+        "baseColor": (0.48, 0.31, 0.22, 1.0),
+        "roughness": 0.68,
+        "metallic": 0.0,
+    },
 }
+
+
+def gore_material_ids_for_mode(geometry_mode):
+    return (
+        CAVITY_GORE_MATERIAL_IDS
+        if str(geometry_mode) == "CAVITY_INLAY"
+        else LEGACY_GORE_MATERIAL_IDS
+    )
 
 
 def has_effective_emission(color, strength, epsilon=1e-8):
@@ -1107,11 +1138,34 @@ def default_gore_overlay(
 
     if preset_id not in GORE_PRESETS:
         raise ValueError(f"unsupported surface gore preset {preset_id!r}")
+    preset = dict(GORE_PRESETS[preset_id])
+    identity_id = str(preset.get("goreIdentityId", ""))
+    if identity_id in parameter_schema.GORE_IDENTITIES:
+        macros = dict(preset.get(
+            "goreMacroDefaults",
+            parameter_schema.gore_identity_defaults(identity_id)["macros"],
+        ))
+        preset.update(parameter_schema.derive_gore_parameters(
+            macros,
+            identity_id=identity_id,
+            region_scale=0.075,
+            stamp_depth=0.025,
+            mean_edge_length=0.004,
+        ))
+        preset["goreControl"] = parameter_schema.normalize_gore_control({
+            "identityId": identity_id,
+            "mode": "MACRO",
+            "macros": macros,
+            "seed": int(seed),
+        })
+    elif bool(preset.get("goreRaisedEnabled", False)):
+        preset["goreGeometryMode"] = "LEGACY_RAISED"
+        preset["goreIdentityId"] = preset_id
     return normalize_gore_overlay({
         "goreRecipeVersion": GORE_RECIPE_VERSION,
         "goreOverlayEnabled": bool(enabled),
         "gorePresetId": preset_id,
-        **GORE_PRESETS[preset_id],
+        **preset,
         "goreMaskSeed": int(seed),
         "linkedRegionId": str(region_id),
         "linkedStampId": str(linked_stamp_id),
@@ -1122,11 +1176,11 @@ def default_gore_overlay(
 
 
 def normalize_gore_overlay(overlay: Mapping[str, object]) -> dict[str, object]:
-    """Canonicalize a recipe while deterministically migrating Forge 3.12 data.
+    """Canonicalize a recipe while preserving legacy raised-gore semantics.
 
-    Forge 3.12 recipes did not contain raised-gore fields. They intentionally
-    migrate to ``SURFACE_STAIN`` so opening an older library never creates new
-    geometry until the artist selects a raised preset or explicitly enables it.
+    Recipe versions 1-3 never represented a cavity.  Stain-only records remain
+    ``STAIN_ONLY`` and every previously raised record becomes
+    ``LEGACY_RAISED``.  Explicit v4 records may select ``CAVITY_INLAY``.
     """
 
     if not isinstance(overlay, Mapping):
@@ -1134,6 +1188,12 @@ def normalize_gore_overlay(overlay: Mapping[str, object]) -> dict[str, object]:
     preset_id = str(overlay.get("gorePresetId", ""))
     if preset_id not in GORE_PRESETS:
         raise ValueError(f"unsupported surface gore preset {preset_id!r}")
+    try:
+        source_recipe_version = int(overlay.get("goreSourceRecipeVersion", overlay.get("goreRecipeVersion", 1)))
+    except (TypeError, ValueError, OverflowError):
+        raise ValueError("surface gore recipe version must be an integer") from None
+    if source_recipe_version < 1 or source_recipe_version > GORE_RECIPE_VERSION:
+        raise ValueError(f"unsupported surface gore recipe version {source_recipe_version}")
     defaults = GORE_PRESETS[preset_id]
     raised_fields_present = any(
         field in overlay
@@ -1149,6 +1209,43 @@ def normalize_gore_overlay(overlay: Mapping[str, object]) -> dict[str, object]:
             key: value for key, value in defaults.items()
             if key in RAISED_GORE_DEFAULTS
         })
+    explicit_geometry_mode = str(overlay.get("goreGeometryMode", "")).upper()
+    legacy_raised = bool(
+        overlay.get("goreRaisedEnabled", raised_defaults["goreRaisedEnabled"])
+        or str(overlay.get("goreOverlayMode", raised_defaults["goreOverlayMode"])) == "STAIN_AND_RAISED"
+    )
+    if explicit_geometry_mode:
+        geometry_mode = explicit_geometry_mode
+    elif source_recipe_version <= 3:
+        geometry_mode = "LEGACY_RAISED" if legacy_raised else "STAIN_ONLY"
+    else:
+        geometry_mode = str(defaults.get("goreGeometryMode", "STAIN_ONLY")).upper()
+    if geometry_mode not in GORE_GEOMETRY_MODES:
+        raise ValueError(f"unsupported gore geometry mode {geometry_mode!r}")
+    identity_id = str(
+        overlay.get(
+            "goreIdentityId",
+            defaults.get("goreIdentityId", "BLOODY_CRATER" if geometry_mode == "CAVITY_INLAY" else preset_id),
+        )
+    )
+    if geometry_mode == "CAVITY_INLAY" and identity_id not in parameter_schema.GORE_IDENTITIES:
+        raise ValueError(f"unsupported cavity/inlay gore identity {identity_id!r}")
+    control = overlay.get("goreControl")
+    if isinstance(control, Mapping):
+        normalized_control = parameter_schema.normalize_gore_control(control)
+    else:
+        macro_defaults = defaults.get(
+            "goreMacroDefaults",
+            parameter_schema.gore_identity_defaults("BLOODY_CRATER")["macros"],
+        )
+        normalized_control = parameter_schema.normalize_gore_control({
+            "schema": parameter_schema.GORE_CONTROL_SCHEMA,
+            "version": parameter_schema.GORE_CONTROL_VERSION,
+            "mode": "MACRO" if geometry_mode == "CAVITY_INLAY" else "MANUAL",
+            "identityId": identity_id if identity_id in parameter_schema.GORE_IDENTITIES else "BLOODY_CRATER",
+            "macros": macro_defaults,
+            "seed": int(overlay.get("goreMaskSeed", 1776)),
+        })
     color = overlay.get("goreColorBias", defaults["goreColorBias"])
     try:
         normalized_color = [float(value) for value in color]  # type: ignore[union-attr]
@@ -1163,8 +1260,13 @@ def normalize_gore_overlay(overlay: Mapping[str, object]) -> dict[str, object]:
     try:
         normalized = {
             "goreRecipeVersion": GORE_RECIPE_VERSION,
+            "goreSourceRecipeVersion": source_recipe_version,
+            "goreDigestVersion": 3 if source_recipe_version <= 3 else GORE_RECIPE_VERSION,
             "goreOverlayEnabled": bool(overlay.get("goreOverlayEnabled", False)),
             "gorePresetId": preset_id,
+            "goreIdentityId": identity_id,
+            "goreGeometryMode": geometry_mode,
+            "goreControl": normalized_control,
             "goreCoverage": float(overlay.get("goreCoverage", defaults["goreCoverage"])),
             "goreScatter": float(overlay.get("goreScatter", defaults["goreScatter"])),
             "goreEdgeFeather": float(overlay.get("goreEdgeFeather", defaults["goreEdgeFeather"])),
@@ -1172,9 +1274,11 @@ def normalize_gore_overlay(overlay: Mapping[str, object]) -> dict[str, object]:
             "goreDarkness": float(overlay.get("goreDarkness", defaults["goreDarkness"])),
             "goreColorBias": normalized_color,
             "gorePatchScale": float(overlay.get("gorePatchScale", defaults["gorePatchScale"])),
-            "goreOverlayMode": str(overlay.get("goreOverlayMode", raised_defaults["goreOverlayMode"])),
+            "goreOverlayMode": (
+                "SURFACE_STAIN" if geometry_mode == "STAIN_ONLY" else "STAIN_AND_RAISED"
+            ),
             "goreIntensityClass": str(overlay.get("goreIntensityClass", raised_defaults["goreIntensityClass"])),
-            "goreRaisedEnabled": bool(overlay.get("goreRaisedEnabled", raised_defaults["goreRaisedEnabled"])),
+            "goreRaisedEnabled": geometry_mode != "STAIN_ONLY",
             "goreClotCoverage": float(overlay.get("goreClotCoverage", raised_defaults["goreClotCoverage"])),
             "goreCoreDensity": float(overlay.get("goreCoreDensity", raised_defaults["goreCoreDensity"])),
             "goreClotThickness": float(overlay.get("goreClotThickness", raised_defaults["goreClotThickness"])),
@@ -1199,6 +1303,25 @@ def normalize_gore_overlay(overlay: Mapping[str, object]) -> dict[str, object]:
             "goreDefaultVisible": bool(overlay.get("goreDefaultVisible", raised_defaults["goreDefaultVisible"])),
             "goreActivationWeight": float(overlay.get("goreActivationWeight", raised_defaults["goreActivationWeight"])),
             "goreUserCustomized": bool(overlay.get("goreUserCustomized", raised_defaults["goreUserCustomized"])),
+            "goreCavityDepth": float(overlay.get("goreCavityDepth", raised_defaults["goreCavityDepth"])),
+            "goreLinerSeparation": float(overlay.get("goreLinerSeparation", raised_defaults["goreLinerSeparation"])),
+            "goreRimWidth": float(overlay.get("goreRimWidth", raised_defaults["goreRimWidth"])),
+            "goreClotFillDepth": float(overlay.get("goreClotFillDepth", raised_defaults["goreClotFillDepth"])),
+            "goreProudnessLimit": float(overlay.get("goreProudnessLimit", raised_defaults["goreProudnessLimit"])),
+            "goreHostDeformationContribution": float(overlay.get(
+                "goreHostDeformationContribution", raised_defaults["goreHostDeformationContribution"]
+            )),
+            "goreBoneReveal": float(overlay.get("goreBoneReveal", raised_defaults["goreBoneReveal"])),
+            "goreTissueCoverage": float(overlay.get("goreTissueCoverage", raised_defaults["goreTissueCoverage"])),
+            "goreWoundBedEnabled": bool(overlay.get("goreWoundBedEnabled", raised_defaults["goreWoundBedEnabled"])),
+            "goreClotLayerEnabled": bool(overlay.get("goreClotLayerEnabled", raised_defaults["goreClotLayerEnabled"])),
+            "goreTissueLayerEnabled": bool(overlay.get("goreTissueLayerEnabled", raised_defaults["goreTissueLayerEnabled"])),
+            "goreBoneLayerEnabled": bool(overlay.get("goreBoneLayerEnabled", raised_defaults["goreBoneLayerEnabled"])),
+            "goreBarrierLayerEnabled": bool(overlay.get("goreBarrierLayerEnabled", raised_defaults["goreBarrierLayerEnabled"])),
+            "goreRaisedRimOptIn": bool(overlay.get("goreRaisedRimOptIn", raised_defaults["goreRaisedRimOptIn"])),
+            "goreAllowInternalFragments": bool(overlay.get(
+                "goreAllowInternalFragments", raised_defaults["goreAllowInternalFragments"]
+            )),
             "goreMaskSeed": int(overlay.get("goreMaskSeed", 1776)),
             "linkedRegionId": str(overlay.get("linkedRegionId", "")),
             "linkedStampId": str(overlay.get("linkedStampId", "")),
@@ -1228,6 +1351,22 @@ def validate_gore_overlay(
         errors.append(f"Surface gore overlay uses unsupported preset {preset_id!r}.")
     if str(overlay.get("goreOverlayMode", "")) not in GORE_OVERLAY_MODES:
         errors.append("Surface gore overlay mode must be SURFACE_STAIN or STAIN_AND_RAISED.")
+    geometry_mode = str(overlay.get("goreGeometryMode", ""))
+    if geometry_mode not in GORE_GEOMETRY_MODES:
+        errors.append("Gore geometry mode must be STAIN_ONLY, CAVITY_INLAY, or LEGACY_RAISED.")
+    if geometry_mode == "CAVITY_INLAY":
+        identity_id = str(overlay.get("goreIdentityId", ""))
+        if identity_id not in parameter_schema.GORE_IDENTITIES:
+            errors.append(f"Cavity/inlay gore uses unsupported identity {identity_id!r}.")
+        try:
+            control = parameter_schema.normalize_gore_control(overlay.get("goreControl", {}))
+        except (TypeError, ValueError) as exc:
+            errors.append("Cavity/inlay Gore Pedal metadata is invalid: " + str(exc))
+        else:
+            if str(control["identityId"]) != identity_id:
+                errors.append("Cavity/inlay identity does not match its Gore Pedal metadata.")
+            if int(control["seed"]) != int(overlay.get("goreMaskSeed", -1)):
+                errors.append("Cavity/inlay master seed does not match its Gore Pedal metadata.")
     if str(overlay.get("goreIntensityClass", "")) not in {"LIGHT", "MEDIUM", "HIGH", "CUSTOM"}:
         errors.append("Surface gore intensity class is invalid.")
     for field in (
@@ -1237,6 +1376,7 @@ def validate_gore_overlay(
         "goreDarkClotBias", "goreRoughEdgeBias", "goreColorIntensity",
         "goreOrganicIrregularity", "goreSurfaceRoundness", "goreInnerRimStrength",
         "goreFiberTextureStrength", "goreBaseColorStrength",
+        "goreHostDeformationContribution", "goreBoneReveal", "goreTissueCoverage",
     ):
         try:
             value = float(overlay.get(field, math.nan))
@@ -1250,7 +1390,11 @@ def validate_gore_overlay(
         patch_scale = math.nan
     for message in parameter_schema.validate_recipe_value("gorePatchScale", patch_scale):
         errors.append(f"Surface gore overlay gorePatchScale: {message}")
-    for field in ("goreClotThickness", "goreSurfaceOffset", "goreInnerRimWidth"):
+    for field in (
+        "goreClotThickness", "goreSurfaceOffset", "goreInnerRimWidth",
+        "goreCavityDepth", "goreLinerSeparation", "goreRimWidth",
+        "goreClotFillDepth", "goreProudnessLimit",
+    ):
         try:
             value = float(overlay.get(field, math.nan))
         except (TypeError, ValueError):
@@ -1272,8 +1416,23 @@ def validate_gore_overlay(
     raised_enabled = bool(overlay.get("goreRaisedEnabled", False))
     if raised_enabled and str(overlay.get("goreOverlayMode", "")) != "STAIN_AND_RAISED":
         errors.append("Raised gore requires STAIN_AND_RAISED overlay mode.")
+    if raised_enabled != (geometry_mode != "STAIN_ONLY"):
+        errors.append("Generated-gore enable state does not match its explicit geometry mode.")
     if raised_enabled and bool(overlay.get("goreDefaultVisible", True)):
         errors.append("Raised gore must be inactive by default in the export contract.")
+    if geometry_mode == "CAVITY_INLAY":
+        cavity_depth = float(overlay.get("goreCavityDepth", 0.0))
+        liner_separation = float(overlay.get("goreLinerSeparation", 0.0))
+        clot_fill_depth = float(overlay.get("goreClotFillDepth", 0.0))
+        proudness_limit = float(overlay.get("goreProudnessLimit", 0.0))
+        if cavity_depth > 0.0 and liner_separation >= cavity_depth:
+            errors.append("Cavity liner separation must remain shallower than the requested cavity depth.")
+        if clot_fill_depth > cavity_depth + 1e-9:
+            errors.append("Clot fill depth must remain inside the cavity depth.")
+        if proudness_limit > 0.0 and not bool(overlay.get("goreRaisedRimOptIn", False)):
+            errors.append("Positive cavity proudness requires an explicit raised-rim identity.")
+        if not bool(overlay.get("goreWoundBedEnabled", False)):
+            errors.append("Cavity/inlay gore requires a wound-bed liner layer.")
     color = overlay.get("goreColorBias", ())
     try:
         channels = tuple(float(value) for value in color)  # type: ignore[union-attr]
@@ -1308,6 +1467,19 @@ def validate_gore_overlay(
 def gore_overlay_digest(overlay: Mapping[str, object]) -> str:
     normalized = normalize_gore_overlay(overlay)
     normalized.pop("validationStatus", None)
+    if int(normalized.get("goreDigestVersion", GORE_RECIPE_VERSION)) <= 3:
+        for field in (
+            "goreSourceRecipeVersion", "goreDigestVersion", "goreIdentityId",
+            "goreGeometryMode", "goreControl", "goreCavityDepth",
+            "goreLinerSeparation", "goreRimWidth", "goreClotFillDepth",
+            "goreProudnessLimit", "goreHostDeformationContribution",
+            "goreBoneReveal", "goreTissueCoverage", "goreWoundBedEnabled",
+            "goreClotLayerEnabled", "goreTissueLayerEnabled",
+            "goreBoneLayerEnabled", "goreBarrierLayerEnabled",
+            "goreRaisedRimOptIn", "goreAllowInternalFragments",
+        ):
+            normalized.pop(field, None)
+        normalized["goreRecipeVersion"] = 3
     encoded = json.dumps(normalized, sort_keys=True, separators=(",", ":"), allow_nan=False).encode("utf-8")
     return hashlib.sha256(encoded).hexdigest()
 
@@ -1349,6 +1521,9 @@ def gore_overlay_export_metadata(overlay: Mapping[str, object]) -> dict[str, obj
         "goreOverlayDigest": gore_overlay_digest(normalized),
         "goreOverlayEnabled": bool(normalized["goreOverlayEnabled"]),
         "goreOverlayMode": normalized["goreOverlayMode"],
+        "goreGeometryMode": normalized["goreGeometryMode"],
+        "goreIdentityId": normalized["goreIdentityId"],
+        "goreControl": normalized["goreControl"],
         "gorePresetId": normalized["gorePresetId"],
         "goreIntensityClass": normalized["goreIntensityClass"],
         "goreDefaultVisible": bool(normalized["goreDefaultVisible"]),
@@ -1640,6 +1815,160 @@ def raised_gore_face_records(
     return selected
 
 
+def cavity_inlay_face_records(
+    positions: Sequence[Sequence[float]],
+    faces: Sequence[Sequence[int]],
+    influence_weights: Sequence[float],
+    displacement_magnitudes: Sequence[float],
+    overlay: Mapping[str, object],
+) -> list[dict[str, object]]:
+    """Select a deterministic, connected-safe cavity opening from the impact field."""
+
+    recipe = normalize_gore_overlay(overlay)
+    if (
+        not recipe["goreOverlayEnabled"]
+        or recipe["goreGeometryMode"] != "CAVITY_INLAY"
+    ):
+        return []
+    if len(influence_weights) != len(positions) or len(displacement_magnitudes) != len(positions):
+        raise ValueError("cavity/inlay weights must match the source point count")
+    if any(int(index) < 0 or int(index) >= len(positions) for face in faces for index in face):
+        raise ValueError("cavity/inlay face references a point outside the source mesh")
+    maximum_displacement = max(
+        (max(0.0, float(value)) for value in displacement_magnitudes),
+        default=0.0,
+    )
+    seed = int(recipe["goreMaskSeed"])
+    scale = float(recipe["gorePatchScale"])
+    exposure = float(recipe["goreCoverage"])
+    breakup = float(recipe["goreIslandBreakup"])
+    density = float(recipe["goreGeometryDensity"])
+    maximum_triangles = int(recipe["goreMaximumTriangles"])
+    enabled_layers = sum(bool(recipe.get(field, False)) for field in (
+        "goreClotLayerEnabled", "goreTissueLayerEnabled",
+        "goreBoneLayerEnabled", "goreBarrierLayerEnabled",
+    ))
+    candidates = []
+    for face_index, raw_face in enumerate(faces):
+        face = tuple(int(index) for index in raw_face)
+        if len(face) < 3 or len(set(face)) != len(face):
+            continue
+        influence = sum(
+            min(1.0, max(0.0, float(influence_weights[index])))
+            for index in face
+        ) / len(face)
+        if influence <= 1e-8:
+            continue
+        displacement = (
+            sum(max(0.0, float(displacement_magnitudes[index])) for index in face)
+            / len(face)
+            / maximum_displacement
+            if maximum_displacement > 1e-12 else influence
+        )
+        centroid = _face_centroid(positions, face)
+        edge_noise = _gore_noise(centroid, scale * 0.74, seed + 104729)
+        detail_noise = _gore_noise(
+            centroid, scale * 0.21, seed + face_index * 17 + 32452843
+        )
+        response = min(1.0, influence * 0.62 + displacement * 0.38)
+        opening = response * (0.70 + edge_noise * 0.22 + detail_noise * 0.08)
+        threshold = 0.76 - exposure * 0.58 + breakup * 0.06
+        core = response >= 0.68
+        if not core and opening < threshold:
+            continue
+        keep = min(1.0, 0.42 + density * 0.48 + response * 0.18)
+        if not core and _gore_hash(face_index, len(face), 41, seed) > keep:
+            continue
+        estimated = len(face) * 6 + enabled_layers * max(0, len(face) * 4 - 4)
+        candidates.append({
+            "faceIndex": face_index,
+            "vertices": list(face),
+            "influence": round(influence, 9),
+            "deformationResponse": round(response, 9),
+            "priority": round(response * 0.72 + opening * 0.28, 9),
+            "zone": "CORE" if core else "RIM",
+            "estimatedTriangleCount": estimated,
+        })
+    if not candidates:
+        eligible = []
+        for face_index, raw_face in enumerate(faces):
+            face = tuple(int(index) for index in raw_face)
+            if len(face) < 3 or len(set(face)) != len(face):
+                continue
+            influence = sum(
+                min(1.0, max(0.0, float(influence_weights[index])))
+                for index in face
+            ) / len(face)
+            if influence > 1e-8:
+                eligible.append((influence, face_index, face))
+        if eligible:
+            influence, face_index, face = max(eligible)
+            candidates.append({
+                "faceIndex": face_index,
+                "vertices": list(face),
+                "influence": round(influence, 9),
+                "deformationResponse": round(influence, 9),
+                "priority": round(influence, 9),
+                "zone": "CORE",
+                "estimatedTriangleCount": len(face) * 6 + enabled_layers * max(0, len(face) * 4 - 4),
+            })
+    candidates.sort(key=lambda record: (-float(record["priority"]), int(record["faceIndex"])))
+    selected = []
+    selected_edge_uses = {}
+    boundary_degree = {}
+    triangles = 0
+    for record in candidates:
+        count = int(record["estimatedTriangleCount"])
+        if triangles + count > maximum_triangles:
+            continue
+        vertices = [int(value) for value in record["vertices"]]
+        edges = [
+            tuple(sorted((first, vertices[(index + 1) % len(vertices)])))
+            for index, first in enumerate(vertices)
+        ]
+        if any(selected_edge_uses.get(edge, 0) >= 2 for edge in edges):
+            continue
+        degree_changes = {}
+        for edge in edges:
+            change = 1 if selected_edge_uses.get(edge, 0) == 0 else -1
+            for vertex in edge:
+                degree_changes[vertex] = degree_changes.get(vertex, 0) + change
+        if any(boundary_degree.get(vertex, 0) + change > 2 for vertex, change in degree_changes.items()):
+            continue
+        selected.append(record)
+        triangles += count
+        for edge in edges:
+            selected_edge_uses[edge] = selected_edge_uses.get(edge, 0) + 1
+        for vertex, change in degree_changes.items():
+            boundary_degree[vertex] = boundary_degree.get(vertex, 0) + change
+    selected.sort(key=lambda record: int(record["faceIndex"]))
+    return selected
+
+
+def gore_face_records(
+    positions,
+    faces,
+    influence_weights,
+    displacement_magnitudes,
+    overlay,
+    *,
+    concavity_weights=None,
+):
+    recipe = normalize_gore_overlay(overlay)
+    if recipe["goreGeometryMode"] == "CAVITY_INLAY":
+        return cavity_inlay_face_records(
+            positions, faces, influence_weights, displacement_magnitudes, recipe
+        )
+    return raised_gore_face_records(
+        positions,
+        faces,
+        influence_weights,
+        displacement_magnitudes,
+        recipe,
+        concavity_weights=concavity_weights,
+    )
+
+
 def raised_gore_geometry_digest(
     overlay: Mapping[str, object],
     *,
@@ -1651,14 +1980,27 @@ def raised_gore_geometry_digest(
 ) -> str:
     """Fingerprint all recipe/input decisions that produce one gore shell."""
 
-    payload = {
-        "version": 1,
-        "recipeDigest": gore_overlay_digest(overlay),
-        "sourceTopologyFingerprint": str(source_topology_fingerprint),
-        "deformationDigest": str(deformation_digest),
-        "captureHash": str(capture_hash),
-        "pairRole": str(pair_role).upper(),
-        "faces": [
+    recipe = normalize_gore_overlay(overlay)
+    if recipe["goreGeometryMode"] == "CAVITY_INLAY":
+        face_payload = [
+            {
+                "faceIndex": int(record["faceIndex"]),
+                "vertices": [int(value) for value in record["vertices"]],
+                "influence": round(float(record.get("influence", 0.0)), 9),
+                "deformationResponse": round(
+                    float(record.get("deformationResponse", 0.0)), 9
+                ),
+                "priority": round(float(record.get("priority", 0.0)), 9),
+                "zone": str(record["zone"]),
+                "estimatedTriangleCount": int(
+                    record.get("estimatedTriangleCount", 0)
+                ),
+            }
+            for record in face_records
+        ]
+    else:
+        # This exact payload is the v3.13-v3.17 legacy digest contract.
+        face_payload = [
             {
                 "faceIndex": int(record["faceIndex"]),
                 "vertices": [int(value) for value in record["vertices"]],
@@ -1668,7 +2010,15 @@ def raised_gore_geometry_digest(
                 "zone": str(record["zone"]),
             }
             for record in face_records
-        ],
+        ]
+    payload = {
+        "version": 2 if recipe["goreGeometryMode"] == "CAVITY_INLAY" else 1,
+        "recipeDigest": gore_overlay_digest(overlay),
+        "sourceTopologyFingerprint": str(source_topology_fingerprint),
+        "deformationDigest": str(deformation_digest),
+        "captureHash": str(capture_hash),
+        "pairRole": str(pair_role).upper(),
+        "faces": face_payload,
     }
     encoded = json.dumps(payload, sort_keys=True, separators=(",", ":"), allow_nan=False).encode("utf-8")
     return hashlib.sha256(encoded).hexdigest()
@@ -1706,11 +2056,13 @@ def raised_gore_stale_reasons(
     capture_hash: str,
     pair_role: str,
     geometry_digest: str,
-    material_ids: Sequence[str] = GORE_MATERIAL_IDS,
+    material_ids: Sequence[str] | None = None,
 ) -> list[str]:
     """Compare generated ownership/digest metadata with current authoring inputs."""
 
     recipe = normalize_gore_overlay(overlay)
+    if material_ids is None:
+        material_ids = gore_material_ids_for_mode(recipe["goreGeometryMode"])
     reasons: list[str] = []
     expected = {
         "regionId": str(region_id),

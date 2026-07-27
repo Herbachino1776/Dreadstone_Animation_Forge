@@ -1,5 +1,14 @@
 # Changelog
 
+## 3.18.0
+
+- Added recessed `CAVITY_INLAY` gore that follows the final deformed surface without editing source topology, with closed manifold liners, near-host rims, bounded proudness, scale-relative depth/separation, optional clot/crushed-tissue/exposed-bone layers, normalized deform-bone skinning, and exportable source/depth/layer attributes.
+- Added the top **GORE CONTROL DECK** and six-control **GORE PEDAL**: **EXPOSURE**, **CAVITY**, **CLOT FILL**, **BREAKUP**, **WETNESS**, and **VARIATION**, plus independent deterministic gore-seed randomization, preview, commit, revert, clear, final-preview, validation, measurements, MACRO/MANUAL behavior, and one-transaction dirty/preview semantics.
+- Added six strongly differentiated identities: Bruised Dent, Bloody Crater, Dark Clot Cavity, Crushed Tissue, Exposed Cranium, and Ragged Impact.
+- Added preview-only BALANCED/FINAL gore geometry that cannot leak into final nodes or manifests; failed previews/commits preserve the previous valid state.
+- Preserved `STAIN_ONLY` and explicit `LEGACY_RAISED` behavior, three-material/fiber/inner-barrier contracts, public identifiers, old recipe migrations, and unchanged legacy digest behavior.
+- Added Blender-free cavity generation and a deterministic matrix over identities, macro endpoints, seeds, scales, manifoldness, triangle budgets, layer order, proudness, separation, seed preservation, and invalid input rejection.
+
 ## 3.17.0
 
 - Added the compact top **IMPACT CONTROL DECK** with the five normalized **SIZE**, **CRUSH**, **PROFILE**, **EDGE SAFETY**, and **CHAOS** macros, master seed, deterministic identity, preview quality, status, Randomize, Preview, Commit, Revert, and Clear actions.

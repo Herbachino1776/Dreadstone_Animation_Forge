@@ -122,6 +122,112 @@ def _draw_impact_control_deck(layout, settings):
     )
 
 
+def _draw_gore_control_deck(layout, settings):
+    deck = layout.box()
+    deck.label(text="GORE CONTROL DECK", icon="MATERIAL")
+    pedal = deck.box()
+    mode = str(settings.deformation_gore_control_mode)
+    digest = str(settings.deformation_gore_identity_digest or "")[:10] or "not-saved"
+    pedal.label(
+        text=(
+            f"GORE PEDAL  |  {mode if mode == 'MACRO' else 'CUSTOM'}  |  "
+            f"{settings.deformation_gore_identity.replace('_', ' ').title()}"
+        ),
+        icon="DRIVER",
+    )
+    pedal.prop(settings, "deformation_gore_identity", text="Gore Identity")
+    pedal.prop(settings, "deformation_gore_enabled", text="Enabled")
+    macros = pedal.column(align=True)
+    macros.enabled = mode == "MACRO"
+    for first, second in (
+        ("deformation_gore_exposure", "deformation_gore_cavity"),
+        ("deformation_gore_clot_fill", "deformation_gore_breakup"),
+        ("deformation_gore_wetness_macro", "deformation_gore_variation"),
+    ):
+        row = macros.row(align=True)
+        row.scale_y = 1.22
+        row.prop(settings, first, slider=True)
+        row.prop(settings, second, slider=True)
+
+    seed = pedal.box()
+    seed.label(
+        text=(
+            f"MASTER GORE SEED  {int(settings.deformation_gore_mask_seed)}  |  "
+            f"DIGEST {digest}"
+        ),
+        icon="KEY_HLT",
+    )
+    randomize = seed.column()
+    randomize.scale_y = 1.60
+    # Ordinary sidebar operators do not expose stable per-button RGB colors.
+    # A normal embossed operator is the robust theme-safe neutral/light-gray treatment.
+    randomize.operator(
+        "daf.randomize_gore_seed",
+        text="RANDOMIZE GORE SEED",
+        icon="FILE_REFRESH",
+    )
+
+    pedal.prop(settings, "deformation_preview_quality")
+    preview = pedal.column()
+    preview.scale_y = 1.60
+    preview.operator(
+        "daf.generate_gore_preview",
+        text="GENERATE / REBUILD GORE PREVIEW",
+        icon="PLAY",
+    )
+    commit = pedal.column()
+    commit.scale_y = 1.60
+    commit.operator(
+        "daf.commit_gore",
+        text="COMMIT / SAVE GORE",
+        icon="CHECKMARK",
+    )
+    recovery = pedal.row(align=True)
+    recovery.scale_y = 1.24
+    recovery.operator("daf.revert_gore", text="Revert", icon="RECOVER_LAST")
+    clear = recovery.row(align=True)
+    clear.alert = True
+    clear.operator(
+        "daf.clear_managed_preview",
+        text="Clear Gore Preview",
+        icon="X",
+    )
+
+    proof = pedal.row(align=True)
+    proof.scale_y = 1.35
+    proof.operator(
+        "daf.final_gore_preview",
+        text="FINAL GORE PREVIEW",
+        icon="SHADING_RENDERED",
+    )
+    proof.operator(
+        "daf.validate_gore_geometry",
+        text="VALIDATE GORE GEOMETRY",
+        icon="CHECKMARK",
+    )
+
+    state = "DIRTY" if settings.deformation_gore_dirty else "SAVED"
+    triangles = (
+        int(settings.deformation_preview_final_gore_triangles)
+        or int(settings.deformation_preview_estimated_gore_triangles)
+    )
+    status = pedal.box()
+    status.label(
+        text=(
+            f"{settings.deformation_gore_geometry_mode}  |  {triangles:,} tris  |  "
+            f"{state}  |  {settings.deformation_gore_validation_status}"
+        ),
+        icon="ERROR" if "FAIL" in settings.deformation_gore_validation_status else "INFO",
+    )
+    status.label(
+        text=(
+            f"Proud {settings.deformation_gore_max_proudness:.5f} m  |  "
+            f"Median depth {settings.deformation_gore_median_cavity_depth:.5f} m  |  "
+            f"Liner gap {settings.deformation_gore_minimum_liner_separation:.5f} m"
+        )
+    )
+
+
 def _draw_advanced_impact_internals(layout, settings):
     advanced = layout.box()
     row = advanced.row(align=True)
@@ -164,10 +270,81 @@ def _draw_advanced_impact_internals(layout, settings):
     stamp.prop(settings, "deformation_distance_mode")
     stamp.prop(settings, "deformation_seed_custom_direction")
 
-    gore = raw.box()
-    gore.label(text="Gore Recipe Internals", icon='MATERIAL')
-    gore.prop(settings, "deformation_gore_enabled")
-    gore.prop(settings, "deformation_gore_preset")
+
+
+def _draw_advanced_gore_internals(layout, settings):
+    advanced = layout.box()
+    row = advanced.row(align=True)
+    opened = bool(settings.ui_advanced_gore_internals_open)
+    row.prop(
+        settings,
+        "ui_advanced_gore_internals_open",
+        text="Advanced Gore Internals",
+        icon="TRIA_DOWN" if opened else "TRIA_RIGHT",
+        emboss=False,
+    )
+    if not opened:
+        return
+    mode = str(settings.deformation_gore_control_mode)
+    advanced.label(
+        text=f"Mode: {mode}  /  Recipe: {'GORE PEDAL' if mode == 'MACRO' else 'CUSTOM'}",
+        icon="OPTIONS",
+    )
+    if mode == "MACRO":
+        advanced.label(
+            text="Derived physical values are read-only while the Gore Pedal is authoritative.",
+            icon="LOCKED",
+        )
+        advanced.operator(
+            "daf.use_manual_gore_control",
+            text="USE MANUAL GORE CONTROL",
+            icon="UNLOCKED",
+        )
+    else:
+        advanced.label(
+            text="Manual values are authoritative; the six macros will not overwrite them.",
+            icon="EDITMODE_HLT",
+        )
+        advanced.operator(
+            "daf.return_to_gore_macro_control",
+            text="RETURN TO GORE PEDAL",
+            icon="LOOP_BACK",
+        )
+    raw = advanced.column()
+    raw.enabled = mode == "MANUAL"
+    identity = raw.box()
+    identity.label(text="Recipe Identity & Layers", icon="MATERIAL")
+    for name in (
+        "deformation_gore_enabled",
+        "deformation_gore_preset",
+        "deformation_gore_geometry_mode",
+        "deformation_gore_raised_enabled",
+        "deformation_gore_wound_bed_enabled",
+        "deformation_gore_clot_layer_enabled",
+        "deformation_gore_tissue_layer_enabled",
+        "deformation_gore_bone_layer_enabled",
+        "deformation_gore_barrier_layer_enabled",
+        "deformation_gore_raised_rim_opt_in",
+        "deformation_gore_allow_internal_fragments",
+    ):
+        identity.prop(settings, name)
+    geometry = raw.box()
+    geometry.label(text="Scale-Relative Cavity Geometry", icon="MOD_DISPLACE")
+    for name in (
+        "deformation_gore_cavity_depth",
+        "deformation_gore_liner_separation",
+        "deformation_gore_rim_width",
+        "deformation_gore_clot_fill_depth",
+        "deformation_gore_proudness_limit",
+        "deformation_gore_host_deformation_contribution",
+        "deformation_gore_bone_reveal",
+        "deformation_gore_tissue_coverage",
+        "deformation_gore_geometry_density",
+        "deformation_gore_maximum_triangles",
+    ):
+        geometry.prop(settings, name)
+    stain = raw.box()
+    stain.label(text="Stain, Material & Legacy Fields", icon="SHADING_RENDERED")
     for name in (
         "deformation_gore_coverage", "deformation_gore_scatter",
         "deformation_gore_edge_feather", "deformation_gore_wetness",
@@ -175,19 +352,31 @@ def _draw_advanced_impact_internals(layout, settings):
         "deformation_gore_core_density", "deformation_gore_clot_thickness",
         "deformation_gore_thickness_variation", "deformation_gore_island_breakup",
         "deformation_gore_peripheral_fragments", "deformation_gore_surface_offset",
-        "deformation_gore_geometry_density", "deformation_gore_wetness_variation",
-        "deformation_gore_dark_clot_bias", "deformation_gore_rough_edge_bias",
-        "deformation_gore_color_intensity", "deformation_gore_organic_irregularity",
-        "deformation_gore_surface_roundness", "deformation_gore_fiber_texture_strength",
-        "deformation_gore_base_color_strength", "deformation_gore_inner_rim_width",
-        "deformation_gore_inner_rim_strength", "deformation_gore_maximum_triangles",
+        "deformation_gore_wetness_variation", "deformation_gore_dark_clot_bias",
+        "deformation_gore_rough_edge_bias", "deformation_gore_color_intensity",
+        "deformation_gore_organic_irregularity", "deformation_gore_surface_roundness",
+        "deformation_gore_fiber_texture_strength", "deformation_gore_base_color_strength",
+        "deformation_gore_inner_rim_width", "deformation_gore_inner_rim_strength",
         "deformation_gore_mask_seed",
     ):
-        gore.prop(settings, name)
-    gore.prop(settings, "deformation_gore_color_bias")
-    gore.prop(settings, "deformation_gore_raised_enabled")
-    gore.prop(settings, "deformation_gore_texture_enabled")
-    gore.prop(settings, "deformation_gore_inner_rim_enabled")
+        stain.prop(settings, name)
+    stain.prop(settings, "deformation_gore_color_bias")
+    stain.prop(settings, "deformation_gore_texture_enabled")
+    stain.prop(settings, "deformation_gore_inner_rim_enabled")
+    measurements = advanced.box()
+    measurements.label(text="Current Validation Measurements", icon="CHECKMARK")
+    measurements.label(
+        text=f"Maximum proudness: {settings.deformation_gore_max_proudness:.6f} m"
+    )
+    measurements.label(
+        text=f"Median liner depth: {settings.deformation_gore_median_cavity_depth:.6f} m"
+    )
+    measurements.label(
+        text=(
+            "Minimum skin-to-liner separation: "
+            f"{settings.deformation_gore_minimum_liner_separation:.6f} m"
+        )
+    )
 
 
 def _draw_damage(layout, context, settings, summary):
@@ -223,7 +412,9 @@ def _draw_damage(layout, context, settings, summary):
     draft.label(text="The selected connected surface remains the artist's decision", icon='INFO')
 
     _draw_impact_control_deck(layout, settings)
+    _draw_gore_control_deck(layout, settings)
     _draw_advanced_impact_internals(layout, settings)
+    _draw_advanced_gore_internals(layout, settings)
 
     actions = layout.box()
     actions.prop(settings, "deformation_live_preview")

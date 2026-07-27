@@ -82,7 +82,8 @@ class StaticContractTests(unittest.TestCase):
         self.assertIn('"generatedGoreMeshes"', self.deformation)
         self.assertIn('"goreActivationContract"', self.deformation)
         self.assertIn('obj["dsb_gore_default_visible"] = False', self.deformation)
-        self.assertIn('obj["dsb_preview_only"] = False', self.deformation)
+        self.assertIn('obj["dsb_preview_only"] = bool(preview)', self.deformation)
+        self.assertIn('"CAVITY_INLAY_RECESSED_MANIFOLD_V4"', self.deformation)
         self.assertIn('and obj.get("dsb_generated_role") == "raised_gore"', self.sources["damage_authoring.py"])
         self.assertIn('if not bool(obj.get("dsb_gore_owned", False)):', self.deformation)
         self.assertIn('if existing_recipe and existing_recipe.get("goreUserCustomized", False):', self.deformation)
@@ -143,7 +144,7 @@ class StaticContractTests(unittest.TestCase):
         manifest = contracts.MANIFEST_PATH.read_text(encoding="utf-8")
         self.assertIn('schema_version = "1.0.0"', manifest)
         self.assertIn('id = "dreadstone_animation_forge"', manifest)
-        self.assertIn('version = "3.17.0"', manifest)
+        self.assertIn('version = "3.18.0"', manifest)
         builder = (ROOT / "scripts" / "build_release.py").read_text(encoding="utf-8")
         self.assertIn('ARCHIVE_ENTRIES = ("blender_manifest.toml", *MODULES', builder)
         self.assertNotIn('"dreadstone_animation_forge/__init__.py"', builder)
@@ -164,7 +165,7 @@ class StaticContractTests(unittest.TestCase):
         version = contracts.EXPECTED_VERSION
         self.assertEqual(
             f"Dreadstone_Animation_Forge_v{'_'.join(map(str, version))}.zip",
-            "Dreadstone_Animation_Forge_v3_17_0.zip",
+            "Dreadstone_Animation_Forge_v3_18_0.zip",
         )
 
     def test_authoritative_user_workflow_guide_contract(self) -> None:
@@ -182,8 +183,8 @@ class StaticContractTests(unittest.TestCase):
     def test_release_readme_contains_install_quick_start_and_guide_reference(self) -> None:
         readme = (ROOT / "README.md").read_text(encoding="utf-8")
         for marker in (
-            "3.17.0",
-            "Dreadstone_Animation_Forge_v3_17_0.zip",
+            "3.18.0",
+            "Dreadstone_Animation_Forge_v3_18_0.zip",
             "Install from Disk",
             "## Quick start",
             "docs/USER_WORKFLOW_GUIDE.md",

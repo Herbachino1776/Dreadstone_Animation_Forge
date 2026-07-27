@@ -1,7 +1,7 @@
-# Dreadstone Animation Forge 3.17.0 — User Workflow Guide
+# Dreadstone Animation Forge 3.18.0 — User Workflow Guide
 
 - **Supported Blender:** `5.1.2`
-- **Release archive:** `Dreadstone_Animation_Forge_v3_17_0.zip`
+- **Release archive:** `Dreadstone_Animation_Forge_v3_18_0.zip`
 - **Primary rule:** the artist chooses anatomical surfaces; Forge automates processing, not anatomy.
 - **Safety rule:** Source Damage Readiness and `NOT READY` behavior are unchanged and are never bypassed by an orchestrator.
 
@@ -17,9 +17,9 @@
 
 The top “Next” card derives its recommendation from current source, readiness, region, capture, key, preview, and validation state. It is guidance, not a validation override.
 
-## 1. Install Dreadstone Animation Forge 3.17.0
+## 1. Install Dreadstone Animation Forge 3.18.0
 
-In Blender 5.1.2 choose **Edit > Preferences > Add-ons > Install from Disk**, select `Dreadstone_Animation_Forge_v3_17_0.zip` without extracting it, and enable the add-on. A successful install shows version 3.17.0 without a registration error.
+In Blender 5.1.2 choose **Edit > Preferences > Add-ons > Install from Disk**, select `Dreadstone_Animation_Forge_v3_18_0.zip` without extracting it, and enable the add-on. A successful install shows version 3.18.0 without a registration error.
 
 ## 2. Open the Dreadstone panel
 
@@ -141,17 +141,37 @@ Influence choices remain **Patch Only**, **Patch Feathered**, and **Connected Su
 
 ## Surface Gore Overlay for blunt trauma
 
-High-intensity raised gore remains ordinary deterministic mesh geometry, not a flat-decal replacement. The heavy preset refines each selected source face into smaller rounded facets, breaks up straight edges with **Organic Irregularity**, and controls the bulged surface with **Surface Roundness**. **Use Muscle-Fiber Textures** wraps each refined face in one independently selected direction from the packaged texture set; the direction is visual variation and does not claim anatomical alignment.
+Forge 3.18 makes `CAVITY_INLAY` the default for new heavy gore. It generates ordinary manifold glTF mesh nodes just below the final deformed host surface, without cutting, deleting, or rewiring source topology. The outer rim stays near the host while the wound bed recesses inward along stable source normals. Scale-relative cavity depth is always greater than liner separation; the generated node carries source-position, source-normal, depth, layer, material-role, and deterministic-variation attributes for validation and export.
 
-**Muscle Fiber Contribution** and **Gore Color Contribution** are independent additive sliders. The exportable packed surface texture adds both signals and clamps the final result; increasing one does not replace or proportionally reduce the other.
+The top **GORE CONTROL DECK** sits directly below the Impact deck. It keeps the active **GORE PEDAL** identity, all six macros, current gore seed and identity digest, **RANDOMIZE GORE SEED**, **GENERATE / REBUILD GORE PREVIEW**, **COMMIT / SAVE GORE**, **Revert Gore**, **CLEAR DAMAGE PREVIEW**, **FINAL GORE PREVIEW**, **Validate Gore Geometry**, status, triangle count, and measured proudness/depth/separation together without scrolling.
 
-**Compromised Inner Reddening** adds a second closed barrier just inside the open gore-island edge. Tune **Inner Reddening Width** and **Barrier Compromise** to control the visible band beneath the clot shell.
+The six normalized 0–100 Gore Pedal macros are:
 
-**Randomize Master Gore Seed** changes the full overlay, not only its texture: stain breakup, selected islands, peripheral fragments, thickness, material classification, organic shape, and fiber directions all derive from the same repeatable seed. Click **Preview / Rebuild Current Gore** after randomizing to see and save the new result.
+- **EXPOSURE** — coordinates wound coverage, rim opening, tissue visibility, and optional exposed-bone reveal.
+- **CAVITY** — controls scale-relative inward depth and the center-to-rim recess profile.
+- **CLOT FILL** — fills part of the recess with dark clot while preserving a valid separation from the host.
+- **BREAKUP** — adds deterministic irregularity, patch breakup, ragged rim response, and material variation.
+- **WETNESS** — adjusts wet-versus-rough material response without metallic or emission.
+- **VARIATION** — coordinates deterministic spatial and material variation while retaining the same placement, identity, and macro values.
 
-Use **Create Blunt Gore Head Set**, **Enable Surface Gore Overlay**, **Use Preset Defaults**, **Apply Gore Overlay Settings**, and **Preview / Rebuild Current Gore** in Advanced. **Clear Stain Preview** removes temporary material/attribute feedback and restores original slots exactly. **Apply Heavy Gore to All Deformations**, **Clear Current Generated Gore**, **Rebuild All Generated Gore**, and **Validate Gore Geometry** remain available.
+The six distinct identities are **Bruised Dent**, **Bloody Crater**, **Dark Clot Cavity**, **Crushed Tissue**, **Exposed Cranium**, and **Ragged Impact**. Selecting an identity applies its intentional macro defaults and layer policy; it does not move the artist-approved capture. The active preset identity, macros, seed, derived physical values, and `dreadstone.gore_control.v1` digest are serialized additively.
 
-During ordinary tuning, `FAST` avoids final attached/detached shells. Final generation retains stable owned `DSB_GORE_*` nodes, deterministic recipes, tapered raised geometry, glTF-safe materials, triangle budgets, and inactive-by-default runtime activation metadata.
+**RANDOMIZE GORE SEED** changes only the gore result. It preserves the Impact Pedal state, gore macros, region, key, capture, linked stamp, identity, and geometry mode; it creates one valid seed, one dirty transition, and at most one managed preview request. The same seed and inputs reproduce the same geometry and material classification. Redrawing the panel never randomizes anything.
+
+Gore preview follows the shared quality setting:
+
+- `OFF` clears preview presentation and creates no preview gore.
+- `FAST` updates host/stain feedback without building the full inlay mesh.
+- `BALANCED` creates reduced-budget, preview-only cavity feedback.
+- `FINAL` creates full-budget preview-only cavity geometry and runs focused checks.
+
+Preview nodes are marked preview-only, excluded from manifests and final-node lookups, and removed by **CLEAR DAMAGE PREVIEW**. **COMMIT / SAVE GORE** transactionally replaces saved owned nodes only after successful final generation and validation. **Revert Gore** restores the stored recipe and seed. A failed preview or commit preserves the previous valid committed geometry.
+
+Open **Advanced Gore Internals** only when needed; it starts collapsed. In `MACRO` mode, scale-relative cavity depth, liner separation, rim width, layer depths, layer toggles, host-deformation contribution, material values, and limits are derived and read-only. **USE MANUAL GORE CONTROL** exposes the raw values as a `CUSTOM` recipe. **RETURN TO GORE PEDAL** returns to macro-derived values. Advanced also retains **Use Preset Defaults**, **Apply Gore Overlay Settings**, **Preview / Rebuild Current Gore**, **Clear Stain Preview**, **Apply Heavy Gore to All Deformations**, **Clear Current Generated Gore**, and **Rebuild All Generated Gore**.
+
+Compatibility modes remain explicit. `STAIN_ONLY` keeps the flat material/attribute overlay and creates no geometry. `LEGACY_RAISED` preserves the v3.13–v3.17 raised-shell recipe, three-material family, fiber atlas, inner-reddening barrier, old controls, and unchanged legacy digest behavior. Old recipes migrate only to their matching compatibility mode; Forge never silently converts an old raised recipe into a cavity. Use **Create Blunt Gore Head Set**, **Enable Surface Gore Overlay**, **Use Preset Defaults**, **Randomize Master Gore Seed**, **Apply Gore Overlay Settings**, **Preview / Rebuild Current Gore**, and **Clear Stain Preview** when reproducing the legacy workflow.
+
+Blender's standard sidebar operator widgets do not expose a stable arbitrary per-button RGB API. Forge uses large native embossed neutral/theme-safe buttons, icons, scale, and Blender's reliable alert state for clear actions; it does not install a fragile custom GPU/event widget just to force exact light-gray, blue, green, or amber button colors.
 
 ## 15. Preview, rebuild, compare, sculpt, and repair
 
@@ -192,7 +212,7 @@ Import the exported GLB into a clean scene. Click **Restore Reimported GLB Intac
 
 ## Advanced compatibility reference
 
-Forge 3.17 preserves public operator IDs, scene/custom-property keys, Source Readiness and authoring schemas, generated `DSB_*` names, portable library formats 1–4, paired/core modes, compound semantics, attached/detached exact-index behavior, seam modes, Action names/markers, and GLB/manifest runtime contracts. Impact macro and seed metadata are additive; unchanged legacy stamp recipes retain their existing digests. Expert controls moved under Advanced; they were not removed.
+Forge 3.18 preserves public operator IDs, scene/custom-property keys, Source Readiness and authoring schemas, generated `DSB_*` names, portable library formats 1–4, paired/core modes, compound semantics, attached/detached exact-index behavior, seam modes, Action names/markers, and GLB/manifest runtime contracts. Impact and Gore Pedal metadata are additive; unchanged legacy stamp and gore recipes retain their existing digests. Expert controls and both legacy gore modes remain under Advanced; they were not removed.
 
 ## Complete public button inventory
 
@@ -202,7 +222,7 @@ The task UI and Advanced workspace together represent every prior public control
 - Segment preview/region: **Preview Intact**, **Preview Detached**, **Register Selected Pair**, **Register Selected Core Mesh**, **Validate Region**.
 - Capture/influence: **Capture Single Face**, **Capture Connected Face Patch**, **Capture Selected Vertices**, **Capture 3D Cursor**, **Patch Only**, **Patch Feathered**, **Connected Surface**, **Surface Distance**, **World Distance**.
 - Stamps/libraries: **Add Stamp**, **Update Active Stamp**, **Enable / Disable**, **Save Stamp Library...**, **Load Stamp Library...**.
-- Gore: **Create Blunt Gore Head Set**, **Enable Surface Gore Overlay**, **Use Preset Defaults**, **Apply Gore Overlay Settings**, **Preview / Rebuild Current Gore**, **Clear Stain Preview**, **Apply Heavy Gore to All Deformations**, **Clear Current Generated Gore**, **Rebuild All Generated Gore**, **Validate Gore Geometry**.
+- Gore: **GORE CONTROL DECK**, **GORE PEDAL**, **EXPOSURE**, **CAVITY**, **CLOT FILL**, **BREAKUP**, **WETNESS**, **VARIATION**, **RANDOMIZE GORE SEED**, **GENERATE / REBUILD GORE PREVIEW**, **COMMIT / SAVE GORE**, **Revert Gore**, **FINAL GORE PREVIEW**, **Advanced Gore Internals**, **USE MANUAL GORE CONTROL**, **RETURN TO GORE PEDAL**, **Create Blunt Gore Head Set**, **Enable Surface Gore Overlay**, **Use Preset Defaults**, **Randomize Master Gore Seed**, **Apply Gore Overlay Settings**, **Preview / Rebuild Current Gore**, **Clear Stain Preview**, **Apply Heavy Gore to All Deformations**, **Clear Current Generated Gore**, **Rebuild All Generated Gore**, **Validate Gore Geometry**.
 - Starters/compound: **Create Body Impact Starters**, **Create Forearm Impact Starter**, **New Compound Trauma Event**, **Add Active Region to Event**, **Capture Shared Impact Field**, **Preview Compound Event**, **Validate Compound Event**.
 - Animation creation: **Create Floor**, **Align Pose**, rig bone mapping/direction, rotation-only left/right arm and hand polish, primary/advanced walk sliders, primary/advanced collapse sliders, primary/advanced flank-hurt sliders, **Generate / Refresh** drafts, and per-draft **Version / Approve** controls.
 - Guards: **Generate Three Mace Head-Guard Drafts**, **Preview Guard_Active**, **Validate Mace Head-Guard Drafts**.

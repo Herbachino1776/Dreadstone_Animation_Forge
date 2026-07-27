@@ -108,7 +108,7 @@ def valid_gore_overlay(seed: int = 1776) -> dict[str, object]:
 class TraumaFieldTests(unittest.TestCase):
     def test_surface_gore_built_in_presets_and_default_handling(self) -> None:
         self.assertEqual(
-            tuple(trauma_field.GORE_PRESETS),
+            tuple(trauma_field.GORE_PRESETS)[:6],
             (
                 "Gore_Ooze_Wet",
                 "Gore_Clot_Dark",
@@ -117,6 +117,17 @@ class TraumaFieldTests(unittest.TestCase):
                 "Gore_Crush_Bloodied",
                 "Gore_Crush_Heavy_Clotted",
             ),
+        )
+        self.assertEqual(
+            set(tuple(trauma_field.GORE_PRESETS)[6:]),
+            {
+                "Gore_Bruised_Dent",
+                "Gore_Bloody_Crater",
+                "Gore_Dark_Clot_Cavity",
+                "Gore_Crushed_Tissue",
+                "Gore_Exposed_Cranium",
+                "Gore_Ragged_Impact",
+            },
         )
         overlay = trauma_field.default_gore_overlay()
         self.assertFalse(overlay["goreOverlayEnabled"])

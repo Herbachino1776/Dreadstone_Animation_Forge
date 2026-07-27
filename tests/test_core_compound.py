@@ -446,7 +446,7 @@ class BlenderIntegrationSourceTests(unittest.TestCase):
 
     def test_compound_gore_uses_derived_participant_seed(self):
         self.assertIn("participant_seed = trauma_field.derive_participant_seed", self.deformation)
-        self.assertIn('"Gore_Crush_Heavy_Clotted"', self.deformation)
+        self.assertIn('"Gore_Bloody_Crater"', self.deformation)
 
     def test_batch_heavy_gore_records_failures(self):
         self.assertIn('failed.append(f"{region_id}/{key_name}: {exc}")', self.deformation)

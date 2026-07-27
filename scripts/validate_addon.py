@@ -34,13 +34,13 @@ ALL_MODULE_PATHS = tuple(sorted(
     if "__pycache__" not in path.parts
 ))
 
-EXPECTED_VERSION = (3, 17, 0)
+EXPECTED_VERSION = (3, 18, 0)
 EXPECTED_READINESS_BUILD = "2026-07-18.source-contract.1"
 EXPECTED_AUTHORING_BUILD = "2026-07-18.source-contract.1"
-EXPECTED_DEFORMATION_BUILD = "2026-07-26.impact-pedal.1"
+EXPECTED_DEFORMATION_BUILD = "2026-07-26.cavity-inlay-gore.1"
 
 REQUIRED_GUIDE_HEADINGS = (
-    "## 1. Install Dreadstone Animation Forge 3.17.0",
+    "## 1. Install Dreadstone Animation Forge 3.18.0",
     "## 2. Open the Dreadstone panel",
     "## 3. Import and prepare a source GLB",
     "## 5. Author and approve animation drafts",
@@ -124,6 +124,22 @@ REQUIRED_GUIDE_UI_LABELS = {
     "**FIT MACROS TO CURRENT VALUES**",
     "**RETURN TO MACRO CONTROL**",
     "**FINAL PREVIEW**",
+    "**GORE CONTROL DECK**",
+    "**GORE PEDAL**",
+    "**EXPOSURE**",
+    "**CAVITY**",
+    "**CLOT FILL**",
+    "**BREAKUP**",
+    "**WETNESS**",
+    "**VARIATION**",
+    "**RANDOMIZE GORE SEED**",
+    "**GENERATE / REBUILD GORE PREVIEW**",
+    "**COMMIT / SAVE GORE**",
+    "**Revert Gore**",
+    "**FINAL GORE PREVIEW**",
+    "**Advanced Gore Internals**",
+    "**USE MANUAL GORE CONTROL**",
+    "**RETURN TO GORE PEDAL**",
     "**REBUILD ACTIVE DEFORMATION**",
     "**Attached**",
     "**Detached**",
@@ -144,6 +160,7 @@ REQUIRED_SCHEMAS = {
     "dreadstone.damage_authoring.v1",
     "dreadstone.damage_deformation.v1",
     "dreadstone.impact_control.v1",
+    "dreadstone.gore_control.v1",
     "dreadstone.trauma_stamp_library.v1",
     "dreadstone.compound_trauma_event.v1",
 }
@@ -251,7 +268,7 @@ REQUIRED_OPERATORS = {
 REQUIRED_UI_TEXT = {
     "Source Damage Readiness",
     "Damage Segment & Stump Authoring v3.9",
-    "Trauma Field Authoring v3.17.0",
+    "Trauma Field Authoring v3.18.0",
     "5. Surface Gore Overlay",
     "Restore Reimported GLB Intact Preview",
     "Validate Complete Damage Asset",
@@ -429,7 +446,7 @@ def check_extension_manifest() -> None:
         (
             'schema_version = "1.0.0"',
             'id = "dreadstone_animation_forge"',
-            'version = "3.17.0"',
+            'version = "3.18.0"',
             'name = "Dreadstone Animation Forge"',
             'type = "add-on"',
             'blender_version_min = "4.2.0"',
@@ -618,8 +635,8 @@ def check_impact_parameter_contracts(sources: dict[str, str]) -> None:
         ),
         "Impact Control Deck UI",
     )
-    require((ROOT / "docs" / "DAMAGE_PARAMETER_AUDIT_v3.17.0.json").is_file(), "damage parameter audit report is missing")
-    require((ROOT / "docs" / "IMPACT_RESPONSE_DIAGNOSTICS_v3.17.0.json").is_file(), "impact response diagnostic report is missing")
+    require((ROOT / "docs" / "DAMAGE_PARAMETER_AUDIT_v3.18.0.json").is_file(), "damage parameter audit report is missing")
+    require((ROOT / "docs" / "IMPACT_RESPONSE_DIAGNOSTICS_v3.18.0.json").is_file(), "impact response diagnostic report is missing")
 
 
 def check_world_space_and_exact_index(source: str) -> None:
@@ -870,14 +887,14 @@ def check_repository_hygiene() -> None:
 
 
 def main() -> int:
-    print("DREADSTONE ANIMATION FORGE v3.17.0 STATIC VALIDATION")
+    print("DREADSTONE ANIMATION FORGE v3.18.0 STATIC VALIDATION")
     print("Blender is not imported; runtime acceptance remains separate.")
 
     sources: dict[str, str] = {}
     trees: dict[str, ast.Module] = {}
     checks: list[tuple[str, Callable[[], None]]] = [
         ("all six contract package modules exist", check_module_files),
-        ("Blender extension manifest exists and matches v3.17.0", check_extension_manifest),
+        ("Blender extension manifest exists and matches v3.18.0", check_extension_manifest),
         ("all Python modules parse with ast.parse", lambda: check_parse(sources)),
         ("all Python modules compile with py_compile", check_compile),
         ("add-on/deformation version and build contracts", lambda: check_versions(trees)),

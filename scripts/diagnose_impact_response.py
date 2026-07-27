@@ -13,7 +13,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 PACKAGE = ROOT / "dreadstone_animation_forge"
-OUTPUT = ROOT / "docs" / "IMPACT_RESPONSE_DIAGNOSTICS_v3.17.0.json"
+OUTPUT = ROOT / "docs" / "IMPACT_RESPONSE_DIAGNOSTICS_v3.18.0.json"
 LEVELS = (0, 25, 50, 75, 100)
 MACROS = ("size", "crush", "profile", "edgeSafety", "chaos")
 
@@ -246,7 +246,7 @@ def build_report():
         failures.append("Representative seeds produced duplicate geometry digests")
     return {
         "schema": "dreadstone.impact_response_diagnostics.v1",
-        "forgeVersion": "3.17.0",
+        "forgeVersion": "3.18.0",
         "fixture": {
             "kind": "maintained deterministic 41x41 surface-field fixture",
             "vertexCount": len(POSITIONS),

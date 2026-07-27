@@ -17,6 +17,8 @@ from collections.abc import Mapping
 
 IMPACT_CONTROL_SCHEMA = "dreadstone.impact_control.v1"
 IMPACT_CONTROL_VERSION = 1
+GORE_CONTROL_SCHEMA = "dreadstone.gore_control.v1"
+GORE_CONTROL_VERSION = 1
 MACRO_IDENTIFIERS = (
     "deformation_impact_size",
     "deformation_impact_crush",
@@ -25,6 +27,22 @@ MACRO_IDENTIFIERS = (
     "deformation_impact_chaos",
 )
 MACRO_LABELS = ("SIZE", "CRUSH", "PROFILE", "EDGE SAFETY", "CHAOS")
+GORE_MACRO_IDENTIFIERS = (
+    "deformation_gore_exposure",
+    "deformation_gore_cavity",
+    "deformation_gore_clot_fill",
+    "deformation_gore_breakup",
+    "deformation_gore_wetness_macro",
+    "deformation_gore_variation",
+)
+GORE_MACRO_LABELS = (
+    "EXPOSURE",
+    "CAVITY",
+    "CLOT FILL",
+    "BREAKUP",
+    "WETNESS",
+    "VARIATION",
+)
 DEFAULT_IMPACT_SEED = 1776
 MAX_SEED = 2147483647
 
@@ -282,6 +300,36 @@ PARAMETERS = {
         precision=0, step=1, scale_semantics="deterministic integer identity",
         recipe_field="impactSeed", export_field="impactControl.seed", integer=True,
     ),
+    "deformation_gore_exposure": _spec(
+        "deformation_gore_exposure", "EXPOSURE", 72.0, 0.0, 100.0,
+        precision=1, step=1, scale_semantics="normalized 0-100",
+        recipe_field="exposure", export_field="goreControl.macros.exposure",
+    ),
+    "deformation_gore_cavity": _spec(
+        "deformation_gore_cavity", "CAVITY", 72.0, 0.0, 100.0,
+        precision=1, step=1, scale_semantics="normalized 0-100",
+        recipe_field="cavity", export_field="goreControl.macros.cavity",
+    ),
+    "deformation_gore_clot_fill": _spec(
+        "deformation_gore_clot_fill", "CLOT FILL", 52.0, 0.0, 100.0,
+        precision=1, step=1, scale_semantics="normalized 0-100",
+        recipe_field="clotFill", export_field="goreControl.macros.clotFill",
+    ),
+    "deformation_gore_breakup": _spec(
+        "deformation_gore_breakup", "BREAKUP", 62.0, 0.0, 100.0,
+        precision=1, step=1, scale_semantics="normalized 0-100",
+        recipe_field="breakup", export_field="goreControl.macros.breakup",
+    ),
+    "deformation_gore_wetness_macro": _spec(
+        "deformation_gore_wetness_macro", "WETNESS", 68.0, 0.0, 100.0,
+        precision=1, step=1, scale_semantics="normalized 0-100",
+        recipe_field="wetness", export_field="goreControl.macros.wetness",
+    ),
+    "deformation_gore_variation": _spec(
+        "deformation_gore_variation", "VARIATION", 64.0, 0.0, 100.0,
+        precision=1, step=1, scale_semantics="normalized 0-100",
+        recipe_field="variation", export_field="goreControl.macros.variation",
+    ),
     "deformation_impact_gore_patch_scale": _spec(
         "deformation_impact_gore_patch_scale", "Gore Patch Scale", 0.010, 0.001, 0.10,
         soft_min=0.004, soft_max=0.04, precision=4, step=1, unit="LENGTH",
@@ -338,6 +386,9 @@ for _identifier, _label, _default, _field in (
     ("deformation_gore_fiber_texture_strength", "Muscle Fiber Contribution", 0.82, "goreFiberTextureStrength"),
     ("deformation_gore_base_color_strength", "Gore Color Contribution", 0.30, "goreBaseColorStrength"),
     ("deformation_gore_inner_rim_strength", "Barrier Compromise", 0.88, "goreInnerRimStrength"),
+    ("deformation_gore_host_deformation_contribution", "Host Deformation Contribution", 0.72, "goreHostDeformationContribution"),
+    ("deformation_gore_bone_reveal", "Bone Reveal", 0.0, "goreBoneReveal"),
+    ("deformation_gore_tissue_coverage", "Tissue Coverage", 0.45, "goreTissueCoverage"),
 ):
     _unit_interval(_identifier, _label, _default, _field)
 
@@ -368,6 +419,36 @@ PARAMETERS.update({
         "deformation_gore_mask_seed", "Master Gore Seed", DEFAULT_IMPACT_SEED, 0, MAX_SEED,
         precision=0, step=1, scale_semantics="deterministic integer identity",
         recipe_field="goreMaskSeed", integer=True,
+    ),
+    "deformation_gore_cavity_depth": _spec(
+        "deformation_gore_cavity_depth", "Cavity Depth", 0.018, 0.0, 0.15,
+        soft_max=0.06, precision=5, step=1, unit="LENGTH",
+        response_curve="square", recipe_field="goreCavityDepth",
+        relative_scale="actual host displacement, capture radius, and mean edge length",
+    ),
+    "deformation_gore_liner_separation": _spec(
+        "deformation_gore_liner_separation", "Liner Separation", 0.00035, 0.00002, 0.02,
+        soft_max=0.003, precision=6, step=1, unit="LENGTH",
+        response_curve="log", recipe_field="goreLinerSeparation",
+        relative_scale="capture radius and mean source edge length",
+    ),
+    "deformation_gore_rim_width": _spec(
+        "deformation_gore_rim_width", "Cavity Rim Width", 0.004, 0.0, 0.05,
+        soft_max=0.015, precision=5, step=1, unit="LENGTH",
+        response_curve="square", recipe_field="goreRimWidth",
+        relative_scale="capture radius and mean source edge length",
+    ),
+    "deformation_gore_clot_fill_depth": _spec(
+        "deformation_gore_clot_fill_depth", "Clot Fill Depth", 0.008, 0.0, 0.15,
+        soft_max=0.05, precision=5, step=1, unit="LENGTH",
+        response_curve="square", recipe_field="goreClotFillDepth",
+        relative_scale="cavity depth",
+    ),
+    "deformation_gore_proudness_limit": _spec(
+        "deformation_gore_proudness_limit", "Proudness Limit", 0.0, 0.0, 0.01,
+        soft_max=0.0015, precision=6, step=1, unit="LENGTH",
+        response_curve="square", recipe_field="goreProudnessLimit",
+        relative_scale="capture radius and mean source edge length",
     ),
 })
 
@@ -404,6 +485,8 @@ VECTOR_PARAMETERS = {
 
 RAISED_GORE_DEFAULTS = {
     "goreOverlayMode": "SURFACE_STAIN",
+    "goreGeometryMode": "STAIN_ONLY",
+    "goreIdentityId": "Gore_Ooze_Wet",
     "goreIntensityClass": "LIGHT",
     "goreRaisedEnabled": False,
     "goreClotCoverage": 0.0,
@@ -430,6 +513,21 @@ RAISED_GORE_DEFAULTS = {
     "goreDefaultVisible": False,
     "goreActivationWeight": 0.01,
     "goreUserCustomized": False,
+    "goreCavityDepth": 0.0,
+    "goreLinerSeparation": 0.00035,
+    "goreRimWidth": 0.004,
+    "goreClotFillDepth": 0.0,
+    "goreProudnessLimit": 0.0,
+    "goreHostDeformationContribution": 0.0,
+    "goreBoneReveal": 0.0,
+    "goreTissueCoverage": 0.0,
+    "goreWoundBedEnabled": False,
+    "goreClotLayerEnabled": False,
+    "goreTissueLayerEnabled": False,
+    "goreBoneLayerEnabled": False,
+    "goreBarrierLayerEnabled": False,
+    "goreRaisedRimOptIn": False,
+    "goreAllowInternalFragments": False,
 }
 
 
@@ -480,6 +578,93 @@ GORE_PRESETS = {
     },
 }
 
+
+GORE_IDENTITIES = {
+    "BRUISED_DENT": {
+        "label": "Bruised Dent",
+        "purpose": "A shallow crushed depression led by stain and compressed skin.",
+        "macros": (42.0, 28.0, 12.0, 24.0, 24.0, 38.0),
+        "layers": ("WOUND_BED",),
+        "triangleBudget": 4200,
+        "presetId": "Gore_Bruised_Dent",
+    },
+    "BLOODY_CRATER": {
+        "label": "Bloody Crater",
+        "purpose": "A wet open crater with a visible recessed bed and restrained clot fill.",
+        "macros": (78.0, 76.0, 48.0, 62.0, 72.0, 66.0),
+        "layers": ("WOUND_BED", "CLOT", "BARRIER"),
+        "triangleBudget": 9000,
+        "presetId": "Gore_Bloody_Crater",
+    },
+    "DARK_CLOT_CAVITY": {
+        "label": "Dark Clot Cavity",
+        "purpose": "A deep recess partially occupied by a dark, rough clot.",
+        "macros": (68.0, 70.0, 86.0, 44.0, 34.0, 58.0),
+        "layers": ("WOUND_BED", "CLOT"),
+        "triangleBudget": 8600,
+        "presetId": "Gore_Dark_Clot_Cavity",
+    },
+    "CRUSHED_TISSUE": {
+        "label": "Crushed Tissue",
+        "purpose": "A broad compressed wound with deterministic fiber and tissue breakup.",
+        "macros": (74.0, 66.0, 56.0, 74.0, 50.0, 80.0),
+        "layers": ("WOUND_BED", "CLOT", "TISSUE", "BARRIER"),
+        "triangleBudget": 11000,
+        "presetId": "Gore_Crushed_Tissue",
+    },
+    "EXPOSED_CRANIUM": {
+        "label": "Exposed Cranium",
+        "purpose": "A deep low-fill cavity with a pale plate beneath the wound bed.",
+        "macros": (62.0, 92.0, 16.0, 48.0, 34.0, 56.0),
+        "layers": ("WOUND_BED", "BONE", "BARRIER"),
+        "triangleBudget": 9800,
+        "presetId": "Gore_Exposed_Cranium",
+    },
+    "RAGGED_IMPACT": {
+        "label": "Ragged Impact",
+        "purpose": "An irregular torn-looking cavity with bounded peripheral fragments.",
+        "macros": (82.0, 78.0, 46.0, 96.0, 68.0, 92.0),
+        "layers": ("WOUND_BED", "CLOT", "TISSUE", "BARRIER"),
+        "triangleBudget": 12000,
+        "presetId": "Gore_Ragged_Impact",
+        "raisedRimOptIn": True,
+    },
+}
+
+
+for _identity_id, _identity in GORE_IDENTITIES.items():
+    _layers = set(_identity["layers"])
+    _preset_id = str(_identity["presetId"])
+    GORE_PRESETS[_preset_id] = {
+        "goreCoverage": 0.72,
+        "goreScatter": 0.58,
+        "goreEdgeFeather": 0.62,
+        "goreWetness": 0.62,
+        "goreDarkness": 0.56,
+        "goreColorBias": (0.30, 0.008, 0.006),
+        "gorePatchScale": 0.012,
+        "goreOverlayMode": "STAIN_AND_RAISED",
+        "goreGeometryMode": "CAVITY_INLAY",
+        "goreIdentityId": _identity_id,
+        "goreIntensityClass": "HIGH",
+        "goreRaisedEnabled": True,
+        "goreWoundBedEnabled": "WOUND_BED" in _layers,
+        "goreClotLayerEnabled": "CLOT" in _layers,
+        "goreTissueLayerEnabled": "TISSUE" in _layers,
+        "goreBoneLayerEnabled": "BONE" in _layers,
+        "goreBarrierLayerEnabled": "BARRIER" in _layers,
+        "goreRaisedRimOptIn": bool(_identity.get("raisedRimOptIn", False)),
+        "goreAllowInternalFragments": _identity_id in {"CRUSHED_TISSUE", "RAGGED_IMPACT"},
+        "goreMaximumTriangles": int(_identity["triangleBudget"]),
+        "goreMacroDefaults": {
+            label: value
+            for label, value in zip(
+                ("exposure", "cavity", "clotFill", "breakup", "wetness", "variation"),
+                _identity["macros"],
+            )
+        },
+    }
+
 _GORE_PRESET_FIELDS = {
     field
     for preset in GORE_PRESETS.values()
@@ -501,6 +686,11 @@ for _identifier, _values in {
     "deformation_impact_chaos": (22.0, 35.0, 60.0),
 }.items():
     PARAMETERS[_identifier].preset_values = _values
+for _macro_index, _identifier in enumerate(GORE_MACRO_IDENTIFIERS):
+    PARAMETERS[_identifier].preset_values = tuple(
+        float(identity["macros"][_macro_index])
+        for identity in GORE_IDENTITIES.values()
+    )
 
 
 def spec(identifier):
@@ -596,6 +786,7 @@ def parameter_report():
     return {
         "schema": "dreadstone.damage_parameter_contract.v1",
         "impactControlSchema": IMPACT_CONTROL_SCHEMA,
+        "goreControlSchema": GORE_CONTROL_SCHEMA,
         "parameters": [PARAMETERS[key].as_dict() for key in sorted(PARAMETERS)],
         "vectorParameters": [copy.deepcopy(VECTOR_PARAMETERS[key]) for key in sorted(VECTOR_PARAMETERS)],
     }
@@ -678,6 +869,281 @@ def impact_identity_digest(metadata):
         }
     encoded = json.dumps(payload, sort_keys=True, separators=(",", ":"), allow_nan=False).encode("utf-8")
     return hashlib.sha256(encoded).hexdigest()
+
+
+def _gore_macro_values(macros):
+    if isinstance(macros, Mapping):
+        raw = (
+            macros.get("exposure", macros.get(GORE_MACRO_IDENTIFIERS[0], 72.0)),
+            macros.get("cavity", macros.get(GORE_MACRO_IDENTIFIERS[1], 72.0)),
+            macros.get("clotFill", macros.get(GORE_MACRO_IDENTIFIERS[2], 52.0)),
+            macros.get("breakup", macros.get(GORE_MACRO_IDENTIFIERS[3], 62.0)),
+            macros.get("wetness", macros.get(GORE_MACRO_IDENTIFIERS[4], 68.0)),
+            macros.get("variation", macros.get(GORE_MACRO_IDENTIFIERS[5], 64.0)),
+        )
+    else:
+        raw = tuple(macros)
+    if len(raw) != 6:
+        raise ValueError("Gore Pedal requires exactly six macro values.")
+    values = tuple(float(value) for value in raw)
+    for identifier, value in zip(GORE_MACRO_IDENTIFIERS, values):
+        errors = validate(identifier, value)
+        if errors:
+            raise ValueError(errors[0])
+    return values
+
+
+def gore_identity_for_preset(preset_id):
+    preset = GORE_PRESETS.get(str(preset_id), {})
+    identity = str(preset.get("goreIdentityId", ""))
+    return identity if identity in GORE_IDENTITIES else ""
+
+
+def gore_identity_defaults(identity_id):
+    identity = GORE_IDENTITIES.get(str(identity_id))
+    if identity is None:
+        raise ValueError(f"Unsupported gore identity {identity_id!r}.")
+    return {
+        "identityId": str(identity_id),
+        "label": str(identity["label"]),
+        "purpose": str(identity["purpose"]),
+        "macros": {
+            label: float(value)
+            for label, value in zip(
+                ("exposure", "cavity", "clotFill", "breakup", "wetness", "variation"),
+                identity["macros"],
+            )
+        },
+        "layers": list(identity["layers"]),
+        "triangleBudget": int(identity["triangleBudget"]),
+        "raisedRimOptIn": bool(identity.get("raisedRimOptIn", False)),
+        "presetId": str(identity["presetId"]),
+    }
+
+
+def normalize_gore_control(metadata):
+    if not isinstance(metadata, Mapping):
+        raise ValueError("Gore control metadata must be an object.")
+    schema_name = str(metadata.get("schema", GORE_CONTROL_SCHEMA))
+    version = int(metadata.get("version", GORE_CONTROL_VERSION))
+    if schema_name != GORE_CONTROL_SCHEMA or version != GORE_CONTROL_VERSION:
+        raise ValueError(f"Unsupported gore control metadata {schema_name!r} version {version}.")
+    mode = str(metadata.get("mode", "MACRO")).upper()
+    if mode not in {"MACRO", "MANUAL"}:
+        raise ValueError("Gore control mode must be MACRO or MANUAL.")
+    identity_id = str(metadata.get("identityId", "BLOODY_CRATER"))
+    if identity_id not in GORE_IDENTITIES:
+        raise ValueError(f"Unsupported gore identity {identity_id!r}.")
+    exposure, cavity, clot_fill, breakup, wetness, variation = _gore_macro_values(
+        metadata.get("macros", {})
+    )
+    seed = int(metadata.get("seed", DEFAULT_IMPACT_SEED))
+    errors = validate("deformation_gore_mask_seed", seed)
+    if errors:
+        raise ValueError(errors[0])
+    normalized = {
+        "schema": GORE_CONTROL_SCHEMA,
+        "version": GORE_CONTROL_VERSION,
+        "mode": mode,
+        "recipeClass": "GORE_PEDAL" if mode == "MACRO" else "CUSTOM",
+        "identityId": identity_id,
+        "macros": {
+            "exposure": exposure,
+            "cavity": cavity,
+            "clotFill": clot_fill,
+            "breakup": breakup,
+            "wetness": wetness,
+            "variation": variation,
+        },
+        "seed": seed,
+    }
+    normalized["identityDigest"] = gore_identity_digest(normalized)
+    return normalized
+
+
+def gore_identity_digest(metadata):
+    if isinstance(metadata, Mapping) and "macros" in metadata:
+        payload = {
+            "schema": str(metadata.get("schema", GORE_CONTROL_SCHEMA)),
+            "version": int(metadata.get("version", GORE_CONTROL_VERSION)),
+            "mode": str(metadata.get("mode", "MACRO")).upper(),
+            "identityId": str(metadata.get("identityId", "BLOODY_CRATER")),
+            "macros": dict(metadata.get("macros", {})),
+            "seed": int(metadata.get("seed", DEFAULT_IMPACT_SEED)),
+        }
+    else:
+        values = _gore_macro_values(metadata)
+        payload = {
+            "schema": GORE_CONTROL_SCHEMA,
+            "version": GORE_CONTROL_VERSION,
+            "mode": "MACRO",
+            "identityId": "BLOODY_CRATER",
+            "macros": {
+                label: value
+                for label, value in zip(
+                    ("exposure", "cavity", "clotFill", "breakup", "wetness", "variation"),
+                    values,
+                )
+            },
+            "seed": DEFAULT_IMPACT_SEED,
+        }
+    encoded = json.dumps(payload, sort_keys=True, separators=(",", ":"), allow_nan=False).encode("utf-8")
+    return hashlib.sha256(encoded).hexdigest()
+
+
+def derive_gore_parameters(
+    macros,
+    *,
+    identity_id="BLOODY_CRATER",
+    region_scale=0.075,
+    stamp_depth=0.025,
+    mean_edge_length=0.004,
+):
+    """Map the six Gore Pedal controls to one bounded scale-relative inlay recipe."""
+
+    exposure, cavity, clot_fill, breakup, wetness, variation = _gore_macro_values(macros)
+    if identity_id not in GORE_IDENTITIES:
+        raise ValueError(f"Unsupported gore identity {identity_id!r}.")
+    exposure_n, cavity_n, clot_n, breakup_n, wet_n, variation_n = (
+        value / 100.0
+        for value in (exposure, cavity, clot_fill, breakup, wetness, variation)
+    )
+    region = float(region_scale)
+    if not math.isfinite(region) or region <= 0.0:
+        region = 0.075
+    region = max(0.005, min(2.0, region))
+    depth = max(0.0, float(stamp_depth))
+    if not math.isfinite(depth):
+        depth = 0.025
+    edge = max(1e-6, float(mean_edge_length))
+    if not math.isfinite(edge):
+        edge = region * 0.05
+    identity = GORE_IDENTITIES[identity_id]
+    identity_factors = {
+        "BRUISED_DENT": (0.62, 0.30, 0.72),
+        "BLOODY_CRATER": (1.00, 1.00, 1.00),
+        "DARK_CLOT_CAVITY": (0.92, 0.96, 1.10),
+        "CRUSHED_TISSUE": (1.04, 0.88, 1.16),
+        "EXPOSED_CRANIUM": (0.82, 1.18, 0.78),
+        "RAGGED_IMPACT": (1.08, 1.02, 1.25),
+    }[identity_id]
+    exposure_factor, cavity_factor, breakup_factor = identity_factors
+    scale_floor = max(edge * 1.6, region * 0.018)
+    host_contribution = min(1.0, cavity_factor * (0.08 + 0.92 * cavity_n**1.35))
+    cavity_depth = min(
+        0.15,
+        max(
+            0.0,
+            min(depth * 0.72, region * 0.34)
+            * cavity_factor
+            * cavity_n**1.45,
+        ),
+    )
+    if cavity_n <= 1e-8:
+        cavity_depth = 0.0
+    liner_separation = max(0.00002, min(0.02, scale_floor * (0.014 + 0.018 * cavity_n)))
+    if cavity_n > 1e-8:
+        cavity_depth = min(0.15, max(cavity_depth, liner_separation * 2.5))
+    rim_width = max(0.0, min(0.05, region * (0.025 + 0.075 * cavity_n) + edge * 0.18))
+    clot_fill_depth = (
+        0.0
+        if cavity_depth <= 0.0 or clot_n <= 0.0
+        else max(
+            liner_separation * 1.5,
+            cavity_depth * (0.17 + 0.38 * (1.0 - clot_n)),
+        )
+    )
+    raised_opt_in = bool(identity.get("raisedRimOptIn", False))
+    proudness_limit = (
+        min(0.01, max(edge * 0.035, region * 0.0025) * breakup_n)
+        if raised_opt_in else 0.0
+    )
+    coverage = min(
+        1.0,
+        exposure_factor
+        * (
+            0.10
+            + 0.58 * exposure_n**0.78
+            + 0.20 * exposure_n * cavity_n
+            + 0.08 * exposure_n * (1.0 - clot_n)
+        ),
+    )
+    clot_coverage = min(1.0, clot_n**0.82 * (0.28 + 0.72 * exposure_n))
+    tissue_coverage = min(
+        1.0,
+        (0.18 + 0.58 * exposure_n) * (0.30 + 0.70 * breakup_n) * (1.0 - clot_n * 0.42),
+    )
+    bone_identity = 1.0 if identity_id == "EXPOSED_CRANIUM" else 0.35
+    bone_reveal = min(1.0, bone_identity * cavity_n**1.8 * (1.0 - clot_n)**1.25)
+    wet_roughness_response = wet_n**0.82
+    result = {
+        "goreGeometryMode": "CAVITY_INLAY",
+        "goreIdentityId": identity_id,
+        "goreCoverage": coverage,
+        "goreScatter": min(1.0, 0.12 + 0.72 * breakup_n + 0.16 * variation_n),
+        "goreEdgeFeather": min(1.0, 0.28 + 0.50 * exposure_n + 0.22 * (1.0 - breakup_n)),
+        "goreWetness": wet_roughness_response,
+        "goreDarkness": min(1.0, 0.28 + 0.38 * (1.0 - wet_n) + 0.22 * clot_n),
+        "gorePatchScale": max(0.001, min(0.10, region * (0.08 + 0.12 * exposure_n))),
+        "goreClotCoverage": clot_coverage,
+        "goreCoreDensity": min(1.0, 0.26 + 0.48 * exposure_n + 0.26 * cavity_n),
+        "goreClotThickness": max(0.0001, min(0.05, scale_floor * (0.10 + 0.30 * clot_n))),
+        "goreThicknessVariation": min(1.0, 0.08 + 0.88 * variation_n),
+        "goreIslandBreakup": min(1.0, breakup_factor * (0.06 + 0.88 * breakup_n)),
+        "gorePeripheralFragments": min(1.0, breakup_n**1.4 * variation_n),
+        "goreSurfaceOffset": max(0.00015, min(0.012, liner_separation)),
+        "goreGeometryDensity": min(1.0, 0.22 + 0.54 * exposure_n + 0.24 * variation_n),
+        "goreWetnessVariation": min(1.0, wet_n * (0.22 + 0.78 * variation_n)),
+        "goreDarkClotBias": min(1.0, 0.18 + 0.68 * clot_n + 0.14 * (1.0 - wet_n)),
+        "goreRoughEdgeBias": min(1.0, 0.24 + 0.62 * breakup_n),
+        "goreColorIntensity": min(1.0, 0.46 + 0.54 * exposure_n),
+        "goreOrganicIrregularity": min(1.0, breakup_n * (0.35 + 0.65 * variation_n)),
+        "goreSurfaceRoundness": min(1.0, 0.08 + 0.30 * clot_n),
+        "goreFiberTextureStrength": min(1.0, 0.18 + 0.70 * variation_n),
+        "goreBaseColorStrength": min(1.0, 0.28 + 0.58 * exposure_n),
+        "goreInnerRimWidth": rim_width,
+        "goreInnerRimStrength": min(1.0, 0.22 + 0.68 * cavity_n),
+        "goreCavityDepth": cavity_depth,
+        "goreLinerSeparation": liner_separation,
+        "goreRimWidth": rim_width,
+        "goreClotFillDepth": min(cavity_depth, clot_fill_depth),
+        "goreProudnessLimit": proudness_limit,
+        "goreHostDeformationContribution": host_contribution,
+        "goreBoneReveal": bone_reveal,
+        "goreTissueCoverage": tissue_coverage,
+        "goreWoundBedEnabled": "WOUND_BED" in identity["layers"],
+        "goreClotLayerEnabled": (
+            "CLOT" in identity["layers"] and clot_coverage > 1e-6 and cavity_depth > 0.0
+        ),
+        "goreTissueLayerEnabled": (
+            "TISSUE" in identity["layers"] and tissue_coverage > 1e-6 and cavity_depth > 0.0
+        ),
+        "goreBoneLayerEnabled": (
+            "BONE" in identity["layers"] and bone_reveal > 1e-6 and cavity_depth > 0.0
+        ),
+        "goreBarrierLayerEnabled": "BARRIER" in identity["layers"] and cavity_depth > 0.0,
+        "goreRaisedRimOptIn": raised_opt_in,
+        "goreAllowInternalFragments": identity_id in {"CRUSHED_TISSUE", "RAGGED_IMPACT"},
+        "goreMaximumTriangles": int(identity["triangleBudget"]),
+    }
+    fields = (
+        "goreCoverage", "goreScatter", "goreEdgeFeather", "goreWetness", "goreDarkness",
+        "gorePatchScale", "goreClotCoverage", "goreCoreDensity", "goreClotThickness",
+        "goreThicknessVariation", "goreIslandBreakup", "gorePeripheralFragments",
+        "goreSurfaceOffset", "goreGeometryDensity", "goreWetnessVariation",
+        "goreDarkClotBias", "goreRoughEdgeBias", "goreColorIntensity",
+        "goreOrganicIrregularity", "goreSurfaceRoundness", "goreFiberTextureStrength",
+        "goreBaseColorStrength", "goreInnerRimWidth", "goreInnerRimStrength",
+        "goreCavityDepth", "goreLinerSeparation", "goreRimWidth",
+        "goreClotFillDepth", "goreProudnessLimit", "goreHostDeformationContribution",
+        "goreBoneReveal", "goreTissueCoverage", "goreMaximumTriangles",
+    )
+    errors = []
+    for field in fields:
+        errors.extend(validate_recipe_value(field, result[field]))
+    if errors:
+        raise ValueError("; ".join(errors))
+    return result
 
 
 def derive_impact_parameters(macros, *, region_scale=0.075, family="COMPACT_DENT", seed=DEFAULT_IMPACT_SEED):
@@ -797,6 +1263,10 @@ def fit_macros_to_parameters(values, *, region_scale=0.075, family="COMPACT_DENT
 
 def gore_presets():
     return copy.deepcopy(GORE_PRESETS)
+
+
+def gore_identities():
+    return copy.deepcopy(GORE_IDENTITIES)
 
 
 def raised_gore_defaults():

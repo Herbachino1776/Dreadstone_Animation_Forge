@@ -132,7 +132,9 @@ class RaisedGoreTests(unittest.TestCase):
             "linkedCaptureTopologyFingerprint": "b" * 64,
         }
         migrated = trauma_field.normalize_gore_overlay(legacy)
-        self.assertEqual(migrated["goreRecipeVersion"], 3)
+        self.assertEqual(migrated["goreRecipeVersion"], 4)
+        self.assertEqual(migrated["goreSourceRecipeVersion"], 1)
+        self.assertEqual(migrated["goreGeometryMode"], "STAIN_ONLY")
         self.assertEqual(migrated["goreOverlayMode"], "SURFACE_STAIN")
         self.assertFalse(migrated["goreRaisedEnabled"])
 
@@ -340,7 +342,10 @@ class RaisedGoreTests(unittest.TestCase):
             trauma_field.raised_gore_face_records([(0, 0, 0)] * 3, [(0, 1, 9)], [1] * 3, [1] * 3, overlay)
 
     def test_material_contract_is_metal_free_and_non_emissive_data(self):
-        self.assertEqual(tuple(trauma_field.GORE_MATERIAL_SPECS), trauma_field.GORE_MATERIAL_IDS)
+        self.assertEqual(
+            tuple(trauma_field.GORE_MATERIAL_SPECS),
+            trauma_field.CAVITY_GORE_MATERIAL_IDS,
+        )
         for material in trauma_field.GORE_MATERIAL_SPECS.values():
             self.assertEqual(material["metallic"], 0.0)
             self.assertEqual(len(material["baseColor"]), 4)

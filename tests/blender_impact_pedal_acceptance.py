@@ -216,6 +216,78 @@ def main():
     require(revert_result == {'FINISHED'}, "Revert failed.")
     require(settings.deformation_impact_seed == committed_seed, "Revert did not restore the committed seed.")
 
+    # The adjacent top Gore Control Deck completes the same no-scroll loop.
+    settings.deformation_live_preview = False
+    settings.deformation_auto_preview = True
+    settings.deformation_preview_quality = "BALANCED"
+    with preview_service.suspend_updates():
+        settings.deformation_gore_enabled = True
+        settings.deformation_gore_identity = "BLOODY_CRATER"
+        settings.deformation_gore_preset = "Gore_Bloody_Crater"
+    deformation_authoring.apply_gore_preset_to_settings(context)
+    require(
+        bpy.ops.daf.update_surface_gore_overlay() == {'FINISHED'},
+        "Gore deck could not link its recipe to the active capture.",
+    )
+    gore_macros = tuple(
+        float(getattr(settings, name))
+        for name in parameter_schema.GORE_MACRO_IDENTIFIERS
+    )
+    gore_seeds = []
+    for _index in range(20):
+        transaction_before = int(settings.deformation_gore_transaction_count)
+        generation_before = int(preview_service.state()["generation"])
+        require(
+            bpy.ops.daf.randomize_gore_seed() == {'FINISHED'},
+            "Top-deck Randomize Gore Seed failed.",
+        )
+        require(
+            int(settings.deformation_gore_transaction_count) == transaction_before + 1,
+            "Randomize Gore Seed did not make exactly one dirty transition.",
+        )
+        require(
+            int(preview_service.state()["generation"]) == generation_before + 1,
+            "Randomize Gore Seed did not request exactly one managed preview.",
+        )
+        require(
+            tuple(float(getattr(settings, name)) for name in parameter_schema.GORE_MACRO_IDENTIFIERS)
+            == gore_macros,
+            "Randomize Gore Seed changed a Gore Pedal macro.",
+        )
+        gore_seeds.append(int(settings.deformation_gore_mask_seed))
+    require(len(set(gore_seeds)) == 20, "Gore seed sweep repeated a seed.")
+    require(
+        bpy.ops.daf.generate_gore_preview() == {'FINISHED'},
+        "Top-deck Generate / Rebuild Gore Preview failed.",
+    )
+    require(
+        deformation_authoring.preview_gore_objects(),
+        "BALANCED Gore preview did not create preview-only feedback.",
+    )
+    require(
+        bpy.ops.daf.final_gore_preview() == {'FINISHED'},
+        "Top-deck Final Gore Preview failed.",
+    )
+    require(
+        bpy.ops.daf.commit_gore() == {'FINISHED'},
+        "Top-deck Commit / Save Gore failed.",
+    )
+    require(
+        not deformation_authoring.preview_gore_objects(),
+        "Gore commit leaked preview-only nodes.",
+    )
+    require(
+        deformation_authoring.generated_gore_objects(
+            deformation_authoring._active_region_id(context),
+            settings.deformation_active_key,
+        ),
+        "Gore commit did not create stable final nodes.",
+    )
+    require(not settings.deformation_gore_dirty, "Gore commit left the recipe dirty.")
+    # Later endpoint coverage intentionally assigns every raw field extreme;
+    # keep that independent from the new-draft rollback check below.
+    settings.deformation_gore_enabled = False
+
     # FINAL PREVIEW is non-committing; Clear Preview removes temporary resources.
     settings.deformation_impact_size = 72.0
     require(settings.deformation_impact_dirty, "Macro edit did not mark the recipe dirty.")
@@ -285,6 +357,9 @@ def main():
         "macroGenerationChecks": generation_checks,
         "randomizedSeedCount": len(seeds),
         "distinctRandomizedSeeds": len(set(seeds)),
+        "goreRandomizedSeedCount": len(gore_seeds),
+        "distinctGoreRandomizedSeeds": len(set(gore_seeds)),
+        "goreTopDeckPreviewCommit": True,
         "deterministicPreviewDigest": first_digest,
         "timerRegistered": state["timerRegistered"],
         "previewHandlerCount": handler_count,
