@@ -1,4 +1,4 @@
-"""Dreadstone Animation Forge v3.16.2 trauma-field authoring.
+"""Dreadstone Animation Forge v3.17.0 trauma-field authoring.
 
 The workbench edits explicitly registered paired-segment or core-single regions
 on the generated protected Damage Asset. Paired morph targets remain exact-index
@@ -19,6 +19,7 @@ from bpy.props import BoolProperty, EnumProperty, FloatProperty, IntProperty, St
 from bpy.types import Operator
 from bpy_extras.io_utils import ExportHelper, ImportHelper
 
+from . import parameter_schema
 from . import trauma_field
 from .deformation import (
     compound_service,
@@ -34,8 +35,9 @@ from .deformation import (
 )
 
 DEFORMATION_SCHEMA = "dreadstone.damage_deformation.v1"
-DEFORMATION_VERSION = (3, 16, 2)
-DEFORMATION_BUILD_ID = "2026-07-21.animation-ui-foldouts.1"
+DEFORMATION_VERSION = (3, 17, 0)
+DEFORMATION_BUILD_ID = "2026-07-26.impact-pedal.1"
+IMPACT_CONTROL_SCHEMA = parameter_schema.IMPACT_CONTROL_SCHEMA
 ATTACHED_HEAD_NAME = "DSB_ATTACHED_HEAD"
 DETACHED_HEAD_NAME = "DSB_SEGMENT_HEAD"
 PREVIEW_KEY_NAME = "__DSB_DEFORMATION_SEED_PREVIEW"
@@ -71,6 +73,7 @@ _SEAM_FACTOR_CACHE = service_registry.register_cache(
 )
 _UNSET_REGION_OBJECT = object()
 _PENDING_REGION_ID = ""
+_IMPACT_TRANSACTION_DEPTH = 0
 _PREVIEW_RESTORE_STATE = {}
 
 STANDARD_HEAD_KEYS = {
@@ -1722,6 +1725,245 @@ def request_managed_preview(context, reason="property update"):
     return preview_service.request_refresh(context, reason)
 
 
+def _impact_macro_values(settings):
+    return (
+        float(settings.deformation_impact_size),
+        float(settings.deformation_impact_crush),
+        float(settings.deformation_impact_profile),
+        float(settings.deformation_impact_edge_safety),
+        float(settings.deformation_impact_chaos),
+    )
+
+
+def _impact_region_scale(settings):
+    try:
+        capture = json.loads(str(settings.deformation_capture_json or "{}"))
+    except (TypeError, ValueError, json.JSONDecodeError):
+        capture = {}
+    estimate = float(capture.get("estimatedRadius", settings.deformation_seed_radius))
+    return estimate if math.isfinite(estimate) and estimate > 0.0 else 0.075
+
+
+def impact_control_metadata(settings, *, mode=None):
+    return parameter_schema.normalize_impact_control({
+        "schema": IMPACT_CONTROL_SCHEMA,
+        "version": parameter_schema.IMPACT_CONTROL_VERSION,
+        "mode": str(mode or settings.deformation_impact_control_mode),
+        "macros": {
+            "size": float(settings.deformation_impact_size),
+            "crush": float(settings.deformation_impact_crush),
+            "profile": float(settings.deformation_impact_profile),
+            "edgeSafety": float(settings.deformation_impact_edge_safety),
+            "chaos": float(settings.deformation_impact_chaos),
+        },
+        "seed": int(settings.deformation_impact_seed),
+    })
+
+
+def _assign_impact_derived_values(settings, derived):
+    settings.deformation_seed_radius = float(derived["radius"])
+    settings.deformation_seed_depth = float(derived["depth"])
+    settings.deformation_seed_falloff = float(derived["falloff"])
+    settings.deformation_feather_distance = float(derived["featherDistance"])
+    settings.deformation_seed_seam_protection = float(derived["seamProtection"])
+    settings.deformation_stamp_strength = float(derived["strength"])
+    settings.deformation_max_vertex_displacement = float(derived["maximumDisplacement"])
+    settings.deformation_impact_gore_patch_scale = float(derived["gorePatchScale"])
+    settings.deformation_gore_coverage = float(derived["goreCoverage"])
+    settings.deformation_gore_scatter = float(derived["goreScatter"])
+    settings.deformation_gore_island_breakup = float(derived["goreIslandBreakup"])
+    settings.deformation_gore_organic_irregularity = float(derived["goreOrganicIrregularity"])
+
+
+def _mark_impact_dirty(settings, metadata):
+    settings.deformation_impact_dirty = True
+    settings.deformation_impact_identity = str(metadata["identityDigest"])
+    settings.deformation_impact_transaction_count = int(settings.deformation_impact_transaction_count) + 1
+
+
+def request_low_level_property_update(context, reason="deformation control changed"):
+    """Route editable raw values without recursively reapplying macros."""
+
+    if _IMPACT_TRANSACTION_DEPTH or preview_service.updates_suspended():
+        return int(preview_service.state().get("generation", 0))
+    settings = getattr(getattr(context, "scene", None), "daf_settings", None)
+    if settings is not None:
+        metadata = impact_control_metadata(
+            settings,
+            mode="MANUAL" if settings.deformation_impact_control_mode == 'MANUAL' else "MACRO",
+        )
+        settings.deformation_impact_dirty = True
+        settings.deformation_impact_identity = str(metadata["identityDigest"])
+    return request_managed_preview(context, reason)
+
+
+# Backward-compatible name for integrations that called the pre-3.17 helper.
+handle_low_level_property_update = request_low_level_property_update
+
+
+def apply_impact_macro_transaction(context, reason="Impact Pedal changed"):
+    """Derive and assign the full physical recipe with one dirty/token request."""
+
+    global _IMPACT_TRANSACTION_DEPTH
+    settings = getattr(getattr(context, "scene", None), "daf_settings", None)
+    if settings is None or _IMPACT_TRANSACTION_DEPTH or preview_service.updates_suspended():
+        return {}
+    if str(settings.deformation_impact_control_mode) != 'MACRO':
+        return {}
+    derived = parameter_schema.derive_impact_parameters(
+        _impact_macro_values(settings),
+        region_scale=_impact_region_scale(settings),
+        family=str(settings.deformation_stamp_family),
+        seed=int(settings.deformation_impact_seed),
+    )
+    metadata = impact_control_metadata(settings, mode="MACRO")
+    _IMPACT_TRANSACTION_DEPTH += 1
+    try:
+        with preview_service.suspend_updates():
+            _assign_impact_derived_values(settings, derived)
+            settings.deformation_gore_mask_seed = int(settings.deformation_impact_seed)
+            _mark_impact_dirty(settings, metadata)
+    finally:
+        _IMPACT_TRANSACTION_DEPTH = max(0, _IMPACT_TRANSACTION_DEPTH - 1)
+    generation = request_managed_preview(context, reason)
+    return {"derived": derived, "metadata": metadata, "generation": generation}
+
+
+def apply_impact_seed_transaction(context, reason="master impact seed changed"):
+    """Apply a validated seed identity and schedule at most one managed preview."""
+
+    global _IMPACT_TRANSACTION_DEPTH
+    settings = getattr(getattr(context, "scene", None), "daf_settings", None)
+    if settings is None or _IMPACT_TRANSACTION_DEPTH or preview_service.updates_suspended():
+        return {}
+    errors = parameter_schema.validate("deformation_impact_seed", settings.deformation_impact_seed)
+    if errors:
+        raise ValueError(errors[0])
+    metadata = impact_control_metadata(settings)
+    _IMPACT_TRANSACTION_DEPTH += 1
+    try:
+        with preview_service.suspend_updates():
+            settings.deformation_gore_mask_seed = int(settings.deformation_impact_seed)
+            _mark_impact_dirty(settings, metadata)
+    finally:
+        _IMPACT_TRANSACTION_DEPTH = max(0, _IMPACT_TRANSACTION_DEPTH - 1)
+    generation = request_managed_preview(context, reason)
+    return {"seed": int(settings.deformation_impact_seed), "metadata": metadata, "generation": generation}
+
+
+def randomize_impact_seed(context):
+    """Choose one new valid seed without changing identity semantics or macros."""
+
+    global _IMPACT_TRANSACTION_DEPTH
+    settings = context.scene.daf_settings
+    previous = int(settings.deformation_impact_seed)
+    candidate = previous
+    while candidate == previous:
+        candidate = secrets.randbelow(parameter_schema.MAX_SEED + 1)
+    _IMPACT_TRANSACTION_DEPTH += 1
+    try:
+        with preview_service.suspend_updates():
+            settings.deformation_impact_seed = candidate
+    finally:
+        _IMPACT_TRANSACTION_DEPTH = max(0, _IMPACT_TRANSACTION_DEPTH - 1)
+    result = apply_impact_seed_transaction(context, "impact seed randomized")
+    result["previousSeed"] = previous
+    return result
+
+
+def enter_manual_impact_control(context):
+    settings = context.scene.daf_settings
+    settings.deformation_impact_control_mode = 'MANUAL'
+    metadata = impact_control_metadata(settings, mode="MANUAL")
+    _mark_impact_dirty(settings, metadata)
+    generation = request_managed_preview(context, "manual impact control enabled")
+    return {"metadata": metadata, "generation": generation}
+
+
+def fit_impact_macros_to_current_values(context):
+    global _IMPACT_TRANSACTION_DEPTH
+    settings = context.scene.daf_settings
+    fitted = parameter_schema.fit_macros_to_parameters(
+        {
+            "radius": float(settings.deformation_seed_radius),
+            "depth": float(settings.deformation_seed_depth),
+            "falloff": float(settings.deformation_seed_falloff),
+            "seamProtection": float(settings.deformation_seed_seam_protection),
+            "impactChaos": float(settings.deformation_impact_chaos) / 100.0,
+        },
+        region_scale=_impact_region_scale(settings),
+        family=str(settings.deformation_stamp_family),
+    )
+    _IMPACT_TRANSACTION_DEPTH += 1
+    try:
+        with preview_service.suspend_updates():
+            settings.deformation_impact_size = fitted["size"]
+            settings.deformation_impact_crush = fitted["crush"]
+            settings.deformation_impact_profile = fitted["profile"]
+            settings.deformation_impact_edge_safety = fitted["edgeSafety"]
+            settings.deformation_impact_chaos = fitted["chaos"]
+            metadata = impact_control_metadata(settings, mode="MANUAL")
+            _mark_impact_dirty(settings, metadata)
+    finally:
+        _IMPACT_TRANSACTION_DEPTH = max(0, _IMPACT_TRANSACTION_DEPTH - 1)
+    return {"macros": fitted, "metadata": metadata}
+
+
+def return_to_macro_control(context):
+    settings = context.scene.daf_settings
+    settings.deformation_impact_control_mode = 'MACRO'
+    return apply_impact_macro_transaction(context, "returned to Impact Pedal macro control")
+
+
+def _load_impact_control_into_settings(settings, entry, stamp=None):
+    """Load additive v1 metadata; legacy recipes remain unmodified CUSTOM data."""
+
+    global _IMPACT_TRANSACTION_DEPTH
+    raw = entry.get("impactControl") if isinstance(entry, dict) else None
+    if isinstance(raw, dict):
+        try:
+            metadata = parameter_schema.normalize_impact_control(raw)
+        except (TypeError, ValueError):
+            metadata = None
+    else:
+        metadata = None
+    if metadata is None:
+        stamp = stamp or {}
+        fitted = parameter_schema.fit_macros_to_parameters(
+            {
+                "radius": float(stamp.get("radius", settings.deformation_seed_radius)),
+                "depth": float(stamp.get("depth", settings.deformation_seed_depth)),
+                "falloff": float(stamp.get("falloff", settings.deformation_seed_falloff)),
+                "seamProtection": float(stamp.get("seamProtection", settings.deformation_seed_seam_protection)),
+                "impactChaos": float(stamp.get("impactChaos", 0.0)),
+            },
+            region_scale=_impact_region_scale(settings),
+            family=str(stamp.get("family", settings.deformation_stamp_family)),
+        )
+        metadata = parameter_schema.normalize_impact_control({
+            "mode": "MANUAL",
+            "macros": fitted,
+            "seed": int(stamp.get("impactSeed", parameter_schema.DEFAULT_IMPACT_SEED)),
+        })
+    macros = metadata["macros"]
+    _IMPACT_TRANSACTION_DEPTH += 1
+    try:
+        with preview_service.suspend_updates():
+            settings.deformation_impact_control_mode = str(metadata["mode"])
+            settings.deformation_impact_control_version = int(metadata["version"])
+            settings.deformation_impact_size = float(macros["size"])
+            settings.deformation_impact_crush = float(macros["crush"])
+            settings.deformation_impact_profile = float(macros["profile"])
+            settings.deformation_impact_edge_safety = float(macros["edgeSafety"])
+            settings.deformation_impact_chaos = float(macros["chaos"])
+            settings.deformation_impact_seed = int(metadata["seed"])
+            settings.deformation_impact_identity = str(metadata["identityDigest"])
+            settings.deformation_impact_dirty = False
+    finally:
+        _IMPACT_TRANSACTION_DEPTH = max(0, _IMPACT_TRANSACTION_DEPTH - 1)
+    return metadata
+
+
 def request_region_switch(region_id, context=None):
     global _PENDING_REGION_ID
     _PENDING_REGION_ID = str(region_id)
@@ -1871,14 +2113,10 @@ def _execute_managed_preview(context, quality, _generation):
     if settings is None or not settings.deformation_active_key or not settings.deformation_seed_center_valid:
         clear_damage_preview(context, update_status=False)
         return {"message": "Select a region, deformation, stamp, and captured surface"}
+    result = _preview_stamp_stack(context, quality)
     if quality == "FINAL":
-        result = commit_current_tuning(context)
-        return {
-            "affectedVertexCount": int(result.get("affectedVertexCount", 0)),
-            "finalGoreTriangleCount": int(result.get("finalGoreTriangleCount", 0)),
-            "message": "Final impact committed",
-        }
-    return _preview_stamp_stack(context, quality)
+        result["message"] = "Final-quality deterministic preview ready; recipe remains uncommitted"
+    return result
 
 
 def _clear_managed_preview(context, **_flags):
@@ -1910,6 +2148,9 @@ def commit_current_tuning(context):
         entry["maximumInfluence"] = float(settings.deformation_maximum_influence)
         entry["maximumDisplacement"] = float(settings.deformation_max_vertex_displacement)
         entry["draftStatus"] = "COMMITTED"
+        impact_metadata = impact_control_metadata(settings)
+        entry["impactControl"] = impact_metadata
+        entry["impactRecipeClass"] = str(impact_metadata["recipeClass"])
         if settings.deformation_gore_enabled:
             overlay = _gore_overlay_from_settings(context)
             entry["surfaceGoreOverlay"] = overlay
@@ -1921,6 +2162,8 @@ def commit_current_tuning(context):
         triangle_counts = refreshed.get("goreTriangleCounts", {})
         result["finalGoreTriangleCount"] = sum(int(value) for value in triangle_counts.values())
         result["affectedVertexCount"] = len(attached.data.vertices)
+        settings.deformation_impact_dirty = False
+        settings.deformation_impact_identity = str(impact_metadata["identityDigest"])
         transaction.commit()
         return result
 
@@ -1928,8 +2171,10 @@ def commit_current_tuning(context):
 def revert_current_tuning(context):
     settings, _registry, _region, _attached, _detached, _payload, _name, entry = _active_key_context(context)
     stamp = _active_stamp(settings, entry)
-    _load_stamp_into_settings(settings, stamp)
-    _load_gore_into_settings(settings, entry.get("surfaceGoreOverlay"))
+    with preview_service.suspend_updates():
+        _load_stamp_into_settings(settings, stamp)
+        _load_gore_into_settings(settings, entry.get("surfaceGoreOverlay"))
+        _load_impact_control_into_settings(settings, entry, stamp)
     return preview_service.request_refresh(context, "reverted to saved recipe")
 
 
@@ -1962,23 +2207,42 @@ def _unique_impact_name(attached, entry_names, settings, region_id):
 
 
 def _configure_impact_defaults(settings, capture):
+    global _IMPACT_TRANSACTION_DEPTH
     intensity = str(settings.deformation_impact_intensity)
-    values = {
-        "LIGHT": (0.055, 0.014, 2.2, 0.70),
-        "MEDIUM": (0.080, 0.026, 1.7, 1.00),
-        "HEAVY": (0.105, 0.040, 1.35, 1.25),
+    macros = {
+        "LIGHT": (34.0, 28.0, 58.0, 66.0, 22.0),
+        "MEDIUM": (50.0, 50.0, 45.0, 55.0, 35.0),
+        "HEAVY": (68.0, 78.0, 34.0, 46.0, 60.0),
     }[intensity]
     estimated = float(capture.get("estimatedRadius", 0.0))
-    settings.deformation_seed_radius = max(values[0], min(0.30, estimated * 1.20))
-    settings.deformation_seed_depth = values[1]
-    settings.deformation_seed_falloff = values[2]
-    settings.deformation_stamp_strength = values[3]
-    settings.deformation_capture_mode = 'SELECTED_FACE_PATCH'
-    if intensity == "HEAVY" and settings.deformation_default_heavy_gore:
-        settings.deformation_gore_enabled = True
-        settings.deformation_gore_raised_enabled = True
-        settings.deformation_gore_preset = "Gore_Crush_Heavy_Clotted"
-        apply_gore_preset_to_settings(bpy.context)
+    _IMPACT_TRANSACTION_DEPTH += 1
+    try:
+        with preview_service.suspend_updates():
+            settings.deformation_impact_control_mode = 'MACRO'
+            (
+                settings.deformation_impact_size,
+                settings.deformation_impact_crush,
+                settings.deformation_impact_profile,
+                settings.deformation_impact_edge_safety,
+                settings.deformation_impact_chaos,
+            ) = macros
+            settings.deformation_capture_mode = 'SELECTED_FACE_PATCH'
+            if intensity == "HEAVY" and settings.deformation_default_heavy_gore:
+                settings.deformation_gore_enabled = True
+                settings.deformation_gore_raised_enabled = True
+                settings.deformation_gore_preset = "Gore_Crush_Heavy_Clotted"
+                apply_gore_preset_to_settings(bpy.context)
+            derived = parameter_schema.derive_impact_parameters(
+                macros,
+                region_scale=estimated,
+                family=str(settings.deformation_stamp_family),
+                seed=int(settings.deformation_impact_seed),
+            )
+            _assign_impact_derived_values(settings, derived)
+            settings.deformation_gore_mask_seed = int(settings.deformation_impact_seed)
+            _mark_impact_dirty(settings, impact_control_metadata(settings, mode="MACRO"))
+    finally:
+        _IMPACT_TRANSACTION_DEPTH = max(0, _IMPACT_TRANSACTION_DEPTH - 1)
 
 
 def create_impact_from_current_selection(context):
@@ -2009,6 +2273,7 @@ def create_impact_from_current_selection(context):
             settings.deformation_auto_preview = False
             try:
                 _configure_impact_defaults(settings, capture)
+                impact_metadata = impact_control_metadata(settings, mode="MACRO")
                 payload = _metadata(attached)
                 name = _unique_impact_name(attached, payload.get("keys", {}), settings, str(region.get("regionId", "")))
                 settings.deformation_key_name = name
@@ -2020,6 +2285,7 @@ def create_impact_from_current_selection(context):
                     "legacy": False,
                     "maximumInfluence": float(settings.deformation_maximum_influence),
                     "maximumDisplacement": float(settings.deformation_max_vertex_displacement),
+                    "impactControl": impact_metadata,
                 })
                 transaction.set_stage("create default trauma stamp")
                 stamp = _stamp_from_settings(context, order_index=0)
@@ -2032,6 +2298,7 @@ def create_impact_from_current_selection(context):
                 entry["draftStatus"] = "UNCOMMITTED"
                 entry["recipeStatus"] = "PROCEDURAL_STACK"
                 entry["legacy"] = False
+                entry["impactControl"] = impact_metadata
                 _store_metadata(attached, detached, payload)
                 if settings.deformation_gore_enabled:
                     payload = _metadata(attached)
@@ -2059,6 +2326,10 @@ def create_impact_from_current_selection(context):
                 "faceCount": len(capture.get("faceIndices", [])),
                 "vertexCount": len(capture.get("vertexIndices", [])),
                 "preview": result,
+                "workflow": (
+                    "key selected", "surface captured", "first stamp created",
+                    "Impact Pedal recipe applied", "FAST preview generated",
+                ),
             }
     except Exception:
         auto = settings.deformation_auto_preview
@@ -2122,18 +2393,22 @@ def _select_key(settings, name):
     auto_preview = settings.deformation_auto_preview
     settings.deformation_auto_preview = False
     try:
-        settings.deformation_active_key = name
-        settings.deformation_key_name = name
-        settings.deformation_seed_radius = float(entry.get("seedRadius", settings.deformation_seed_radius))
-        settings.deformation_seed_depth = float(entry.get("seedDepth", settings.deformation_seed_depth))
-        settings.deformation_seed_falloff = float(entry.get("seedFalloff", settings.deformation_seed_falloff))
-        settings.deformation_maximum_influence = float(entry.get("maximumInfluence", 1.0))
-        settings.deformation_max_vertex_displacement = float(entry.get("maximumDisplacement", 0.045))
-        stamps = entry.get("stamps", [])
-        settings.deformation_active_stamp_id = ""
-        if stamps:
-            _load_stamp_into_settings(settings, sorted(stamps, key=lambda stamp: int(stamp.get("orderIndex", 0)))[0])
-        _load_gore_into_settings(settings, entry.get("surfaceGoreOverlay"))
+        with preview_service.suspend_updates():
+            settings.deformation_active_key = name
+            settings.deformation_key_name = name
+            settings.deformation_seed_radius = float(entry.get("seedRadius", settings.deformation_seed_radius))
+            settings.deformation_seed_depth = float(entry.get("seedDepth", settings.deformation_seed_depth))
+            settings.deformation_seed_falloff = float(entry.get("seedFalloff", settings.deformation_seed_falloff))
+            settings.deformation_maximum_influence = float(entry.get("maximumInfluence", 1.0))
+            settings.deformation_max_vertex_displacement = float(entry.get("maximumDisplacement", 0.045))
+            stamps = entry.get("stamps", [])
+            settings.deformation_active_stamp_id = ""
+            active_stamp = None
+            if stamps:
+                active_stamp = sorted(stamps, key=lambda stamp: int(stamp.get("orderIndex", 0)))[0]
+                _load_stamp_into_settings(settings, active_stamp)
+            _load_gore_into_settings(settings, entry.get("surfaceGoreOverlay"))
+            _load_impact_control_into_settings(settings, entry, active_stamp)
     finally:
         settings.deformation_auto_preview = auto_preview
 
@@ -2154,6 +2429,7 @@ def _load_gore_into_settings(settings, overlay):
     settings.deformation_gore_wetness = float(recipe["goreWetness"])
     settings.deformation_gore_darkness = float(recipe["goreDarkness"])
     settings.deformation_gore_color_bias = tuple(recipe["goreColorBias"])
+    settings.deformation_impact_gore_patch_scale = float(recipe["gorePatchScale"])
     settings.deformation_gore_raised_enabled = bool(recipe["goreRaisedEnabled"])
     settings.deformation_gore_clot_coverage = float(recipe["goreClotCoverage"])
     settings.deformation_gore_core_density = float(recipe["goreCoreDensity"])
@@ -2192,6 +2468,7 @@ def apply_gore_preset_to_settings(context):
     settings.deformation_gore_wetness = float(preset["goreWetness"])
     settings.deformation_gore_darkness = float(preset["goreDarkness"])
     settings.deformation_gore_color_bias = tuple(preset["goreColorBias"])
+    settings.deformation_impact_gore_patch_scale = float(preset["gorePatchScale"])
     raised = {**trauma_field.RAISED_GORE_DEFAULTS, **{
         key: value for key, value in preset.items()
         if key in trauma_field.RAISED_GORE_DEFAULTS
@@ -2371,13 +2648,13 @@ def _active_stamp(settings, entry, require=True):
 
 
 def _stamp_from_settings(context, stamp_id=None, order_index=0):
-    settings, _registry, region, attached, _detached, _payload, _name, _entry = _active_key_context(context)
+    settings, _registry, region, attached, _detached, _payload, _name, entry = _active_key_context(context)
     capture = _capture_payload(settings)
     errors = _capture_errors(capture, region, attached)
     if errors:
         raise RuntimeError(" ".join(errors))
     direction_local = _direction(settings)
-    return trauma_field.normalize_stamp({
+    stamp_payload = {
         "stampId": stamp_id or trauma_field.new_stamp_id(),
         "displayName": settings.deformation_stamp_name.strip() or settings.deformation_stamp_family.replace("_", " ").title(),
         "enabled": True,
@@ -2398,7 +2675,18 @@ def _stamp_from_settings(context, stamp_id=None, order_index=0):
         "strength": float(settings.deformation_stamp_strength),
         "maximumDisplacement": float(settings.deformation_max_vertex_displacement),
         "orderIndex": int(order_index),
-    })
+    }
+    if (
+        str(settings.deformation_impact_control_mode) == 'MACRO'
+        or isinstance((entry or {}).get("impactControl"), dict)
+    ):
+        stamp_payload.update({
+            "impactSeed": int(settings.deformation_impact_seed),
+            "impactChaos": float(settings.deformation_impact_chaos) / 100.0,
+            "impactProfile": float(settings.deformation_impact_profile) / 100.0,
+            "profileCenterRimBalance": float(settings.deformation_impact_profile) / 100.0,
+        })
+    return trauma_field.normalize_stamp(stamp_payload)
 
 
 def _load_stamp_into_settings(settings, stamp):
@@ -2554,7 +2842,7 @@ def _gore_overlay_from_settings(context):
         "goreWetness": float(settings.deformation_gore_wetness),
         "goreDarkness": float(settings.deformation_gore_darkness),
         "goreColorBias": list(settings.deformation_gore_color_bias),
-        "gorePatchScale": trauma_field.GORE_PRESETS[settings.deformation_gore_preset]["gorePatchScale"],
+        "gorePatchScale": float(settings.deformation_impact_gore_patch_scale),
         "goreOverlayMode": "STAIN_AND_RAISED" if settings.deformation_gore_raised_enabled else "SURFACE_STAIN",
         "goreIntensityClass": (
             "HIGH" if settings.deformation_gore_preset == "Gore_Crush_Heavy_Clotted"
@@ -2909,6 +3197,10 @@ def build_current_stamp_library():
                 "recipeDigest": trauma_field.recipe_digest(portable_stamps),
                 "stamps": portable_stamps,
             })
+            if isinstance(entry.get("impactControl"), dict):
+                key_records[-1]["impactControl"] = parameter_schema.normalize_impact_control(
+                    entry["impactControl"]
+                )
             if "surfaceGoreOverlay" in entry:
                 portable_overlay = trauma_field.normalize_gore_overlay(entry["surfaceGoreOverlay"])
                 key_records[-1]["surfaceGoreOverlay"] = portable_overlay
@@ -5718,7 +6010,7 @@ def validate_compound_events():
 
 def _manifest_stamp(stamp):
     capture = stamp.get("capture", {})
-    return {
+    manifest = {
         "stampId": stamp.get("stampId"),
         "displayName": stamp.get("displayName"),
         "enabled": bool(stamp.get("enabled", True)),
@@ -5749,6 +6041,10 @@ def _manifest_stamp(stamp):
             "virtualConnectedComponentCount": capture.get("virtualConnectedComponentCount"),
         },
     }
+    for field in ("impactSeed", "impactChaos", "impactProfile", "profileCenterRimBalance"):
+        if field in stamp:
+            manifest[field] = stamp[field]
+    return manifest
 
 
 def validate_deformations(require_keys=False):
@@ -6086,6 +6382,10 @@ def get_deformation_manifest():
                 "orderedStamps": [_manifest_stamp(stamp) for stamp in source_entry.get("stamps", [])],
                 "recipeDigest": source_entry.get("recipeDigest"),
             }
+            if isinstance(source_entry.get("impactControl"), dict):
+                entry["impactControl"] = parameter_schema.normalize_impact_control(
+                    source_entry["impactControl"]
+                )
             if "surfaceGoreOverlay" in source_entry:
                 gore_export = trauma_field.gore_overlay_export_metadata(source_entry["surfaceGoreOverlay"])
                 overlay = gore_export["surfaceGoreOverlay"]
@@ -8192,9 +8492,11 @@ def draw_panel(box, context, settings):
     )
     if capture is not None:
         capture.prop(settings, "deformation_capture_mode")
-        capture.prop(settings, "deformation_influence_mode")
-        capture.prop(settings, "deformation_distance_mode")
-        capture.prop(settings, "deformation_feather_distance")
+        raw_capture = capture.column()
+        raw_capture.enabled = str(settings.deformation_impact_control_mode) == 'MANUAL'
+        raw_capture.prop(settings, "deformation_influence_mode")
+        raw_capture.prop(settings, "deformation_distance_mode")
+        raw_capture.prop(settings, "deformation_feather_distance")
         row = capture.row(align=True)
         row.operator("daf.capture_deformation_selected_face", text="Capture Single Face")
         row.operator("daf.capture_deformation_selected_patch", text="Capture Connected Face Patch")
@@ -8224,6 +8526,19 @@ def draw_panel(box, context, settings):
         row = stamps.row(align=True)
         row.operator("daf.save_trauma_stamp_library", text="Save Stamp Library...")
         row.operator("daf.load_trauma_stamp_library", text="Load Stamp Library...")
+        mode = str(settings.deformation_impact_control_mode)
+        stamps.label(
+            text=f"Impact Control: {mode} / {'IMPACT PEDAL' if mode == 'MACRO' else 'CUSTOM'}",
+            icon='LOCKED' if mode == 'MACRO' else 'UNLOCKED',
+        )
+        if mode == 'MACRO':
+            stamps.operator("daf.use_manual_impact_control", text="USE MANUAL CONTROL")
+        else:
+            row = stamps.row(align=True)
+            row.operator("daf.fit_impact_macros", text="FIT MACROS TO CURRENT VALUES")
+            row.operator("daf.return_to_macro_control", text="RETURN TO MACRO CONTROL")
+        raw_stamp = stamps.column()
+        raw_stamp.enabled = mode == 'MANUAL'
         for prop in (
             "deformation_stamp_name", "deformation_stamp_family", "deformation_seed_radius",
             "deformation_seed_depth", "deformation_seed_falloff", "deformation_stamp_strength",
@@ -8231,13 +8546,16 @@ def draw_panel(box, context, settings):
             "deformation_seed_seam_protection", "deformation_max_vertex_displacement",
             "deformation_maximum_influence",
         ):
-            stamps.prop(settings, prop)
-        stamps.operator("daf.update_trauma_stamp", text="Update Active Stamp")
+            raw_stamp.prop(settings, prop)
+        raw_stamp.operator("daf.update_trauma_stamp", text="Update Active Stamp")
 
     gore = _advanced_authoring_foldout(
         box, settings, "ui_advanced_gore_open", "Detailed Raised Gore", 'MATERIAL'
     )
     if gore is not None:
+        mode = str(settings.deformation_impact_control_mode)
+        raw_gore = gore.column()
+        raw_gore.enabled = mode == 'MANUAL'
         for prop in (
             "deformation_gore_enabled", "deformation_default_heavy_gore", "deformation_gore_preset",
             "deformation_gore_coverage", "deformation_gore_scatter", "deformation_gore_edge_feather",
@@ -8255,11 +8573,11 @@ def draw_panel(box, context, settings):
             "deformation_gore_darkness", "deformation_gore_color_bias",
             "deformation_gore_user_customized",
         ):
-            gore.prop(settings, prop)
-        seed_row = gore.row(align=True)
+            raw_gore.prop(settings, prop)
+        seed_row = raw_gore.row(align=True)
         seed_row.prop(settings, "deformation_gore_mask_seed")
         seed_row.operator("daf.randomize_gore_seed", text="Randomize Seed")
-        row = gore.row(align=True)
+        row = raw_gore.row(align=True)
         row.operator("daf.apply_surface_gore_preset", text="Use Preset Defaults")
         row.operator("daf.update_surface_gore_overlay", text="Apply Gore Overlay Settings")
         gore.operator("daf.preview_surface_gore_overlay", text="Preview / Rebuild Current Gore")

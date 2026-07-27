@@ -1,7 +1,7 @@
 bl_info = {
     "name": "Dreadstone Animation Forge",
     "author": "Dreadstone Black",
-    "version": (3, 16, 2),
+    "version": (3, 17, 0),
     "blender": (3, 6, 0),
     "location": "3D Viewport > Sidebar > Dreadstone",
     "description": "Animation authoring, protected damage assets, and registered-region trauma-field shape-key authoring.",
@@ -13,6 +13,7 @@ from datetime import datetime, timezone
 from mathutils import Vector, Quaternion
 from bpy.props import BoolProperty, EnumProperty, FloatProperty, FloatVectorProperty, IntProperty, PointerProperty, StringProperty
 from bpy.types import Operator, Panel, PropertyGroup
+from . import parameter_schema
 
 ALIASES = {
     "hips": [
@@ -718,13 +719,25 @@ def set_bezier(action, cycles=False):
 def _deformation_preview_property_updated(self, context):
     module = sys.modules.get(f"{__package__}.deformation_authoring")
     if module is not None:
-        module.request_managed_preview(context, "deformation control changed")
+        module.request_low_level_property_update(context, "deformation control changed")
 
 
 def _deformation_metadata_property_updated(self, context):
     module = sys.modules.get(f"{__package__}.deformation_authoring")
     if module is not None:
-        module.request_managed_preview(context, "deformation metadata changed")
+        module.request_low_level_property_update(context, "deformation metadata changed")
+
+
+def _impact_macro_property_updated(self, context):
+    module = sys.modules.get(f"{__package__}.deformation_authoring")
+    if module is not None:
+        module.apply_impact_macro_transaction(context, "Impact Pedal changed")
+
+
+def _impact_seed_property_updated(self, context):
+    module = sys.modules.get(f"{__package__}.deformation_authoring")
+    if module is not None:
+        module.apply_impact_seed_transaction(context, "master impact seed changed")
 
 
 def _deformation_region_items(self, context):
@@ -769,6 +782,7 @@ class DAFSettings(PropertyGroup):
     ui_advanced_compound_open: BoolProperty(default=False)
     ui_advanced_preview_open: BoolProperty(default=False)
     ui_advanced_legacy_open: BoolProperty(default=False)
+    ui_advanced_impact_internals_open: BoolProperty(default=False)
     ui_character_open: BoolProperty(default=True)
     ui_ground_open: BoolProperty(default=False)
     ui_rig_open: BoolProperty(default=False)
@@ -1259,7 +1273,7 @@ class DAFSettings(PropertyGroup):
     last_damage_manifest_path: StringProperty(default="", options={'HIDDEN'})
     last_damage_validation_path: StringProperty(default="", options={'HIDDEN'})
 
-    # Trauma Field Authoring v3.16.2.
+    # Trauma Field Authoring v3.17.0.
     deformation_region: EnumProperty(
         name="Active Region",
         items=_deformation_region_items,
@@ -1305,7 +1319,7 @@ class DAFSettings(PropertyGroup):
         default='SURFACE_DISTANCE',
     )
     deformation_feather_distance: FloatProperty(
-        name="Feather Distance", default=0.020, min=0.0, max=0.30, unit='LENGTH',
+        **parameter_schema.blender_kwargs("deformation_feather_distance"),
         update=_deformation_preview_property_updated,
     )
     deformation_stamp_family: EnumProperty(
@@ -1322,7 +1336,7 @@ class DAFSettings(PropertyGroup):
     )
     deformation_stamp_name: StringProperty(name="Stamp Name", default="Impact Stamp")
     deformation_stamp_strength: FloatProperty(
-        name="Stamp Strength", default=1.0, min=0.0, max=2.0, precision=2,
+        **parameter_schema.blender_kwargs("deformation_stamp_strength"),
         update=_deformation_preview_property_updated,
     )
     deformation_active_stamp_id: StringProperty(default="", options={'HIDDEN'})
@@ -1387,6 +1401,51 @@ class DAFSettings(PropertyGroup):
         ],
         default='MEDIUM',
     )
+    deformation_impact_control_mode: EnumProperty(
+        name="Impact Control Mode",
+        description="MACRO derives the physical recipe from the Impact Pedal; MANUAL preserves editable raw values as CUSTOM",
+        items=[
+            ('MACRO', "MACRO", "Impact Pedal macros are authoritative"),
+            ('MANUAL', "MANUAL", "Raw physical controls are authoritative and the recipe is CUSTOM"),
+        ],
+        default='MACRO',
+    )
+    deformation_impact_control_version: IntProperty(
+        name="Impact Control Version",
+        default=parameter_schema.IMPACT_CONTROL_VERSION,
+        options={'HIDDEN'},
+    )
+    deformation_impact_size: FloatProperty(
+        **parameter_schema.blender_kwargs("deformation_impact_size"),
+        update=_impact_macro_property_updated,
+    )
+    deformation_impact_crush: FloatProperty(
+        **parameter_schema.blender_kwargs("deformation_impact_crush"),
+        update=_impact_macro_property_updated,
+    )
+    deformation_impact_profile: FloatProperty(
+        **parameter_schema.blender_kwargs("deformation_impact_profile"),
+        update=_impact_macro_property_updated,
+    )
+    deformation_impact_edge_safety: FloatProperty(
+        **parameter_schema.blender_kwargs("deformation_impact_edge_safety"),
+        update=_impact_macro_property_updated,
+    )
+    deformation_impact_chaos: FloatProperty(
+        **parameter_schema.blender_kwargs("deformation_impact_chaos"),
+        update=_impact_macro_property_updated,
+    )
+    deformation_impact_seed: IntProperty(
+        **parameter_schema.blender_kwargs("deformation_impact_seed"),
+        update=_impact_seed_property_updated,
+    )
+    deformation_impact_gore_patch_scale: FloatProperty(
+        **parameter_schema.blender_kwargs("deformation_impact_gore_patch_scale"),
+        update=_deformation_preview_property_updated,
+    )
+    deformation_impact_dirty: BoolProperty(default=False, options={'HIDDEN'})
+    deformation_impact_identity: StringProperty(default="", options={'HIDDEN'})
+    deformation_impact_transaction_count: IntProperty(default=0, min=0, options={'HIDDEN'})
     diagnostics_output_directory: StringProperty(
         name="Diagnostics Folder",
         description="Folder for privacy-safe Forge JSON and Markdown support reports",
@@ -1394,15 +1453,15 @@ class DAFSettings(PropertyGroup):
         subtype='DIR_PATH',
     )
     deformation_seed_radius: FloatProperty(
-        name="Seed Radius", default=0.075, min=0.005, max=0.30, unit='LENGTH',
+        **parameter_schema.blender_kwargs("deformation_seed_radius"),
         update=_deformation_preview_property_updated,
     )
     deformation_seed_depth: FloatProperty(
-        name="Seed Depth", default=0.025, min=0.0, max=0.12, unit='LENGTH',
+        **parameter_schema.blender_kwargs("deformation_seed_depth"),
         update=_deformation_preview_property_updated,
     )
     deformation_seed_falloff: FloatProperty(
-        name="Falloff Exponent", default=2.2, min=0.35, max=6.0, precision=2,
+        **parameter_schema.blender_kwargs("deformation_seed_falloff"),
         update=_deformation_preview_property_updated,
     )
     deformation_seed_direction_mode: EnumProperty(
@@ -1426,15 +1485,15 @@ class DAFSettings(PropertyGroup):
     deformation_seed_surface_normal: FloatVectorProperty(name="Surface Normal", size=3, default=(0.0, 0.0, 1.0), subtype='DIRECTION')
     deformation_seed_center_valid: BoolProperty(default=False, options={'HIDDEN'})
     deformation_seed_seam_protection: FloatProperty(
-        name="Seam Protection", default=0.025, min=0.0, max=0.10, unit='LENGTH',
+        **parameter_schema.blender_kwargs("deformation_seed_seam_protection"),
         update=_deformation_preview_property_updated,
     )
     deformation_max_vertex_displacement: FloatProperty(
-        name="Maximum Displacement", default=0.065, min=0.001, max=0.15, unit='LENGTH',
+        **parameter_schema.blender_kwargs("deformation_max_vertex_displacement"),
         update=_deformation_metadata_property_updated,
     )
     deformation_maximum_influence: FloatProperty(
-        name="Maximum Runtime Weight", default=1.0, min=0.05, max=2.0, precision=2,
+        **parameter_schema.blender_kwargs("deformation_maximum_influence"),
         update=_deformation_metadata_property_updated,
     )
     deformation_gore_enabled: BoolProperty(
@@ -1460,18 +1519,14 @@ class DAFSettings(PropertyGroup):
         ],
         default='Gore_Crush_Heavy_Clotted',
     )
-    deformation_gore_coverage: FloatProperty(name="Coverage", default=0.72, min=0.0, max=1.0, precision=2, update=_deformation_preview_property_updated)
-    deformation_gore_scatter: FloatProperty(name="Scatter / Breakup", default=0.48, min=0.0, max=1.0, precision=2, update=_deformation_preview_property_updated)
-    deformation_gore_edge_feather: FloatProperty(name="Edge Feather", default=0.70, min=0.0, max=1.0, precision=2)
-    deformation_gore_wetness: FloatProperty(name="Wetness / Gloss", default=0.92, min=0.0, max=1.0, precision=2)
-    deformation_gore_darkness: FloatProperty(name="Darkness", default=0.38, min=0.0, max=1.0, precision=2)
+    deformation_gore_coverage: FloatProperty(**parameter_schema.blender_kwargs("deformation_gore_coverage"), update=_deformation_preview_property_updated)
+    deformation_gore_scatter: FloatProperty(**parameter_schema.blender_kwargs("deformation_gore_scatter"), update=_deformation_preview_property_updated)
+    deformation_gore_edge_feather: FloatProperty(**parameter_schema.blender_kwargs("deformation_gore_edge_feather"))
+    deformation_gore_wetness: FloatProperty(**parameter_schema.blender_kwargs("deformation_gore_wetness"))
+    deformation_gore_darkness: FloatProperty(**parameter_schema.blender_kwargs("deformation_gore_darkness"))
     deformation_gore_color_bias: FloatVectorProperty(
-        name="Color Bias",
         description="Linear RGB bias for the procedural blood coating",
-        size=3,
-        default=(0.34, 0.012, 0.008),
-        min=0.0,
-        max=1.0,
+        **parameter_schema.blender_vector_kwargs("deformation_gore_color_bias"),
         subtype='COLOR',
     )
     deformation_gore_raised_enabled: BoolProperty(
@@ -1480,38 +1535,30 @@ class DAFSettings(PropertyGroup):
         default=True,
         update=_deformation_preview_property_updated,
     )
-    deformation_gore_clot_coverage: FloatProperty(name="Clot Coverage", default=0.82, min=0.0, max=1.0, precision=2)
-    deformation_gore_core_density: FloatProperty(name="Core Density", default=0.94, min=0.0, max=1.0, precision=2)
+    deformation_gore_clot_coverage: FloatProperty(**parameter_schema.blender_kwargs("deformation_gore_clot_coverage"))
+    deformation_gore_core_density: FloatProperty(**parameter_schema.blender_kwargs("deformation_gore_core_density"))
     deformation_gore_clot_thickness: FloatProperty(
-        name="Clot Thickness", default=0.0048, min=0.0001, max=0.05, precision=4, unit='LENGTH',
+        **parameter_schema.blender_kwargs("deformation_gore_clot_thickness"),
         update=_deformation_preview_property_updated,
     )
-    deformation_gore_thickness_variation: FloatProperty(name="Thickness Variation", default=0.88, min=0.0, max=1.0, precision=2)
-    deformation_gore_island_breakup: FloatProperty(name="Island Breakup", default=0.86, min=0.0, max=1.0, precision=2, update=_deformation_preview_property_updated)
-    deformation_gore_peripheral_fragments: FloatProperty(name="Peripheral Fragments", default=0.58, min=0.0, max=1.0, precision=2)
+    deformation_gore_thickness_variation: FloatProperty(**parameter_schema.blender_kwargs("deformation_gore_thickness_variation"))
+    deformation_gore_island_breakup: FloatProperty(**parameter_schema.blender_kwargs("deformation_gore_island_breakup"), update=_deformation_preview_property_updated)
+    deformation_gore_peripheral_fragments: FloatProperty(**parameter_schema.blender_kwargs("deformation_gore_peripheral_fragments"))
     deformation_gore_surface_offset: FloatProperty(
-        name="Surface Offset", default=0.00065, min=0.00015, max=0.012, precision=5, unit='LENGTH'
+        **parameter_schema.blender_kwargs("deformation_gore_surface_offset")
     )
-    deformation_gore_geometry_density: FloatProperty(name="Geometry Density", default=0.72, min=0.0, max=1.0, precision=2)
-    deformation_gore_wetness_variation: FloatProperty(name="Wetness Variation", default=0.84, min=0.0, max=1.0, precision=2)
-    deformation_gore_dark_clot_bias: FloatProperty(name="Dark-Clot Bias", default=0.72, min=0.0, max=1.0, precision=2)
-    deformation_gore_rough_edge_bias: FloatProperty(name="Rough-Edge Bias", default=0.56, min=0.0, max=1.0, precision=2)
-    deformation_gore_color_intensity: FloatProperty(name="Color Intensity", default=1.0, min=0.0, max=1.0, precision=2)
+    deformation_gore_geometry_density: FloatProperty(**parameter_schema.blender_kwargs("deformation_gore_geometry_density"))
+    deformation_gore_wetness_variation: FloatProperty(**parameter_schema.blender_kwargs("deformation_gore_wetness_variation"))
+    deformation_gore_dark_clot_bias: FloatProperty(**parameter_schema.blender_kwargs("deformation_gore_dark_clot_bias"))
+    deformation_gore_rough_edge_bias: FloatProperty(**parameter_schema.blender_kwargs("deformation_gore_rough_edge_bias"))
+    deformation_gore_color_intensity: FloatProperty(**parameter_schema.blender_kwargs("deformation_gore_color_intensity"))
     deformation_gore_organic_irregularity: FloatProperty(
-        name="Organic Irregularity",
         description="Break up straight polygon edges and shift refined gore facets without changing the source mesh",
-        default=0.78,
-        min=0.0,
-        max=1.0,
-        precision=2,
+        **parameter_schema.blender_kwargs("deformation_gore_organic_irregularity"),
     )
     deformation_gore_surface_roundness: FloatProperty(
-        name="Surface Roundness",
         description="Round and bulge refined clot surfaces so the source triangulation is less visible",
-        default=0.82,
-        min=0.0,
-        max=1.0,
-        precision=2,
+        **parameter_schema.blender_kwargs("deformation_gore_surface_roundness"),
     )
     deformation_gore_texture_enabled: BoolProperty(
         name="Use Muscle-Fiber Textures",
@@ -1519,20 +1566,12 @@ class DAFSettings(PropertyGroup):
         default=True,
     )
     deformation_gore_fiber_texture_strength: FloatProperty(
-        name="Muscle Fiber Contribution",
         description="Independent additive contribution from the muscle-fiber texture set",
-        default=0.82,
-        min=0.0,
-        max=1.0,
-        precision=2,
+        **parameter_schema.blender_kwargs("deformation_gore_fiber_texture_strength"),
     )
     deformation_gore_base_color_strength: FloatProperty(
-        name="Gore Color Contribution",
         description="Independent additive contribution from the original procedural gore color",
-        default=0.30,
-        min=0.0,
-        max=1.0,
-        precision=2,
+        **parameter_schema.blender_kwargs("deformation_gore_base_color_strength"),
     )
     deformation_gore_inner_rim_enabled: BoolProperty(
         name="Compromised Inner Reddening",
@@ -1540,23 +1579,14 @@ class DAFSettings(PropertyGroup):
         default=True,
     )
     deformation_gore_inner_rim_width: FloatProperty(
-        name="Inner Reddening Width",
-        default=0.0032,
-        min=0.0001,
-        max=0.03,
-        precision=4,
-        unit='LENGTH',
+        **parameter_schema.blender_kwargs("deformation_gore_inner_rim_width"),
     )
     deformation_gore_inner_rim_strength: FloatProperty(
-        name="Barrier Compromise",
         description="Control the height and visibility of the breached inner reddening layer",
-        default=0.88,
-        min=0.0,
-        max=1.0,
-        precision=2,
+        **parameter_schema.blender_kwargs("deformation_gore_inner_rim_strength"),
     )
     deformation_gore_maximum_triangles: IntProperty(
-        name="Maximum Triangles", default=12000, min=128, max=100000
+        **parameter_schema.blender_kwargs("deformation_gore_maximum_triangles")
     )
     deformation_gore_user_customized: BoolProperty(
         name="Preserve as User-Customized",
@@ -1564,11 +1594,8 @@ class DAFSettings(PropertyGroup):
         default=False,
     )
     deformation_gore_mask_seed: IntProperty(
-        name="Master Gore Seed",
         description="Repeatable seed for overlay breakup, islands, fragments, thickness, organic shape, materials, and fiber directions",
-        default=1776,
-        min=0,
-        max=2147483647,
+        **parameter_schema.blender_kwargs("deformation_gore_mask_seed"),
     )
     deformation_status: StringProperty(default="NOT INITIALIZED", options={'HIDDEN'})
     last_deformation_validation: StringProperty(default="NOT VALIDATED", options={'HIDDEN'})
@@ -4162,7 +4189,7 @@ class DAF_PT_legacy_panel(Panel):
             layout,
             s,
             "ui_deformation_authoring_open",
-            "Trauma Field Authoring v3.16.2",
+            "Trauma Field Authoring v3.17.0",
         )
         if opened:
             configure_property_box(box)

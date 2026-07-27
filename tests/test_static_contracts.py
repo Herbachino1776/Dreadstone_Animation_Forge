@@ -43,7 +43,7 @@ class StaticContractTests(unittest.TestCase):
             "Gore_Crush_Bloodied",
             "Gore_Crush_Heavy_Clotted",
         ):
-            self.assertIn(preset, self.trauma)
+            self.assertIn(preset, self.parameter_schema)
         for helper in (
             "def normalize_gore_overlay(",
             "def validate_gore_overlay(",
@@ -108,6 +108,7 @@ class StaticContractTests(unittest.TestCase):
         cls.literals = contracts.string_literals(cls.trees.values())
         cls.deformation = cls.sources["deformation_authoring.py"]
         cls.trauma = cls.sources["trauma_field.py"]
+        cls.parameter_schema = cls.sources["parameter_schema.py"]
 
     def test_addon_and_deformation_version(self) -> None:
         self.assertEqual(
@@ -142,7 +143,7 @@ class StaticContractTests(unittest.TestCase):
         manifest = contracts.MANIFEST_PATH.read_text(encoding="utf-8")
         self.assertIn('schema_version = "1.0.0"', manifest)
         self.assertIn('id = "dreadstone_animation_forge"', manifest)
-        self.assertIn('version = "3.16.2"', manifest)
+        self.assertIn('version = "3.17.0"', manifest)
         builder = (ROOT / "scripts" / "build_release.py").read_text(encoding="utf-8")
         self.assertIn('ARCHIVE_ENTRIES = ("blender_manifest.toml", *MODULES', builder)
         self.assertNotIn('"dreadstone_animation_forge/__init__.py"', builder)
@@ -163,7 +164,7 @@ class StaticContractTests(unittest.TestCase):
         version = contracts.EXPECTED_VERSION
         self.assertEqual(
             f"Dreadstone_Animation_Forge_v{'_'.join(map(str, version))}.zip",
-            "Dreadstone_Animation_Forge_v3_16_2.zip",
+            "Dreadstone_Animation_Forge_v3_17_0.zip",
         )
 
     def test_authoritative_user_workflow_guide_contract(self) -> None:
@@ -181,8 +182,8 @@ class StaticContractTests(unittest.TestCase):
     def test_release_readme_contains_install_quick_start_and_guide_reference(self) -> None:
         readme = (ROOT / "README.md").read_text(encoding="utf-8")
         for marker in (
-            "3.16.2",
-            "Dreadstone_Animation_Forge_v3_16_2.zip",
+            "3.17.0",
+            "Dreadstone_Animation_Forge_v3_17_0.zip",
             "Install from Disk",
             "## Quick start",
             "docs/USER_WORKFLOW_GUIDE.md",

@@ -26,6 +26,21 @@ class DAF_OT_final_impact_preview(_PreviewOperator):
         return {'FINISHED'}
 
 
+class DAF_OT_refresh_impact_preview(_PreviewOperator):
+    bl_idname = "daf.refresh_impact_preview"
+    bl_label = "GENERATE / REFRESH PREVIEW"
+    bl_description = "Generate one deterministic preview from current macros, seed, family, direction, and capture without committing the recipe"
+    bl_options = {'REGISTER', 'UNDO'}
+
+    def execute(self, context):
+        requested = str(context.scene.daf_settings.deformation_preview_quality)
+        quality = "FAST" if requested == "OFF" else requested
+        result = preview_service.run_now(context, quality=quality)
+        if result.get("failed"):
+            return self.failed(RuntimeError(result.get("error", "Impact preview failed.")))
+        return {'FINISHED'}
+
+
 class DAF_OT_commit_impact(_PreviewOperator):
     bl_idname = "daf.commit_impact"
     bl_label = "Commit Impact"
@@ -75,6 +90,7 @@ class DAF_OT_clear_managed_preview(_PreviewOperator):
 
 CLASSES = (
     DAF_OT_final_impact_preview,
+    DAF_OT_refresh_impact_preview,
     DAF_OT_commit_impact,
     DAF_OT_revert_impact,
     DAF_OT_clear_managed_preview,

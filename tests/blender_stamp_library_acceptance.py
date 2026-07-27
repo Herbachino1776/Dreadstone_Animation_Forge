@@ -30,6 +30,19 @@ def coordinate_digest(key_block) -> str:
     return digest.hexdigest()
 
 
+def region_geometry_digests(attached, detached, name: str) -> tuple[str, ...]:
+    attached_key = deformation_authoring._key(attached, name)
+    if attached_key is None:
+        fail(f"Original target key {name} is missing")
+    digests = [coordinate_digest(attached_key)]
+    if detached is not None:
+        detached_key = deformation_authoring._key(detached, name)
+        if detached_key is None:
+            fail(f"Original paired key {name} is missing")
+        digests.append(coordinate_digest(detached_key))
+    return tuple(digests)
+
+
 def fail(message: str) -> None:
     print("STAMP_LIBRARY_ACCEPTANCE_FAIL", message)
     raise SystemExit(1)
@@ -60,15 +73,13 @@ def main() -> None:
         payload = deformation_authoring._metadata(attached)
         for key_record in library_region["keys"]:
             name = str(key_record["name"])
-            attached_key = deformation_authoring._key(attached, name)
-            detached_key = deformation_authoring._key(detached, name)
-            if attached_key is None or detached_key is None:
-                fail(f"Original paired key {name} is missing")
+            region_geometry_digests(attached, detached, name)
             original_stamps[(region_id, name)] = json.dumps(
                 key_record["stamps"], sort_keys=True, separators=(",", ":")
             )
             deformation_authoring._remove_key(attached, name)
-            deformation_authoring._remove_key(detached, name)
+            if detached is not None:
+                deformation_authoring._remove_key(detached, name)
             payload.get("keys", {}).pop(name, None)
         deformation_authoring._store_metadata(attached, detached, payload)
 
@@ -85,20 +96,14 @@ def main() -> None:
         attached, detached = deformation_authoring._resolve_region_pair(region)
         for key_record in library_region["keys"]:
             name = str(key_record["name"])
-            rebuilt_geometry = (
-                coordinate_digest(deformation_authoring._key(attached, name)),
-                coordinate_digest(deformation_authoring._key(detached, name)),
-            )
+            rebuilt_geometry = region_geometry_digests(attached, detached, name)
             rebuilt_stamps = json.dumps(key_record["stamps"], sort_keys=True, separators=(",", ":"))
             if rebuilt_stamps != original_stamps[(region_id, name)]:
                 fail(f"Portable stamp recipe differs for {region_id}/{name}")
             deformation_authoring._set_active_region(region_id, bpy.context)
             deformation_authoring._select_key(bpy.context.scene.daf_settings, name)
             deformation_authoring.rebuild_active_deformation(bpy.context)
-            repeated_geometry = (
-                coordinate_digest(deformation_authoring._key(attached, name)),
-                coordinate_digest(deformation_authoring._key(detached, name)),
-            )
+            repeated_geometry = region_geometry_digests(attached, detached, name)
             if repeated_geometry != rebuilt_geometry:
                 fail(f"Repeated deterministic rebuild differs for {region_id}/{name}")
 

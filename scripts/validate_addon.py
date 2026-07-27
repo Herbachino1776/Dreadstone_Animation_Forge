@@ -25,6 +25,7 @@ MODULE_NAMES = (
     "damage_readiness.py",
     "damage_authoring.py",
     "deformation_authoring.py",
+    "parameter_schema.py",
     "trauma_field.py",
 )
 MODULE_PATHS = tuple(PACKAGE / name for name in MODULE_NAMES)
@@ -33,13 +34,13 @@ ALL_MODULE_PATHS = tuple(sorted(
     if "__pycache__" not in path.parts
 ))
 
-EXPECTED_VERSION = (3, 16, 2)
+EXPECTED_VERSION = (3, 17, 0)
 EXPECTED_READINESS_BUILD = "2026-07-18.source-contract.1"
 EXPECTED_AUTHORING_BUILD = "2026-07-18.source-contract.1"
-EXPECTED_DEFORMATION_BUILD = "2026-07-21.animation-ui-foldouts.1"
+EXPECTED_DEFORMATION_BUILD = "2026-07-26.impact-pedal.1"
 
 REQUIRED_GUIDE_HEADINGS = (
-    "## 1. Install Dreadstone Animation Forge 3.16.2",
+    "## 1. Install Dreadstone Animation Forge 3.17.0",
     "## 2. Open the Dreadstone panel",
     "## 3. Import and prepare a source GLB",
     "## 5. Author and approve animation drafts",
@@ -116,6 +117,13 @@ REQUIRED_GUIDE_UI_LABELS = {
     "**Directional Shear**",
     "**Raised Impact Rim**",
     "**Ridge Collapse**",
+    "**RANDOMIZE SEED**",
+    "**GENERATE / REFRESH PREVIEW**",
+    "**COMMIT / SAVE IMPACT**",
+    "**USE MANUAL CONTROL**",
+    "**FIT MACROS TO CURRENT VALUES**",
+    "**RETURN TO MACRO CONTROL**",
+    "**FINAL PREVIEW**",
     "**REBUILD ACTIVE DEFORMATION**",
     "**Attached**",
     "**Detached**",
@@ -135,6 +143,7 @@ REQUIRED_SCHEMAS = {
     "dreadstone.source_readiness.v1",
     "dreadstone.damage_authoring.v1",
     "dreadstone.damage_deformation.v1",
+    "dreadstone.impact_control.v1",
     "dreadstone.trauma_stamp_library.v1",
     "dreadstone.compound_trauma_event.v1",
 }
@@ -242,7 +251,7 @@ REQUIRED_OPERATORS = {
 REQUIRED_UI_TEXT = {
     "Source Damage Readiness",
     "Damage Segment & Stump Authoring v3.9",
-    "Trauma Field Authoring v3.16.2",
+    "Trauma Field Authoring v3.17.0",
     "5. Surface Gore Overlay",
     "Restore Reimported GLB Intact Preview",
     "Validate Complete Damage Asset",
@@ -420,7 +429,7 @@ def check_extension_manifest() -> None:
         (
             'schema_version = "1.0.0"',
             'id = "dreadstone_animation_forge"',
-            'version = "3.16.2"',
+            'version = "3.17.0"',
             'name = "Dreadstone Animation Forge"',
             'type = "add-on"',
             'blender_version_min = "4.2.0"',
@@ -467,13 +476,15 @@ def check_package_imports(sources: dict[str, str]) -> None:
         "package module imports",
     )
     require("from . import damage_readiness" in sources["damage_authoring.py"], "damage_authoring relative import changed")
+    require("from . import parameter_schema" in init_source, "parameter_schema package import is missing")
+    require("from . import parameter_schema" in sources["deformation_authoring.py"], "parameter_schema relative import is missing")
     require("from . import trauma_field" in sources["deformation_authoring.py"], "trauma_field relative import is missing")
 
 
 def check_surface_gore_contracts(sources: dict[str, str], trees: dict[str, ast.Module]) -> None:
     trauma = sources["trauma_field.py"]
     deformation = sources["deformation_authoring.py"]
-    presets = literal_assignment(trees["trauma_field.py"], "GORE_PRESETS")
+    presets = literal_assignment(trees["parameter_schema.py"], "GORE_PRESETS")
     require(
         set(presets) == {
             "Gore_Ooze_Wet", "Gore_Clot_Dark", "Gore_Smear_Heavy",
@@ -540,6 +551,75 @@ def check_operators_and_ui(trees: dict[str, ast.Module]) -> None:
     literals = string_literals(trees.values())
     missing_ui = sorted(REQUIRED_UI_TEXT - literals)
     require(not missing_ui, f"missing UI labels: {', '.join(missing_ui)}")
+
+
+def check_impact_parameter_contracts(sources: dict[str, str]) -> None:
+    schema = sources["parameter_schema.py"]
+    init_source = sources["__init__.py"]
+    deformation = sources["deformation_authoring.py"]
+    trauma = sources["trauma_field.py"]
+    panels = (PACKAGE / "ui" / "panels.py").read_text(encoding="utf-8")
+    impacts = (PACKAGE / "ui" / "operators" / "impacts.py").read_text(encoding="utf-8")
+    previews = (PACKAGE / "ui" / "operators" / "previews.py").read_text(encoding="utf-8")
+    require_markers(
+        schema,
+        (
+            'IMPACT_CONTROL_SCHEMA = "dreadstone.impact_control.v1"',
+            'MACRO_LABELS = ("SIZE", "CRUSH", "PROFILE", "EDGE SAFETY", "CHAOS")',
+            "class ParameterSpec:",
+            '"inclusive_min"', '"inclusive_max"',
+            "def blender_kwargs(", "def validate_recipe_value(",
+            "def derive_impact_parameters(", "def fit_macros_to_parameters(",
+            "def normalize_impact_control(", "def impact_identity_digest(",
+        ),
+        "central Impact Pedal parameter schema",
+    )
+    require_markers(
+        init_source,
+        (
+            'parameter_schema.blender_kwargs("deformation_seed_radius")',
+            'parameter_schema.blender_kwargs("deformation_seed_depth")',
+            'parameter_schema.blender_kwargs("deformation_seed_falloff")',
+            'parameter_schema.blender_kwargs("deformation_max_vertex_displacement")',
+            'parameter_schema.blender_kwargs("deformation_impact_size")',
+            'parameter_schema.blender_kwargs("deformation_impact_seed")',
+        ),
+        "RNA parameter authority",
+    )
+    require_markers(
+        deformation,
+        (
+            "def apply_impact_macro_transaction(",
+            "def apply_impact_seed_transaction(",
+            "def randomize_impact_seed(",
+            "def fit_impact_macros_to_current_values(",
+            "def return_to_macro_control(",
+            "preview_service.suspend_updates",
+            '"impactControl"', '"impactRecipeClass"',
+        ),
+        "Impact Pedal transactions and persistence",
+    )
+    require_markers(
+        trauma,
+        (
+            "parameter_schema.validate_recipe_value(",
+            "parameter_schema.normalize_impact_control(",
+            "def _impact_noise(",
+            '"impactSeed"', '"impactChaos"',
+        ),
+        "Impact Pedal normalization and deterministic geometry",
+    )
+    require_markers(
+        panels + impacts + previews,
+        (
+            "IMPACT CONTROL DECK", "IMPACT PEDAL", "Advanced Impact Internals",
+            "RANDOMIZE SEED", "GENERATE / REFRESH PREVIEW", "COMMIT / SAVE IMPACT",
+            "FIT MACROS TO CURRENT VALUES", "RETURN TO MACRO CONTROL",
+        ),
+        "Impact Control Deck UI",
+    )
+    require((ROOT / "docs" / "DAMAGE_PARAMETER_AUDIT_v3.17.0.json").is_file(), "damage parameter audit report is missing")
+    require((ROOT / "docs" / "IMPACT_RESPONSE_DIAGNOSTICS_v3.17.0.json").is_file(), "impact response diagnostic report is missing")
 
 
 def check_world_space_and_exact_index(source: str) -> None:
@@ -790,14 +870,14 @@ def check_repository_hygiene() -> None:
 
 
 def main() -> int:
-    print("DREADSTONE ANIMATION FORGE v3.16.2 STATIC VALIDATION")
+    print("DREADSTONE ANIMATION FORGE v3.17.0 STATIC VALIDATION")
     print("Blender is not imported; runtime acceptance remains separate.")
 
     sources: dict[str, str] = {}
     trees: dict[str, ast.Module] = {}
     checks: list[tuple[str, Callable[[], None]]] = [
-        ("all five package modules exist", check_module_files),
-        ("Blender extension manifest exists and matches v3.16.2", check_extension_manifest),
+        ("all six contract package modules exist", check_module_files),
+        ("Blender extension manifest exists and matches v3.17.0", check_extension_manifest),
         ("all Python modules parse with ast.parse", lambda: check_parse(sources)),
         ("all Python modules compile with py_compile", check_compile),
         ("add-on/deformation version and build contracts", lambda: check_versions(trees)),
@@ -805,6 +885,7 @@ def main() -> int:
         ("surface gore presets, preview management, persistence, validation, and export contracts", lambda: check_surface_gore_contracts(sources, trees)),
         ("manifest schemas, DSB names, seams, and standard keys", lambda: check_schemas_names_keys_seams(trees)),
         ("required operators and UI labels", lambda: check_operators_and_ui(trees)),
+        ("Impact Pedal parameter authority, transactions, UI, and reports", lambda: check_impact_parameter_contracts(sources)),
         ("world-space exact-index deformation synchronization", lambda: check_world_space_and_exact_index(sources["deformation_authoring.py"])),
         ("attached/detached preview, preset, and optional sculpt contracts", lambda: check_preview_and_presets(sources["deformation_authoring.py"])),
         ("trauma-field algorithms, registry, stamps, rebuild, and additive manifest contracts", lambda: check_trauma_field_contracts(sources, trees)),

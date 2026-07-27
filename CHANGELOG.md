@@ -1,5 +1,19 @@
 # Changelog
 
+## 3.17.0
+
+- Added the compact top **IMPACT CONTROL DECK** with the five normalized **SIZE**, **CRUSH**, **PROFILE**, **EDGE SAFETY**, and **CHAOS** macros, master seed, deterministic identity, preview quality, status, Randomize, Preview, Commit, Revert, and Clear actions.
+- Centralized deformation, stamp, feather, displacement, and gore ranges in a Blender-free parameter-contract layer used by RNA declarations, normalization, validation, presets, macro conversion, migration, and export checks. Every exposed numeric endpoint is accepted inclusively, including Blender RNA's float32 representation of an exact endpoint.
+- Added guarded macro and seed transactions that validate first, assign derived physical settings without recursive callbacks, mark dirty once, increment one generation token, and schedule at most one managed preview.
+- Added explicit MACRO and MANUAL/CUSTOM behavior, macro fitting, confirmed return to macro control, additive versioned recipe metadata, and safe legacy format-1–4 migration without changing unchanged legacy recipe digests.
+- Added a machine-readable property audit, geometry-response diagnostics, ordinary endpoint/determinism tests, and Blender 5.1.2 Impact Pedal acceptance across all six families, paired/core regions, macro endpoints, and repeated seeds.
+
+## 3.16.3
+
+- Fixed **Prepare Character for Damage Authoring** on production rigs whose waist surface is distributed across the spine, torso, limb, and head vertex groups. Seam analysis, face partitioning, and contour reconstruction now use the complete distal deform subtree versus all other deform bones instead of comparing only the two bones immediately beside the joint.
+- Non-deforming root anchors and controls are excluded from seam weights, while deforming hand bones remain on the correct forearm side. This closes deterministic waist contours without weakening topology or readiness gates.
+- Added an end-to-end Blender 5.1.2 regression using a saved Skin & Bones production character; one-click preparation and generated authoring validation both pass without saving the source blend.
+
 ## 3.16.2
 
 - Restored the complete Animation workspace in the task UI: rig mapping, ground preview, arm/hand pose polish, walk, collapse, flank-hurt, mace-guard, approval, safety, and approved-pack controls are available independently of damage-authoring state.

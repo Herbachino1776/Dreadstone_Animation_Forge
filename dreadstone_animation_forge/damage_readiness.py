@@ -22,7 +22,7 @@ from bpy.types import Operator
 from . import trauma_field
 
 REPORT_SCHEMA = "dreadstone.damage_readiness.v1"
-ANALYZER_REVISION = "virtual_weld_v3.7.4"
+ANALYZER_REVISION = "hierarchical_weight_partition_v3.16.3"
 ANALYZER_BUILD_ID = "2026-07-18.source-contract.1"
 ADDON_VERSION = (3, 8, 1)
 SOURCE_CONTRACT_SCHEMA = "dreadstone.source_readiness.v1"
@@ -820,24 +820,62 @@ def analyze_mesh_object(obj, relevant_groups=None):
     }
     return result, topology
 
-def _weights_for_groups(obj, proximal_group_name, distal_group_name):
-    proximal_group = obj.vertex_groups.get(proximal_group_name)
-    distal_group = obj.vertex_groups.get(distal_group_name)
-    if not proximal_group or not distal_group:
+def _weights_for_group_sets(obj, proximal_group_names, distal_group_names):
+    proximal_names = set(proximal_group_names)
+    distal_names = set(distal_group_names)
+    proximal_indices = {
+        group.index for group in obj.vertex_groups if group.name in proximal_names
+    }
+    distal_indices = {
+        group.index for group in obj.vertex_groups if group.name in distal_names
+    }
+    if not proximal_indices or not distal_indices:
         return None
-    proximal_index = proximal_group.index
-    distal_index = distal_group.index
     weights = {}
     for vertex in obj.data.vertices:
         proximal = 0.0
         distal = 0.0
         for membership in vertex.groups:
-            if membership.group == proximal_index:
-                proximal = float(membership.weight)
-            elif membership.group == distal_index:
-                distal = float(membership.weight)
+            if membership.group in proximal_indices:
+                proximal += float(membership.weight)
+            elif membership.group in distal_indices:
+                distal += float(membership.weight)
         weights[int(vertex.index)] = (proximal, distal)
     return weights
+
+
+def _weights_for_groups(obj, proximal_group_name, distal_group_name):
+    """Compatibility helper for callers that intentionally compare two groups."""
+    return _weights_for_group_sets(obj, (proximal_group_name,), (distal_group_name,))
+
+
+def _deform_subtree_names(armature, bone_name):
+    bone = armature.data.bones.get(bone_name)
+    if bone is None:
+        return set()
+    names = set()
+    stack = [bone]
+    while stack:
+        current = stack.pop()
+        if current.name in names:
+            continue
+        if current.use_deform:
+            names.add(current.name)
+        stack.extend(current.children)
+    return names
+
+
+def _seam_weight_group_names(armature, distal_bone_name):
+    """Return the two complete deformation regions divided by a joint.
+
+    Comparing only the two bones immediately beside a joint leaves holes where
+    child bones own the surface (hands at elbows, torso/limbs at the waist).
+    A production seam is instead the boundary between the distal deform subtree
+    and every other deform bone.  Non-deforming controls and anchors are excluded.
+    """
+    distal = _deform_subtree_names(armature, distal_bone_name)
+    all_deform = {bone.name for bone in armature.data.bones if bone.use_deform}
+    return sorted(all_deform - distal), sorted(distal)
 
 
 
@@ -1115,7 +1153,12 @@ def _score_component(component, shell, slab_width, ambiguous_polygon_count):
 
 
 def analyze_seam_on_mesh(obj, seam_id, definition, armature, proximal_group_name, distal_group_name, mesh_report, topology):
-    raw_weights = _weights_for_groups(obj, proximal_group_name, distal_group_name)
+    proximal_weight_groups, distal_weight_groups = _seam_weight_group_names(
+        armature, distal_group_name
+    )
+    raw_weights = _weights_for_group_sets(
+        obj, proximal_weight_groups, distal_weight_groups
+    )
     if raw_weights is None:
         missing = []
         if obj.vertex_groups.get(proximal_group_name) is None:
@@ -1229,6 +1272,9 @@ def analyze_seam_on_mesh(obj, seam_id, definition, armature, proximal_group_name
         "mesh_object_name": obj.name,
         "mesh_datablock_name": obj.data.name,
         "available": True,
+        "weight_partition": "distal_deform_subtree_vs_other_deform_bones",
+        "proximal_weight_groups": proximal_weight_groups,
+        "distal_weight_groups": distal_weight_groups,
         "proximal_dominant_vertex_count": len(proximal_dominant),
         "distal_dominant_vertex_count": len(distal_dominant),
         "crossover_vertex_count": len(crossover),

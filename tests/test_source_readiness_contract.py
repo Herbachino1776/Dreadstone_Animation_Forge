@@ -226,6 +226,32 @@ class SourceReadinessContractTests(unittest.TestCase):
         self.assertIn("Restore the original source object; Forge will not fall back to generated authoring meshes.", source)
         self.assertIn("generated DSB_* meshes cannot replace it", source)
 
+    def test_seams_partition_complete_deform_regions_consistently(self) -> None:
+        readiness_source = (PACKAGE / "damage_readiness.py").read_text(encoding="utf-8")
+        authoring_source = (PACKAGE / "damage_authoring.py").read_text(encoding="utf-8")
+        partition = ast.get_source_segment(
+            readiness_source,
+            function_node(PACKAGE / "damage_readiness.py", "_seam_weight_group_names"),
+        ) or ""
+        analyzer = ast.get_source_segment(
+            readiness_source,
+            function_node(PACKAGE / "damage_readiness.py", "analyze_seam_on_mesh"),
+        ) or ""
+        reconstruction = ast.get_source_segment(
+            authoring_source,
+            function_node(PACKAGE / "damage_authoring.py", "_reconstruct_contour"),
+        ) or ""
+        face_partition = ast.get_source_segment(
+            authoring_source,
+            function_node(PACKAGE / "damage_authoring.py", "_partition_faces"),
+        ) or ""
+        self.assertIn("bone.use_deform", partition)
+        self.assertIn("all_deform - distal", partition)
+        self.assertIn("_weights_for_group_sets", analyzer)
+        self.assertIn("proximal_weight_groups", reconstruction)
+        self.assertIn("distal_weight_groups", reconstruction)
+        self.assertIn("_seam_weight_group_names", face_partition)
+
     def test_repair_operator_does_not_clear_or_mutate_authoring_work(self) -> None:
         function = function_node(PACKAGE / "damage_readiness.py", "persist_source_readiness_contract")
         repair = next(

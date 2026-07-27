@@ -11,11 +11,27 @@ from __future__ import annotations
 import copy
 import hashlib
 import heapq
+import importlib.util
 import json
 import math
 import uuid
 from itertools import product
 from collections.abc import Iterable, Mapping, Sequence
+from pathlib import Path
+
+
+try:
+    from . import parameter_schema
+except (ImportError, ModuleNotFoundError):
+    _PARAMETER_SCHEMA_PATH = Path(__file__).resolve().with_name("parameter_schema.py")
+    _PARAMETER_SCHEMA_SPEC = importlib.util.spec_from_file_location(
+        "dreadstone_parameter_schema_standalone",
+        _PARAMETER_SCHEMA_PATH,
+    )
+    if _PARAMETER_SCHEMA_SPEC is None or _PARAMETER_SCHEMA_SPEC.loader is None:
+        raise RuntimeError("Could not load the Damage Authoring parameter schema.")
+    parameter_schema = importlib.util.module_from_spec(_PARAMETER_SCHEMA_SPEC)
+    _PARAMETER_SCHEMA_SPEC.loader.exec_module(parameter_schema)
 
 
 TRAUMA_FAMILIES = (
@@ -115,119 +131,8 @@ GORE_MAX_TRIANGLES_PER_ASSET = 48000
 GORE_MAX_SURFACE_OFFSET = 0.012
 GORE_MIN_SURFACE_OFFSET = 0.00015
 
-RAISED_GORE_DEFAULTS = {
-    "goreOverlayMode": "SURFACE_STAIN",
-    "goreIntensityClass": "LIGHT",
-    "goreRaisedEnabled": False,
-    "goreClotCoverage": 0.0,
-    "goreCoreDensity": 0.0,
-    "goreClotThickness": 0.0015,
-    "goreThicknessVariation": 0.0,
-    "goreIslandBreakup": 0.0,
-    "gorePeripheralFragments": 0.0,
-    "goreSurfaceOffset": 0.00035,
-    "goreGeometryDensity": 0.35,
-    "goreWetnessVariation": 0.0,
-    "goreDarkClotBias": 0.0,
-    "goreRoughEdgeBias": 0.0,
-    "goreColorIntensity": 1.0,
-    "goreOrganicIrregularity": 0.0,
-    "goreSurfaceRoundness": 0.0,
-    "goreTextureEnabled": False,
-    "goreFiberTextureStrength": 0.0,
-    "goreBaseColorStrength": 1.0,
-    "goreInnerRimEnabled": False,
-    "goreInnerRimWidth": 0.0025,
-    "goreInnerRimStrength": 0.0,
-    "goreMaximumTriangles": GORE_MAX_TRIANGLES_PER_DEFORMATION,
-    "goreDefaultVisible": False,
-    "goreActivationWeight": 0.01,
-    "goreUserCustomized": False,
-}
-
-GORE_PRESETS = {
-    "Gore_Ooze_Wet": {
-        "goreCoverage": 0.72,
-        "goreScatter": 0.48,
-        "goreEdgeFeather": 0.70,
-        "goreWetness": 0.92,
-        "goreDarkness": 0.38,
-        "goreColorBias": (0.34, 0.012, 0.008),
-        "gorePatchScale": 0.018,
-    },
-    "Gore_Clot_Dark": {
-        "goreCoverage": 0.64,
-        "goreScatter": 0.62,
-        "goreEdgeFeather": 0.54,
-        "goreWetness": 0.58,
-        "goreDarkness": 0.72,
-        "goreColorBias": (0.24, 0.008, 0.006),
-        "gorePatchScale": 0.012,
-    },
-    "Gore_Smear_Heavy": {
-        "goreCoverage": 0.86,
-        "goreScatter": 0.30,
-        "goreEdgeFeather": 0.82,
-        "goreWetness": 0.80,
-        "goreDarkness": 0.48,
-        "goreColorBias": (0.38, 0.014, 0.009),
-        "gorePatchScale": 0.028,
-    },
-    "Gore_Speckled_Impact": {
-        "goreCoverage": 0.46,
-        "goreScatter": 0.90,
-        "goreEdgeFeather": 0.62,
-        "goreWetness": 0.74,
-        "goreDarkness": 0.42,
-        "goreColorBias": (0.42, 0.016, 0.010),
-        "gorePatchScale": 0.008,
-    },
-    "Gore_Crush_Bloodied": {
-        "goreCoverage": 0.78,
-        "goreScatter": 0.68,
-        "goreEdgeFeather": 0.66,
-        "goreWetness": 0.86,
-        "goreDarkness": 0.56,
-        "goreColorBias": (0.30, 0.010, 0.007),
-        "gorePatchScale": 0.015,
-    },
-    "Gore_Crush_Heavy_Clotted": {
-        "goreCoverage": 0.76,
-        "goreScatter": 0.92,
-        "goreEdgeFeather": 0.42,
-        "goreWetness": 0.82,
-        "goreDarkness": 0.68,
-        "goreColorBias": (0.31, 0.006, 0.004),
-        "gorePatchScale": 0.010,
-        "goreOverlayMode": "STAIN_AND_RAISED",
-        "goreIntensityClass": "HIGH",
-        "goreRaisedEnabled": True,
-        "goreClotCoverage": 0.82,
-        "goreCoreDensity": 0.94,
-        "goreClotThickness": 0.0048,
-        "goreThicknessVariation": 0.88,
-        "goreIslandBreakup": 0.86,
-        "gorePeripheralFragments": 0.58,
-        "goreSurfaceOffset": 0.00065,
-        "goreGeometryDensity": 0.72,
-        "goreWetnessVariation": 0.84,
-        "goreDarkClotBias": 0.72,
-        "goreRoughEdgeBias": 0.56,
-        "goreColorIntensity": 1.0,
-        "goreOrganicIrregularity": 0.78,
-        "goreSurfaceRoundness": 0.82,
-        "goreTextureEnabled": True,
-        "goreFiberTextureStrength": 0.82,
-        "goreBaseColorStrength": 0.30,
-        "goreInnerRimEnabled": True,
-        "goreInnerRimWidth": 0.0032,
-        "goreInnerRimStrength": 0.88,
-        "goreMaximumTriangles": 12000,
-        "goreDefaultVisible": False,
-        "goreActivationWeight": 0.01,
-        "goreUserCustomized": False,
-    },
-}
+RAISED_GORE_DEFAULTS = parameter_schema.raised_gore_defaults()
+GORE_PRESETS = parameter_schema.gore_presets()
 DEFAULT_GORE_PRESET_ID = "Gore_Crush_Heavy_Clotted"
 
 GENERATED_AUTHORING_PREFIXES = (
@@ -1249,8 +1154,12 @@ def normalize_gore_overlay(overlay: Mapping[str, object]) -> dict[str, object]:
         normalized_color = [float(value) for value in color]  # type: ignore[union-attr]
     except (TypeError, ValueError):
         raise ValueError("surface gore color bias must contain three finite channels") from None
-    if len(normalized_color) != 3 or any(not math.isfinite(value) or not 0.0 <= value <= 1.0 for value in normalized_color):
-        raise ValueError("surface gore color bias channels must be finite values from zero to one")
+    color_errors = parameter_schema.validate_vector(
+        "deformation_gore_color_bias",
+        normalized_color,
+    )
+    if color_errors:
+        raise ValueError(color_errors[0])
     try:
         normalized = {
             "goreRecipeVersion": GORE_RECIPE_VERSION,
@@ -1333,32 +1242,33 @@ def validate_gore_overlay(
             value = float(overlay.get(field, math.nan))
         except (TypeError, ValueError):
             value = math.nan
-        if not math.isfinite(value) or not 0.0 <= value <= 1.0:
-            errors.append(f"Surface gore overlay {field} must be a finite value from zero to one.")
+        for message in parameter_schema.validate_recipe_value(field, value):
+            errors.append(f"Surface gore overlay {field}: {message}")
     try:
         patch_scale = float(overlay.get("gorePatchScale", math.nan))
     except (TypeError, ValueError):
         patch_scale = math.nan
-    if not math.isfinite(patch_scale) or patch_scale <= 0.0:
-        errors.append("Surface gore overlay gorePatchScale must be positive and finite.")
-    for field, minimum, maximum in (
-        ("goreClotThickness", 0.0001, 0.05),
-        ("goreSurfaceOffset", GORE_MIN_SURFACE_OFFSET, GORE_MAX_SURFACE_OFFSET),
-        ("goreInnerRimWidth", 0.0001, 0.03),
-        ("goreActivationWeight", 0.0, 2.0),
-    ):
+    for message in parameter_schema.validate_recipe_value("gorePatchScale", patch_scale):
+        errors.append(f"Surface gore overlay gorePatchScale: {message}")
+    for field in ("goreClotThickness", "goreSurfaceOffset", "goreInnerRimWidth"):
         try:
             value = float(overlay.get(field, math.nan))
         except (TypeError, ValueError):
             value = math.nan
-        if not math.isfinite(value) or not minimum <= value <= maximum:
-            errors.append(f"Surface gore overlay {field} must be finite from {minimum} to {maximum}.")
+        for message in parameter_schema.validate_recipe_value(field, value):
+            errors.append(f"Surface gore overlay {field}: {message}")
+    try:
+        activation_weight = float(overlay.get("goreActivationWeight", math.nan))
+    except (TypeError, ValueError):
+        activation_weight = math.nan
+    if not math.isfinite(activation_weight) or not 0.0 <= activation_weight <= 2.0:
+        errors.append("Surface gore overlay goreActivationWeight must be finite from 0.0 to 2.0.")
     try:
         maximum_triangles = int(overlay.get("goreMaximumTriangles", -1))
     except (TypeError, ValueError, OverflowError):
         maximum_triangles = -1
-    if not 128 <= maximum_triangles <= 100000:
-        errors.append("Surface gore maximum triangles must be from 128 to 100000.")
+    for message in parameter_schema.validate_recipe_value("goreMaximumTriangles", maximum_triangles):
+        errors.append(f"Surface gore maximum triangles: {message}")
     raised_enabled = bool(overlay.get("goreRaisedEnabled", False))
     if raised_enabled and str(overlay.get("goreOverlayMode", "")) != "STAIN_AND_RAISED":
         errors.append("Raised gore requires STAIN_AND_RAISED overlay mode.")
@@ -1369,14 +1279,14 @@ def validate_gore_overlay(
         channels = tuple(float(value) for value in color)  # type: ignore[union-attr]
     except (TypeError, ValueError):
         channels = ()
-    if len(channels) != 3 or any(not math.isfinite(value) or not 0.0 <= value <= 1.0 for value in channels):
-        errors.append("Surface gore overlay color bias must contain three finite channels from zero to one.")
+    for message in parameter_schema.validate_vector("deformation_gore_color_bias", channels):
+        errors.append("Surface gore overlay color bias: " + message)
     try:
         seed = int(overlay.get("goreMaskSeed", -1))
     except (TypeError, ValueError, OverflowError):
         seed = -1
-    if seed < 0 or seed > 2147483647:
-        errors.append("Surface gore overlay variation seed must be from 0 to 2147483647.")
+    for message in parameter_schema.validate_recipe_value("goreMaskSeed", seed):
+        errors.append(f"Surface gore overlay variation seed: {message}")
     if bool(overlay.get("goreOverlayEnabled", False)):
         linked_region = str(overlay.get("linkedRegionId", ""))
         linked_stamp = str(overlay.get("linkedStampId", ""))
@@ -1902,6 +1812,14 @@ def normalize_stamp(stamp: Mapping[str, object]) -> dict[str, object]:
     direction_local = stamp.get("directionLocal")
     if direction_local is not None:
         normalized["directionLocal"] = list(_normalized(direction_local, "local stamp direction"))  # type: ignore[arg-type]
+    if "impactSeed" in stamp:
+        normalized["impactSeed"] = int(stamp["impactSeed"])
+    if "impactChaos" in stamp:
+        normalized["impactChaos"] = float(stamp["impactChaos"])
+    if "impactProfile" in stamp:
+        normalized["impactProfile"] = float(stamp["impactProfile"])
+    if "profileCenterRimBalance" in stamp:
+        normalized["profileCenterRimBalance"] = float(stamp["profileCenterRimBalance"])
     errors = validate_stamp_stack([normalized], require_contiguous_order=False)
     if errors:
         raise ValueError("; ".join(errors))
@@ -1944,26 +1862,28 @@ def validate_stamp_stack(
                 _normalized(stamp.get("directionLocal", ()), "local stamp direction")  # type: ignore[arg-type]
             except (TypeError, ValueError) as exc:
                 errors.append(f"{prefix}: {exc}.")
-        numeric_rules = (
-            ("radius", True, False),
-            ("depth", False, False),
-            ("falloff", True, False),
-            ("featherDistance", False, False),
-            ("seamProtection", False, False),
-            ("strength", False, False),
-            ("maximumDisplacement", True, False),
+        numeric_fields = (
+            "radius", "depth", "falloff", "featherDistance", "seamProtection",
+            "strength", "maximumDisplacement",
         )
-        for field, must_be_positive, may_be_negative in numeric_rules:
+        for field in numeric_fields:
             try:
                 value = float(stamp.get(field, math.nan))
             except (TypeError, ValueError):
                 value = math.nan
-            if not math.isfinite(value):
-                errors.append(f"{prefix} has non-finite {field}.")
-            elif must_be_positive and value <= 0.0:
-                errors.append(f"{prefix} requires positive {field}.")
-            elif not may_be_negative and value < 0.0:
+            if math.isfinite(value) and value < 0.0:
                 errors.append(f"{prefix} cannot use negative {field}.")
+            for message in parameter_schema.validate_recipe_value(field, value):
+                errors.append(f"{prefix} {field}: {message}")
+        for field in ("impactSeed", "impactChaos", "impactProfile", "profileCenterRimBalance"):
+            if field not in stamp:
+                continue
+            try:
+                value = int(stamp[field]) if field == "impactSeed" else float(stamp[field])
+            except (TypeError, ValueError, OverflowError):
+                value = math.nan
+            for message in parameter_schema.validate_recipe_value(field, value):
+                errors.append(f"{prefix} {field}: {message}")
         try:
             order = int(stamp.get("orderIndex", -1))
             orders.append(order)
@@ -2120,6 +2040,16 @@ def normalize_stamp_library(payload: Mapping[str, object]) -> dict[str, object]:
                 "recipeDigest": calculated_recipe_digest,
                 "stamps": stamps,
             }
+            if "impactControl" in raw_key:
+                try:
+                    impact_control = parameter_schema.normalize_impact_control(
+                        raw_key["impactControl"]  # type: ignore[arg-type]
+                    )
+                except (TypeError, ValueError) as exc:
+                    raise ValueError(
+                        f"Deformation key {key_name!r} has invalid Impact Pedal metadata: {exc}"
+                    ) from None
+                key_record["impactControl"] = impact_control
             if "surfaceGoreOverlay" in raw_key:
                 try:
                     gore_overlay = normalize_gore_overlay(raw_key["surfaceGoreOverlay"])  # type: ignore[arg-type]
@@ -2258,6 +2188,18 @@ def stamp_displacement(
     return _normalized_stamp_displacement(position, recipe, influence, distance)
 
 
+def _impact_noise(seed: int, position: Sequence[float] | None = None) -> tuple[float, float, float, float]:
+    """Stable cross-session noise without Python's randomized hash state."""
+
+    coordinates = () if position is None else _vector3(position, "impact noise position")
+    payload = f"{int(seed)}:" + ",".join(format(value, ".9f") for value in coordinates)
+    digest = hashlib.sha256(payload.encode("ascii")).digest()
+    return tuple(
+        (int.from_bytes(digest[offset:offset + 4], "little") / 4294967295.0) * 2.0 - 1.0
+        for offset in (0, 4, 8, 12)
+    )  # type: ignore[return-value]
+
+
 def _normalized_stamp_displacement(
     position: Sequence[float],
     recipe: Mapping[str, object],
@@ -2274,9 +2216,36 @@ def _normalized_stamp_displacement(
     radius = float(recipe["radius"])
     strength = float(recipe["strength"])
     family = str(recipe["family"])
+    chaos = float(recipe.get("impactChaos", 0.0))
+    impact_seed = int(recipe.get("impactSeed", 0))
+    if chaos > 0.0:
+        global_noise = _impact_noise(impact_seed)
+        local_noise = _impact_noise(impact_seed, point)
+        skew_vector = _normalized(
+            (global_noise[0], global_noise[1], global_noise[2]),
+            "deterministic impact skew",
+        )
+        center = _add(center, _scale(skew_vector, radius * chaos * 0.10))
+        direction = _normalized(
+            _add(
+                direction,
+                _scale(
+                    (local_noise[0], local_noise[1], local_noise[2]),
+                    chaos * 0.14,
+                ),
+            ),
+            "deterministic impact direction",
+        )
+        weight *= max(0.55, min(1.35, 1.0 + local_noise[3] * chaos * 0.34))
     if distance is None:
         distance = _length(_subtract(point, center))
     radial_fraction = max(0.0, min(1.5, float(distance) / radius))
+    if chaos > 0.0:
+        offset = _subtract(point, center)
+        offset_length = _length(offset)
+        if offset_length > 1e-12:
+            asymmetric = _dot(_scale(offset, 1.0 / offset_length), skew_vector)
+            radial_fraction = max(0.0, min(1.5, radial_fraction * (1.0 + asymmetric * chaos * 0.18)))
     if family == "COMPACT_DENT":
         displacement = _scale(direction, depth * strength * weight**1.25)
     elif family == "BROAD_CAVE":

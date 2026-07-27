@@ -23,7 +23,7 @@ AUTHORING_SCHEMA = "dreadstone.damage_authoring.v1"
 AUTHORING_VERSION = (3, 9, 1)
 AUTHORING_BUILD_ID = "2026-07-18.source-contract.1"
 READINESS_SCHEMA = "dreadstone.damage_readiness.v1"
-READINESS_REVISION_REQUIRED = "virtual_weld_v3.7.4"
+READINESS_REVISION_REQUIRED = "hierarchical_weight_partition_v3.16.3"
 STATE_TEXT_NAME = "DSB_DAMAGE_AUTHORING_STATE.json"
 ROOT_COLLECTION_NAME = "DSB_DAMAGE_AUTHORING"
 PROTECTED_COLLECTION_NAME = "DSB_PROTECTED_SOURCE"
@@ -536,8 +536,8 @@ def _partition_faces(source_obj, authoring_rig, seam, topology):
 
     The analyzer contour is an interpolated zero crossing through polygons. The
     contour polygons themselves are cut exactly later; all other polygons need a
-    stable side label. We label them by distal-bone-subtree weight versus the
-    proximal seam-bone weight, then retain the connected distal component. This
+    stable side label. We label them by distal-deform-subtree weight versus all
+    other deform-bone weight, then retain the connected distal component. This
     avoids treating contour crossing edges as face-graph barriers, which cannot
     divide polygons that the contour passes through.
     """
@@ -552,13 +552,19 @@ def _partition_faces(source_obj, authoring_rig, seam, topology):
                 adjacency[face_a].add(face_b)
                 adjacency[face_b].add(face_a)
 
-    distal_names = _bone_descendant_names(authoring_rig, seam["distal_bone"])
+    proximal_names = set(seam.get("proximal_weight_groups") or ())
+    distal_names = set(seam.get("distal_weight_groups") or ())
+    if not proximal_names or not distal_names:
+        proximal_names, distal_names = damage_readiness._seam_weight_group_names(
+            authoring_rig, seam["distal_bone"]
+        )
+        proximal_names, distal_names = set(proximal_names), set(distal_names)
     distal_indices = {group.index for group in source_obj.vertex_groups if group.name in distal_names}
-    proximal_group = source_obj.vertex_groups.get(seam["proximal_bone"])
+    proximal_indices = {group.index for group in source_obj.vertex_groups if group.name in proximal_names}
     if not distal_indices:
         raise RuntimeError(f"No vertex groups were found for distal region '{seam['distal_bone']}'.")
-    if proximal_group is None:
-        raise RuntimeError(f"Required proximal group '{seam['proximal_bone']}' is missing.")
+    if not proximal_indices:
+        raise RuntimeError(f"No vertex groups were found for the proximal side of {seam.get('label')}.")
 
     distal_vertex_weight = {}
     proximal_vertex_weight = {}
@@ -568,7 +574,7 @@ def _partition_faces(source_obj, authoring_rig, seam, topology):
         for membership in vertex.groups:
             if membership.group in distal_indices:
                 distal += float(membership.weight)
-            if membership.group == proximal_group.index:
+            if membership.group in proximal_indices:
                 proximal += float(membership.weight)
         distal_vertex_weight[int(vertex.index)] = distal
         proximal_vertex_weight[int(vertex.index)] = proximal
@@ -608,7 +614,8 @@ def _partition_faces(source_obj, authoring_rig, seam, topology):
         "distal_weight_score": float(sum(face_distal[index] for index in distal) / len(distal)),
         "proximal_weight_score": float(sum(face_distal[index] for index in proximal) / len(proximal)),
         "distal_bone_groups": sorted(distal_names),
-        "classification": "connected_faces_where_distal_subtree_weight_exceeds_proximal_bone_weight",
+        "proximal_bone_groups": sorted(proximal_names),
+        "classification": "connected_faces_where_distal_deform_subtree_exceeds_other_deform_bones",
     }
 
 
@@ -621,7 +628,11 @@ def _selected_shell_candidate(seam):
 
 
 def _reconstruct_contour(source_obj, seam, topology):
-    raw_weights = damage_readiness._weights_for_groups(source_obj, seam["proximal_bone"], seam["distal_bone"])
+    proximal_names = seam.get("proximal_weight_groups") or (seam["proximal_bone"],)
+    distal_names = seam.get("distal_weight_groups") or (seam["distal_bone"],)
+    raw_weights = damage_readiness._weights_for_group_sets(
+        source_obj, proximal_names, distal_names
+    )
     if raw_weights is None:
         raise RuntimeError(f"Missing seam groups for {seam.get('label')}.")
     weld_weights = damage_readiness._weights_for_weld_vertices(raw_weights, topology)

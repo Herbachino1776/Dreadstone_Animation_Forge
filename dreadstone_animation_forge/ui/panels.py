@@ -64,6 +64,132 @@ def _draw_context_card(layout, settings, summary):
     card.label(text=f"Validation: {key.get('validationStatus', settings.last_deformation_validation)}")
 
 
+def _draw_impact_control_deck(layout, settings):
+    deck = layout.box()
+    deck.label(text="IMPACT CONTROL DECK", icon='MOD_DISPLACE')
+    pedal = deck.box()
+    mode = str(settings.deformation_impact_control_mode)
+    identity = str(settings.deformation_impact_identity or "")[:10] or "not-saved"
+    pedal.label(
+        text=f"IMPACT PEDAL  |  {mode if mode == 'MACRO' else 'CUSTOM'}  |  {settings.deformation_stamp_family.replace('_', ' ').title()}",
+        icon='DRIVER',
+    )
+    macros = pedal.column(align=True)
+    macros.enabled = mode == 'MACRO'
+    row = macros.row(align=True)
+    row.scale_y = 1.22
+    row.prop(settings, "deformation_impact_size", text="SIZE", slider=True)
+    row.prop(settings, "deformation_impact_crush", text="CRUSH", slider=True)
+    row = macros.row(align=True)
+    row.scale_y = 1.22
+    row.prop(settings, "deformation_impact_profile", text="PROFILE", slider=True)
+    row.prop(settings, "deformation_impact_edge_safety", text="EDGE SAFETY", slider=True)
+    row = macros.row(align=True)
+    row.scale_y = 1.22
+    row.prop(settings, "deformation_impact_chaos", text="CHAOS", slider=True)
+
+    seed = pedal.box()
+    seed.label(text=f"DETERMINISTIC IDENTITY  {identity}", icon='KEY_HLT')
+    seed.prop(settings, "deformation_impact_seed", text="Master Seed")
+    randomize = seed.column()
+    randomize.scale_y = 1.55
+    randomize.operator("daf.randomize_impact_seed", text="RANDOMIZE SEED", icon='FILE_REFRESH')
+
+    pedal.prop(settings, "deformation_preview_quality")
+    preview = pedal.column()
+    preview.scale_y = 1.55
+    preview.operator("daf.refresh_impact_preview", text="GENERATE / REFRESH PREVIEW", icon='PLAY')
+    commit = pedal.column()
+    commit.scale_y = 1.55
+    commit.operator("daf.commit_impact", text="COMMIT / SAVE IMPACT", icon='CHECKMARK')
+    recovery = pedal.row(align=True)
+    recovery.scale_y = 1.25
+    recovery.operator("daf.revert_impact", text="Revert", icon='RECOVER_LAST')
+    clear = recovery.row(align=True)
+    clear.alert = True
+    clear.operator("daf.clear_managed_preview", text="Clear Preview", icon='X')
+
+    state = "DIRTY" if settings.deformation_impact_dirty else "SAVED"
+    validity = str(settings.last_deformation_validation or "NOT VALIDATED")
+    status = pedal.row(align=True)
+    status.label(
+        text=(
+            f"{state} / {settings.deformation_preview_status} / {validity}  |  "
+            f"{settings.deformation_preview_affected_vertices:,} verts / "
+            f"{settings.deformation_preview_elapsed_ms:.1f} ms"
+        ),
+        icon='ERROR' if settings.deformation_preview_status == 'FAILED' else 'INFO',
+    )
+
+
+def _draw_advanced_impact_internals(layout, settings):
+    advanced = layout.box()
+    row = advanced.row(align=True)
+    opened = bool(settings.ui_advanced_impact_internals_open)
+    row.prop(
+        settings,
+        "ui_advanced_impact_internals_open",
+        text="Advanced Impact Internals",
+        icon='TRIA_DOWN' if opened else 'TRIA_RIGHT',
+        emboss=False,
+    )
+    if not opened:
+        return
+    mode = str(settings.deformation_impact_control_mode)
+    advanced.label(
+        text=f"Mode: {mode}  /  Recipe: {'IMPACT PEDAL' if mode == 'MACRO' else 'CUSTOM'}",
+        icon='OPTIONS',
+    )
+    if mode == 'MACRO':
+        advanced.label(text="Derived physical values are read-only while macros are authoritative.", icon='LOCKED')
+        advanced.operator("daf.use_manual_impact_control", text="USE MANUAL CONTROL", icon='UNLOCKED')
+    else:
+        advanced.label(text="Manual values are authoritative; macros will not overwrite them.", icon='EDITMODE_HLT')
+        row = advanced.row(align=True)
+        row.operator("daf.fit_impact_macros", text="FIT MACROS TO CURRENT VALUES", icon='DRIVER')
+        row.operator("daf.return_to_macro_control", text="RETURN TO MACRO CONTROL", icon='LOOP_BACK')
+
+    raw = advanced.column()
+    raw.enabled = mode == 'MANUAL'
+    stamp = raw.box()
+    stamp.label(text="Physical Stamp Recipe", icon='MOD_DISPLACE')
+    for name in (
+        "deformation_seed_radius", "deformation_seed_depth", "deformation_seed_falloff",
+        "deformation_stamp_strength", "deformation_feather_distance",
+        "deformation_seed_seam_protection", "deformation_max_vertex_displacement",
+        "deformation_maximum_influence", "deformation_impact_gore_patch_scale",
+    ):
+        stamp.prop(settings, name)
+    stamp.prop(settings, "deformation_influence_mode")
+    stamp.prop(settings, "deformation_distance_mode")
+    stamp.prop(settings, "deformation_seed_custom_direction")
+
+    gore = raw.box()
+    gore.label(text="Gore Recipe Internals", icon='MATERIAL')
+    gore.prop(settings, "deformation_gore_enabled")
+    gore.prop(settings, "deformation_gore_preset")
+    for name in (
+        "deformation_gore_coverage", "deformation_gore_scatter",
+        "deformation_gore_edge_feather", "deformation_gore_wetness",
+        "deformation_gore_darkness", "deformation_gore_clot_coverage",
+        "deformation_gore_core_density", "deformation_gore_clot_thickness",
+        "deformation_gore_thickness_variation", "deformation_gore_island_breakup",
+        "deformation_gore_peripheral_fragments", "deformation_gore_surface_offset",
+        "deformation_gore_geometry_density", "deformation_gore_wetness_variation",
+        "deformation_gore_dark_clot_bias", "deformation_gore_rough_edge_bias",
+        "deformation_gore_color_intensity", "deformation_gore_organic_irregularity",
+        "deformation_gore_surface_roundness", "deformation_gore_fiber_texture_strength",
+        "deformation_gore_base_color_strength", "deformation_gore_inner_rim_width",
+        "deformation_gore_inner_rim_strength", "deformation_gore_maximum_triangles",
+        "deformation_gore_mask_seed",
+    ):
+        gore.prop(settings, name)
+    gore.prop(settings, "deformation_gore_color_bias")
+    gore.prop(settings, "deformation_gore_raised_enabled")
+    gore.prop(settings, "deformation_gore_texture_enabled")
+    gore.prop(settings, "deformation_gore_inner_rim_enabled")
+
+
 def _draw_damage(layout, context, settings, summary):
     _draw_context_card(layout, settings, summary)
     regions = layout.box()
@@ -87,44 +213,28 @@ def _draw_damage(layout, context, settings, summary):
     draft.prop(settings, "deformation_impact_intensity")
     draft.prop(settings, "deformation_seed_direction_mode", text="Impact Direction")
     draft.prop(settings, "deformation_impact_semantic_name")
-    draft.operator(
+    create = draft.column()
+    create.scale_y = 1.55
+    create.operator(
         "daf.create_impact_from_selection",
         text="CREATE IMPACT FROM CURRENT SELECTION",
         icon='ADD',
     )
     draft.label(text="The selected connected surface remains the artist's decision", icon='INFO')
 
-    tune = layout.box()
-    tune.label(text="Impact Tuning", icon='DRIVER_DISTANCE')
-    tune.prop(settings, "deformation_seed_radius", text="Radius")
-    tune.prop(settings, "deformation_seed_depth", text="Depth")
-    tune.prop(settings, "deformation_seed_falloff", text="Falloff")
-    tune.prop(settings, "deformation_seed_direction_mode", text="Impact Direction")
-    tune.prop(settings, "deformation_stamp_family", text="Shape")
-    tune.prop(settings, "deformation_seed_seam_protection", text="Seam Safety")
-    tune.prop(settings, "deformation_gore_coverage", text="Gore Amount", slider=True)
-    tune.prop(settings, "deformation_gore_clot_thickness", text="Gore Thickness")
-    tune.prop(settings, "deformation_gore_island_breakup", text="Gore Breakup", slider=True)
-    composition = tune.box()
-    composition.label(text="Additive Gore Composition")
-    composition.prop(settings, "deformation_gore_fiber_texture_strength", text="Muscle Fiber", slider=True)
-    composition.prop(settings, "deformation_gore_base_color_strength", text="Original Gore Color", slider=True)
-    tune.prop(settings, "deformation_live_preview")
-    tune.prop(settings, "deformation_preview_quality")
-    status = tune.box()
-    status.label(text=f"{settings.deformation_preview_status}: {settings.deformation_preview_message}")
-    status.label(text=f"{settings.deformation_preview_elapsed_ms:.1f} ms / {settings.deformation_preview_affected_vertices:,} vertices")
-    status.label(text=f"Gore estimate/final: {settings.deformation_preview_estimated_gore_triangles:,} / {settings.deformation_preview_final_gore_triangles:,} triangles")
-    row = tune.row(align=True)
-    row.operator("daf.commit_impact", text="Commit", icon='CHECKMARK')
-    row.operator("daf.revert_impact", text="Revert", icon='RECOVER_LAST')
-    clear = tune.column()
+    _draw_impact_control_deck(layout, settings)
+    _draw_advanced_impact_internals(layout, settings)
+
+    actions = layout.box()
+    actions.prop(settings, "deformation_live_preview")
+    final = actions.column()
+    final.scale_y = 1.4
+    final.operator("daf.final_impact_preview", text="FINAL PREVIEW", icon='SHADING_RENDERED')
+    clear = actions.column()
     clear.scale_y = 1.4
     clear.alert = True
     clear.operator("daf.clear_managed_preview", text="CLEAR DAMAGE PREVIEW", icon='X')
-    row = tune.row(align=True)
-    row.operator("daf.final_impact_preview", text="Final Preview", icon='SHADING_RENDERED')
-    row.operator("daf.undo_impact_draft", text="Undo Draft", icon='LOOP_BACK')
+    actions.operator("daf.undo_impact_draft", text="Undo Draft", icon='LOOP_BACK')
 
 
 def _animation_foldout(layout, settings, property_name, title, icon='ACTION'):

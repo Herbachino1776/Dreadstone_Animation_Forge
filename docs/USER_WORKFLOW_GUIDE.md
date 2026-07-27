@@ -1,7 +1,7 @@
-# Dreadstone Animation Forge 3.16.2 — User Workflow Guide
+# Dreadstone Animation Forge 3.17.0 — User Workflow Guide
 
 - **Supported Blender:** `5.1.2`
-- **Release archive:** `Dreadstone_Animation_Forge_v3_16_2.zip`
+- **Release archive:** `Dreadstone_Animation_Forge_v3_17_0.zip`
 - **Primary rule:** the artist chooses anatomical surfaces; Forge automates processing, not anatomy.
 - **Safety rule:** Source Damage Readiness and `NOT READY` behavior are unchanged and are never bypassed by an orchestrator.
 
@@ -11,15 +11,15 @@
 2. Select the character and open **Start / Character**.
 3. Choose an explicit readiness output folder and target height, then run **Prepare Character for Damage Authoring**.
 4. Open **Damage Authoring**, choose Head, Body, Left Forearm, or Right Forearm, enter Face Edit mode, and select one connected patch.
-5. Choose an impact preset and click **Create Impact From Current Selection**.
-6. Tune with `FAST` live preview; click **Commit** when the result is ready for final raised-gore construction and focused validation.
+5. Choose an impact family, direction, and intensity, then click **Create Impact From Current Selection**.
+6. Use the top **IMPACT CONTROL DECK** to turn the five Impact Pedal macros, click **RANDOMIZE SEED**, click **GENERATE / REFRESH PREVIEW**, then click **COMMIT / SAVE IMPACT** without scrolling.
 7. Open **Validate & Export**, run complete validation, export, and clean-reimport.
 
 The top “Next” card derives its recommendation from current source, readiness, region, capture, key, preview, and validation state. It is guidance, not a validation override.
 
-## 1. Install Dreadstone Animation Forge 3.16.2
+## 1. Install Dreadstone Animation Forge 3.17.0
 
-In Blender 5.1.2 choose **Edit > Preferences > Add-ons > Install from Disk**, select `Dreadstone_Animation_Forge_v3_16_2.zip` without extracting it, and enable the add-on. A successful install shows version 3.16.2 without a registration error.
+In Blender 5.1.2 choose **Edit > Preferences > Add-ons > Install from Disk**, select `Dreadstone_Animation_Forge_v3_17_0.zip` without extracting it, and enable the add-on. A successful install shows version 3.17.0 without a registration error.
 
 ## 2. Open the Dreadstone panel
 
@@ -57,16 +57,32 @@ In **Damage Authoring**, click a registered region button. Forge activates its m
 
 Choose the impact family, direction, intensity, and one of Head Left, Head Right, Head Front, Head Back, Body Front, Body Left, Body Right, Body Back, Forearm Outer, or Custom Impact. Presets configure defaults but never select polygons.
 
-Click **Create Impact From Current Selection**. Atomically, Forge validates the region and connected patch, allocates a unique managed key, captures the surface, creates a blunt stamp, applies direction/intensity defaults, attaches the enabled heavy-gore recipe, selects the draft, and produces `FAST` preview. Any required-stage failure restores shape keys, coordinates, metadata, settings, materials, visibility, selection, mode, frame, and owned helpers.
+Click **Create Impact From Current Selection**. Atomically, Forge validates the region and connected patch, creates or selects a unique managed key, captures the surface, creates the first blunt stamp, applies the Impact Pedal recipe, selects the draft, and produces `FAST` preview. Its result message reports those stages. Any required-stage failure restores shape keys, coordinates, metadata, settings, materials, visibility, selection, mode, frame, and owned helpers.
 
-The primary tuning controls are Radius, Depth, Falloff, Impact Direction, Shape, Seam Safety, Gore Amount, Gore Thickness, Gore Breakup, additive Muscle Fiber and Original Gore Color contributions, and Preview Quality.
+The authoritative top card is **IMPACT CONTROL DECK**. It keeps **IMPACT PEDAL**, the master seed, **RANDOMIZE SEED**, **GENERATE / REFRESH PREVIEW**, **COMMIT / SAVE IMPACT**, **Revert**, **CLEAR DAMAGE PREVIEW**, Preview Quality, recipe state, affected vertex count, and elapsed time together. The same controls remain available even when live preview is enabled, so the create–explore–preview–keep loop requires no trip to the bottom of the panel.
+
+The five normalized 0–100 macros are:
+
+- **SIZE** — coordinates the captured-region-relative stamp radius, patch feather, influence reach, and later gore-patch scale without changing the selected topology or placement anchor.
+- **CRUSH** — coordinates inward depth, strength, family-specific compression, and a safe maximum-displacement allowance. Zero is a valid no-deformation setting; higher values are bounded and monotonically stronger.
+- **PROFILE** — reshapes center-versus-rim and broad-versus-focused response through perceptual falloff and family-specific profile metadata. It never changes the selected trauma family.
+- **EDGE SAFETY** — coordinates seam protection, boundary attenuation, edge retention, and safe feather behavior. Maximum protection retains an impact instead of attenuating the entire capture away.
+- **CHAOS** — adds deterministic center skew, direction variation, asymmetric falloff, local breakup, and nonuniform response. Redraws do not randomize it.
+
+The current seed and identity digest prefix are shown on the pedal. **RANDOMIZE SEED** creates one new valid seed, marks the recipe dirty once, and requests at most one managed preview. It does not alter region, capture, family, direction, intensity, or macros. The seed and macro section are stored additively with the derived physical recipe, survive portable format-1–4 library workflows, and reproduce the same deformation for the same inputs.
+
+All artist-facing numeric endpoints are inclusive and use one parameter-contract authority shared by Blender RNA, normalization, presets, validation, serialization, rebuild, and export checks. Physical values remain explicit in recipes. Soft ranges, precision, steps, region scaling, and response curves improve dragging without silently clamping or rewriting an accepted endpoint.
+
+Open **Advanced Impact Internals** only when needed; it starts collapsed. In `MACRO` mode, raw Radius, Depth, Falloff, Strength, Maximum Displacement, seam, feather, and gore values are read-only derivations, and one macro edit schedules one preview request. Choose **USE MANUAL CONTROL** for editable raw values and a `CUSTOM` recipe. **FIT MACROS TO CURRENT VALUES** estimates a nearby pedal state without changing the manual recipe. **RETURN TO MACRO CONTROL** asks for confirmation because it replaces manual values with macro-derived values. Legacy recipes without exact macro metadata load safely as `CUSTOM`.
 
 - `OFF` performs no automatic preview and atomically clears any active damage presentation.
 - `FAST` evaluates affected vertices with one reusable temporary key and never builds final raised-gore shells.
 - `BALANCED` evaluates the complete stamp stack non-destructively and may use reduced preview feedback after the debounce.
 - `FINAL` is explicit final work: permanent deformation, final-budget gore, and focused validation.
 
-Slider changes only mark the recipe dirty, increment a generation token, and schedule one 200 ms main-thread timer. A newer generation invalidates stale work. Use **Commit** for deterministic final output, **Revert** for the stored recipe, **CLEAR DAMAGE PREVIEW** to zero managed morphs, remove temporary stain resources, and hide inactive raised gore as one operation, or **Undo Draft** for an uncommitted one-click draft. Clearing never deletes a stored recipe or generated export mesh.
+One macro transaction validates every derived value before assignment, marks the recipe dirty once, increments one generation token, and schedules at most one 200 ms main-thread timer. A newer generation invalidates stale work. Use **COMMIT / SAVE IMPACT** for deterministic final output, **Revert** for the stored recipe and seed, **CLEAR DAMAGE PREVIEW** to zero managed morphs, remove temporary stain resources, and hide inactive raised gore as one operation, or **Undo Draft** for an uncommitted one-click draft. Clearing never deletes a stored recipe or generated export mesh. **FINAL PREVIEW** is an explicit high-quality preview and does not silently commit.
+
+Blender's standard sidebar widgets do not provide a stable arbitrary per-button RGB API. Forge therefore uses native boxes, large `scale_y`, icons, short labels, neutral theme-safe styling for **RANDOMIZE SEED**, and Blender's reliable alert treatment for destructive clear actions. It does not install a fragile custom GPU/event widget merely to force light gray, blue, green, or amber.
 
 ## 5. Author and approve animation drafts
 
@@ -121,7 +137,7 @@ Influence choices remain **Patch Only**, **Patch Feathered**, and **Connected Su
 
 ## 14. Create and manage trauma stamps
 
-Advanced retains **Add Stamp**, **Update Active Stamp**, **Enable / Disable**, duplicate/remove/reorder controls, exact placement modes, custom vectors, geometry budgets, and recipe metadata. Portable **Save Stamp Library...** and **Load Stamp Library...** retain formats 1–4; they serialize recipes and analytical anchors, never proprietary mesh payloads.
+**Advanced Impact Internals** and the Advanced workspace retain **Add Stamp**, **Update Active Stamp**, **Enable / Disable**, duplicate/remove/reorder controls, exact placement modes, custom vectors, geometry budgets, and recipe metadata. Portable **Save Stamp Library...** and **Load Stamp Library...** retain formats 1–4; they serialize recipes and analytical anchors, never proprietary mesh payloads.
 
 ## Surface Gore Overlay for blunt trauma
 
@@ -139,7 +155,7 @@ During ordinary tuning, `FAST` avoids final attached/detached shells. Final gene
 
 ## 15. Preview, rebuild, compare, sculpt, and repair
 
-The default workflow uses managed preview and **Commit**. Advanced retains **REBUILD ACTIVE DEFORMATION**, **Attached**, **Detached**, **Both**, optional sculpt begin/finish, synchronization, **REPAIR LEGACY PAIR SYNC**, and the prior seed preview/rebuild controls. Sculpting is optional and never silently substitutes for recipe state.
+The default workflow uses the top **GENERATE / REFRESH PREVIEW** and **COMMIT / SAVE IMPACT** actions. Advanced retains **REBUILD ACTIVE DEFORMATION**, **Attached**, **Detached**, **Both**, optional sculpt begin/finish, synchronization, **REPAIR LEGACY PAIR SYNC**, and the prior seed preview/rebuild controls. Sculpting is optional and never silently substitutes for recipe state.
 
 ## 16. Run every validation command
 
@@ -164,7 +180,9 @@ Import the exported GLB into a clean scene. Click **Restore Reimported GLB Intac
 
 ## 20. Troubleshooting and recovery
 
-- Slow slider response: confirm Preview Quality is `FAST`; run **Startup Self-Check** and inspect cache/timer counts.
+- Slow slider response: confirm Preview Quality is `FAST`; use the normalized pedal rather than MANUAL physical sliders; run **Startup Self-Check** and inspect cache/timer counts.
+- Unexpected manual values: remain in `MANUAL`/`CUSTOM`, use **FIT MACROS TO CURRENT VALUES** for an estimate, and return to macro control only after accepting the confirmation.
+- Unwanted seed result: use **Revert** to restore the stored seed and recipe, or choose another seed and explicitly refresh preview. Seed changes are deterministic and never occur on redraw.
 - `FAILED` preview: the previous valid/clean state is restored. Read the preview message; correct the active region/key/capture before retrying.
 - `NOT READY`: inspect the source report. Do not build from generated substitutes or guess-repair seams.
 - Wrong selected object: click the region button to activate the managed target before entering Face Edit mode.
@@ -174,7 +192,7 @@ Import the exported GLB into a clean scene. Click **Restore Reimported GLB Intac
 
 ## Advanced compatibility reference
 
-Forge 3.15 preserves public operator IDs, scene/custom-property keys, Source Readiness and authoring schemas, generated `DSB_*` names, portable library formats 1–4, paired/core modes, compound semantics, attached/detached exact-index behavior, seam modes, Action names/markers, and GLB/manifest runtime contracts. Expert controls moved under Advanced; they were not removed.
+Forge 3.17 preserves public operator IDs, scene/custom-property keys, Source Readiness and authoring schemas, generated `DSB_*` names, portable library formats 1–4, paired/core modes, compound semantics, attached/detached exact-index behavior, seam modes, Action names/markers, and GLB/manifest runtime contracts. Impact macro and seed metadata are additive; unchanged legacy stamp recipes retain their existing digests. Expert controls moved under Advanced; they were not removed.
 
 ## Complete public button inventory
 
@@ -190,4 +208,4 @@ The task UI and Advanced workspace together represent every prior public control
 - Guards: **Generate Three Mace Head-Guard Drafts**, **Preview Guard_Active**, **Validate Mace Head-Guard Drafts**.
 - Shapes/final: **Compact Dent**, **Broad Cave**, **Flat Compression**, **Directional Shear**, **Raised Impact Rim**, **Ridge Collapse**, **REBUILD ACTIVE DEFORMATION**, **Attached**, **Detached**, **Both**, **REPAIR LEGACY PAIR SYNC**.
 - Validation/export: **Validate Morph Targets**, **Validate Complete Damage Asset**, **Export Damage GLB + Manifest**, **Restore Reimported GLB Intact Preview**, **Build Approved Animation Pack**, **Validate Last Built Pack**.
-- Managed workflow: **Create Impact From Current Selection**, **Commit**, **Revert**, **CLEAR DAMAGE PREVIEW**, **Undo Draft**, **Final Preview**, **Protect Active DSB Action**, **Delete Unapproved DSB Attempts**, **WRITE FORGE DIAGNOSTIC REPORT**, **Startup Self-Check**.
+- Managed workflow: **Create Impact From Current Selection**, **RANDOMIZE SEED**, **GENERATE / REFRESH PREVIEW**, **COMMIT / SAVE IMPACT**, **Revert**, **CLEAR DAMAGE PREVIEW**, **Undo Draft**, **FINAL PREVIEW**, **USE MANUAL CONTROL**, **FIT MACROS TO CURRENT VALUES**, **RETURN TO MACRO CONTROL**, **Protect Active DSB Action**, **Delete Unapproved DSB Attempts**, **WRITE FORGE DIAGNOSTIC REPORT**, **Startup Self-Check**.
