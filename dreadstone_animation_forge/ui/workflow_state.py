@@ -15,7 +15,7 @@ def next_action(state):
     if not state.get("activeRegion"):
         return "Select a region"
     if not state.get("captureReady"):
-        return "Select a connected face patch"
+        return "Select faces or vertices"
     if not state.get("activeKey"):
         return "Create Impact From Selection"
     if state.get("previewStatus") in {"DIRTY", "BUILDING", "READY", "FAILED"}:

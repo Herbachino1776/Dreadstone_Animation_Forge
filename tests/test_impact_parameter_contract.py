@@ -154,6 +154,7 @@ class ImpactParameterContractTests(unittest.TestCase):
             and contract.recipe_field
             and contract.recipe_field != "goreMaskSeed"
             and identifier not in schema.GORE_MACRO_IDENTIFIERS
+            and identifier not in schema.SURFACE_GORE_MACRO_IDENTIFIERS
         } | {"gorePatchScale", "goreMaskSeed"})
         for field in fields:
             contract = schema.recipe_spec(field)
@@ -161,6 +162,55 @@ class ImpactParameterContractTests(unittest.TestCase):
             for value in endpoint_values(contract):
                 candidate = copy.deepcopy(overlay)
                 candidate[field] = value
+                if field == "goreCavityDepth":
+                    if value < 0.00004:
+                        candidate["goreGeometryMode"] = "STAIN_ONLY"
+                        candidate["goreRaisedEnabled"] = False
+                        candidate["goreOverlayMode"] = "SURFACE_STAIN"
+                    else:
+                        candidate["goreLinerSeparation"] = min(
+                            candidate["goreLinerSeparation"], value * 0.5
+                        )
+                    candidate["goreClotFillDepth"] = min(
+                        candidate["goreClotFillDepth"], value
+                    )
+                elif field == "goreClotFillDepth":
+                    candidate["goreCavityDepth"] = max(
+                        candidate["goreCavityDepth"], value
+                    )
+                elif field == "goreLinerSeparation":
+                    candidate["goreCavityDepth"] = max(
+                        candidate["goreCavityDepth"], value * 1.25
+                    )
+                elif field == "goreMaskSeed":
+                    control = copy.deepcopy(candidate["goreControl"])
+                    control["seed"] = int(value)
+                    control.pop("identityDigest", None)
+                    candidate["goreControl"] = schema.normalize_gore_control(
+                        control
+                    )
+                elif field == "goreProudnessLimit" and value > 0.0:
+                    candidate["goreRaisedRimOptIn"] = True
+                elif field in {"goreInlayAmount", "goreRaisedAmount"}:
+                    inlay = float(candidate["goreInlayAmount"])
+                    raised = float(candidate["goreRaisedAmount"])
+                    candidate["goreGeometryMode"] = (
+                        "HYBRID_ADDITIVE"
+                        if inlay > 0.0 and raised > 0.0
+                        else "CAVITY_INLAY"
+                        if inlay > 0.0
+                        else "LEGACY_RAISED"
+                        if raised > 0.0
+                        else "STAIN_ONLY"
+                    )
+                    candidate["goreRaisedEnabled"] = (
+                        candidate["goreGeometryMode"] != "STAIN_ONLY"
+                    )
+                    candidate["goreOverlayMode"] = (
+                        "STAIN_AND_RAISED"
+                        if candidate["goreRaisedEnabled"]
+                        else "SURFACE_STAIN"
+                    )
                 with self.subTest(field=field, value=value):
                     self.assertEqual(trauma.validate_gore_overlay(candidate), [])
                     self.assertEqual(trauma.normalize_gore_overlay(candidate)[field], value)
@@ -247,7 +297,7 @@ class ImpactParameterContractTests(unittest.TestCase):
         payload = {
             "schema": trauma.STAMP_LIBRARY_SCHEMA,
             "formatVersion": 4,
-            "producer": {"forgeVersion": "3.18.0", "deformationBuildId": "test"},
+            "producer": {"forgeVersion": "3.19.0", "deformationBuildId": "test"},
             "regions": [{
                 "regionId": "head",
                 "regionMode": "CORE_SINGLE",

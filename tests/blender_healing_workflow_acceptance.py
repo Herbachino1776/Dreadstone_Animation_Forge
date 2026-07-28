@@ -117,8 +117,6 @@ def main():
             raise RuntimeError("invalid-selection one-click draft did not roll back cleanly")
 
         patch = select_connected_patch(attached, args.technical_face, max(1, args.patch_faces))
-        settings.deformation_impact_preset = 'HEAD_LEFT'
-        settings.deformation_impact_intensity = 'HEAVY'
         settings.deformation_impact_semantic_name = "Technical_Testman_Impact"
         started = time.perf_counter()
         created = bpy.ops.daf.create_impact_from_selection()

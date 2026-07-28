@@ -108,7 +108,6 @@ def main():
     settings.deformation_live_preview = False
     settings.deformation_auto_preview = True
     settings.deformation_preview_quality = 'FAST'
-    settings.deformation_default_heavy_gore = False
 
     head, head_detached = pair_mesh("PEDAL_HEAD", 0.0)
     body = grid_mesh("PEDAL_BODY", x_offset=0.4)
@@ -135,7 +134,6 @@ def main():
         region_id = ("head", "body_core", "forearm_left")[index % 3]
         target = targets[region_id]
         settings.deformation_stamp_family = family
-        settings.deformation_impact_intensity = ('LIGHT', 'MEDIUM', 'HEAVY')[index % 3]
         settings.deformation_impact_semantic_name = f"{region_id}_{family}"
         activate_and_select(region_id, target)
         result = bpy.ops.daf.create_impact_from_selection()
@@ -223,8 +221,11 @@ def main():
     with preview_service.suspend_updates():
         settings.deformation_gore_enabled = True
         settings.deformation_gore_identity = "BLOODY_CRATER"
-        settings.deformation_gore_preset = "Gore_Bloody_Crater"
-    deformation_authoring.apply_gore_preset_to_settings(context)
+        settings.deformation_gore_inlay_amount = 0.72
+        settings.deformation_gore_raised_amount = 0.64
+    deformation_authoring.apply_gore_macro_transaction(
+        context, "acceptance gore initialization"
+    )
     require(
         bpy.ops.daf.update_surface_gore_overlay() == {'FINISHED'},
         "Gore deck could not link its recipe to the active capture.",

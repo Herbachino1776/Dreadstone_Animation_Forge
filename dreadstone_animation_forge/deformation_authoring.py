@@ -1,4 +1,4 @@
-"""Dreadstone Animation Forge v3.18.0 trauma-field authoring.
+"""Dreadstone Animation Forge v3.19.0 trauma-field authoring.
 
 The workbench edits explicitly registered paired-segment or core-single regions
 on the generated protected Damage Asset. Paired morph targets remain exact-index
@@ -22,6 +22,7 @@ from bpy_extras.io_utils import ExportHelper, ImportHelper
 from . import parameter_schema
 from . import trauma_field
 from .deformation import (
+    blueprint_service,
     cavity_service,
     compound_service,
     diagnostics,
@@ -36,8 +37,8 @@ from .deformation import (
 )
 
 DEFORMATION_SCHEMA = "dreadstone.damage_deformation.v1"
-DEFORMATION_VERSION = (3, 18, 0)
-DEFORMATION_BUILD_ID = "2026-07-26.cavity-inlay-gore.1"
+DEFORMATION_VERSION = (3, 19, 0)
+DEFORMATION_BUILD_ID = "2026-07-28.vip-cohesive-surface-gore.6"
 IMPACT_CONTROL_SCHEMA = parameter_schema.IMPACT_CONTROL_SCHEMA
 ATTACHED_HEAD_NAME = "DSB_ATTACHED_HEAD"
 DETACHED_HEAD_NAME = "DSB_SEGMENT_HEAD"
@@ -77,6 +78,12 @@ _PENDING_REGION_ID = ""
 _IMPACT_TRANSACTION_DEPTH = 0
 _GORE_TRANSACTION_DEPTH = 0
 _PREVIEW_RESTORE_STATE = {}
+_BLUEPRINT_LIBRARY_CACHE = {
+    "path": "",
+    "mtimeNs": -1,
+    "library": blueprint_service.normalize_library(),
+    "error": "",
+}
 
 STANDARD_HEAD_KEYS = {
     "Head_Dent_Left": {
@@ -610,9 +617,19 @@ def _metadata(obj):
                 payload["authoringBuildId"] = DEFORMATION_BUILD_ID
                 for entry in payload.get("keys", {}).values():
                     entry.setdefault("stamps", [])
+                    entry.setdefault("previewEnabled", False)
+                    entry.setdefault("activeStampId", "")
+                    entry.setdefault("stampMode", "STACK")
                     if not entry["stamps"]:
                         entry.setdefault("recipeStatus", "LEGACY_MANUAL")
                         entry.setdefault("legacy", True)
+                    elif not entry["activeStampId"]:
+                        entry["activeStampId"] = str(
+                            sorted(
+                                entry["stamps"],
+                                key=lambda stamp: int(stamp.get("orderIndex", 0)),
+                            )[0].get("stampId", "")
+                        )
                 return payload
         except Exception:
             pass
@@ -667,6 +684,9 @@ def _cache_metadata_summary(attached, detached, payload, region_id):
                 "status": str(entry.get("status", "")),
                 "recipeStatus": str(entry.get("recipeStatus", "")),
                 "stampCount": len(entry.get("stamps", [])),
+                "previewEnabled": bool(entry.get("previewEnabled", False)),
+                "activeStampId": str(entry.get("activeStampId", "")),
+                "stampMode": str(entry.get("stampMode", "STACK")),
                 "stamps": [
                     {
                         "stampId": str(stamp.get("stampId", "")),
@@ -683,6 +703,26 @@ def _cache_metadata_summary(attached, detached, payload, region_id):
             for name, entry in payload.get("keys", {}).items()
         ],
     })
+
+
+def _refresh_authoring_ui_cache(region_id=""):
+    """Rebuild panel summaries from persisted state after a rollback."""
+
+    registry = _load_registry(migrate_legacy=False)
+    _cache_registry_summary(registry)
+    selected_region_id = str(
+        region_id or registry.get("activeRegionId", "")
+    )
+    region = _region_record(registry, selected_region_id)
+    if region is None:
+        return
+    attached, detached = _resolve_region_pair(region)
+    _cache_metadata_summary(
+        attached,
+        detached,
+        _metadata(attached),
+        selected_region_id,
+    )
 
 
 def _store_metadata(attached, detached, payload):
@@ -746,6 +786,67 @@ def cached_ui_summary(settings=None):
         "key": key,
         "stamp": stamp,
         "preview": preview_service.state(),
+        "blueprints": cached_blueprint_library_summary(),
+    }
+
+
+def _blueprint_library_path(settings):
+    raw = str(getattr(settings, "deformation_blueprint_library_path", "") or "").strip()
+    if not raw:
+        raw = "//dreadstone_damage_blueprints.json"
+    resolved = Path(bpy.path.abspath(raw))
+    if resolved.suffix.lower() != ".json":
+        resolved = Path(str(resolved) + ".json")
+    return resolved
+
+
+def _cache_blueprint_library(path, library=None, error=""):
+    global _BLUEPRINT_LIBRARY_CACHE
+    resolved = Path(path)
+    try:
+        mtime_ns = resolved.stat().st_mtime_ns if resolved.exists() else -1
+    except OSError:
+        mtime_ns = -1
+    _BLUEPRINT_LIBRARY_CACHE = {
+        "path": str(resolved),
+        "mtimeNs": int(mtime_ns),
+        "library": blueprint_service.normalize_library(library),
+        "error": str(error),
+    }
+    return _BLUEPRINT_LIBRARY_CACHE["library"]
+
+
+def refresh_blueprint_library(context=None):
+    """Read the portable recipe library explicitly; panel draws stay disk-free."""
+
+    context = context or bpy.context
+    settings = context.scene.daf_settings
+    path = _blueprint_library_path(settings)
+    if not path.exists():
+        return _cache_blueprint_library(path)
+    try:
+        raw = json.loads(path.read_text(encoding="utf-8"))
+        library = blueprint_service.normalize_library(raw)
+    except (OSError, UnicodeError, json.JSONDecodeError, TypeError, ValueError) as exc:
+        _cache_blueprint_library(path, error=str(exc))
+        raise RuntimeError(f"Could not read Damage Blueprint library: {exc}") from exc
+    return _cache_blueprint_library(path, library)
+
+
+def cached_blueprint_library_summary():
+    library = _BLUEPRINT_LIBRARY_CACHE.get("library", {}) or {}
+    return {
+        "path": str(_BLUEPRINT_LIBRARY_CACHE.get("path", "")),
+        "error": str(_BLUEPRINT_LIBRARY_CACHE.get("error", "")),
+        "count": int(library.get("blueprintCount", 0)),
+        "entries": [
+            {
+                "blueprintId": str(record.get("blueprintId", "")),
+                "name": str(record.get("name", "")),
+                "digest": str(record.get("blueprintDigest", "")),
+            }
+            for record in library.get("blueprints", [])
+        ],
     }
 
 
@@ -858,13 +959,6 @@ def _ensure_key_pair(name, metadata_entry=None, preview=False):
         if "surfaceGoreOverlay" in (metadata_entry or {}):
             entry["surfaceGoreOverlay"] = copy.deepcopy(metadata_entry["surfaceGoreOverlay"])
             entry["goreOverlayDigest"] = (metadata_entry or {}).get("goreOverlayDigest")
-        elif bool(getattr(getattr(bpy.context.scene, "daf_settings", None), "deformation_default_heavy_gore", False)):
-            overlay = trauma_field.default_gore_overlay(
-                "Gore_Bloody_Crater", enabled=False, region_id=region_id
-            )
-            entry["surfaceGoreOverlay"] = overlay
-            entry["goreOverlayDigest"] = trauma_field.gore_overlay_digest(overlay)
-            entry["raisedGoreStatus"] = "NOT_GENERATED"
         payload.setdefault("keys", {})[name] = {**payload.get("keys", {}).get(name, {}), **entry}
         _store_metadata(attached, detached, payload)
     return attached, detached, attached_key, detached_key
@@ -1111,7 +1205,7 @@ def _preview_entry(region_id, key_name, weight, mode):
 def _zero_all_damage_preview_weights(*, include_preview=True):
     registry = _load_registry()
     for region in registry.get("regions", []):
-        attached, _detached = _resolve_region_pair(region)
+        attached, detached = _resolve_region_pair(region)
         _zero_managed_weights(attached, include_preview=include_preview)
 
 
@@ -1126,12 +1220,20 @@ def _enforce_damage_preview_weights(context, state):
     active = False
     state_changed = False
     for region_id, region in regions.items():
-        attached, _detached = _resolve_region_pair(region)
+        attached, detached = _resolve_region_pair(region)
         allowed_names = allowed.get(region_id, set())
         for key_name in (*_managed_names(attached), PREVIEW_KEY_NAME):
             key = _key(attached, key_name)
             if key is not None and key_name not in allowed_names and abs(float(key.value)) > 1e-8:
                 key.value = 0.0
+            if detached is not None:
+                detached_key = _key(detached, key_name)
+                if (
+                    detached_key is not None
+                    and key_name not in allowed_names
+                    and abs(float(detached_key.value)) > 1e-8
+                ):
+                    detached_key.value = 0.0
         for entry in state.get("entries", []):
             if str(entry.get("regionId", "")) != region_id:
                 continue
@@ -1195,6 +1297,95 @@ def _set_single_damage_preview_state(context, region_id, key_name, weight, mode)
     _enforce_damage_preview_weights(context, state)
     _sync_generated_gore_visibility(context, state)
     return state
+
+
+def _entry_active_stamp(entry, fallback_id=""):
+    """Return the one active alternative for a key, with legacy-stack fallback."""
+
+    stamps = list((entry or {}).get("stamps", []))
+    requested = str((entry or {}).get("activeStampId", "") or fallback_id)
+    active = next(
+        (stamp for stamp in stamps if str(stamp.get("stampId", "")) == requested),
+        None,
+    )
+    if active is None and stamps:
+        active = sorted(stamps, key=lambda stamp: int(stamp.get("orderIndex", 0)))[0]
+    return active
+
+
+def _entry_preview_stamps(entry, fallback_id=""):
+    """New keys use alternatives; migrated stacks retain additive replay."""
+
+    if str((entry or {}).get("stampMode", "STACK")) == "ALTERNATIVES":
+        active = _entry_active_stamp(entry, fallback_id)
+        return [active] if active is not None and bool(active.get("enabled", True)) else []
+    return [
+        stamp
+        for stamp in trauma_field.reindex_stamps((entry or {}).get("stamps", []))
+        if bool(stamp.get("enabled", True))
+    ]
+
+
+def apply_damage_key_previews(context=None):
+    """Apply every per-key Preview toggle without changing focus or recipes."""
+
+    context = context or bpy.context
+    registry = _load_registry()
+    state_entries = []
+    enabled_names = []
+    for region in registry.get("regions", []):
+        region_id = str(region.get("regionId", ""))
+        attached, detached = _resolve_region_pair(region)
+        payload = _metadata(attached)
+        for name, entry in payload.get("keys", {}).items():
+            if not bool(entry.get("previewEnabled", False)):
+                continue
+            key = _key(attached, name)
+            if key is None:
+                continue
+            weight = min(1.0, float(key.slider_max)) if _max_displacement(attached, name) > 1e-7 else 0.0
+            key.value = weight
+            if detached is not None:
+                detached_key = _key(detached, name)
+                if detached_key is not None:
+                    detached_key.value = weight
+            mode = "CORE" if detached is None else "ATTACHED"
+            state_entries.append(_preview_entry(region_id, name, weight, mode))
+            enabled_names.append(f"{region_id}/{name}")
+    state = {
+        "kind": "MULTI_KEY" if len(state_entries) > 1 else "SINGLE",
+        "entries": state_entries,
+    }
+    _store_damage_preview_state(context, state)
+    _enforce_damage_preview_weights(context, state)
+    _sync_generated_gore_visibility(context, state)
+    settings = getattr(getattr(context, "scene", None), "daf_settings", None)
+    if settings is not None:
+        settings.deformation_status = (
+            f"DAMAGE KEY PREVIEWS — {len(state_entries)} ON"
+            if state_entries else "DAMAGE KEY PREVIEWS — ALL OFF"
+        )
+    return {
+        "enabledCount": len(state_entries),
+        "enabledKeys": enabled_names,
+        "state": state,
+    }
+
+
+def set_damage_key_preview_enabled(context, key_name, enabled=None):
+    """Toggle exactly one Damage Key preview and preserve every other key."""
+
+    registry, region, attached, detached = _resolve_active_region(context)
+    payload = _metadata(attached)
+    entry = payload.get("keys", {}).get(str(key_name))
+    if not isinstance(entry, dict):
+        raise RuntimeError(f"Damage Key {key_name!r} was not found in the active region.")
+    current = bool(entry.get("previewEnabled", False))
+    entry["previewEnabled"] = (not current) if enabled is None else bool(enabled)
+    _store_metadata(attached, detached, payload)
+    result = apply_damage_key_previews(context)
+    result.update({"key": str(key_name), "enabled": bool(entry["previewEnabled"])})
+    return result
 
 
 def clear_damage_preview(context=None, *, update_status=True):
@@ -1735,6 +1926,7 @@ def _impact_macro_values(settings):
         float(settings.deformation_impact_profile),
         float(settings.deformation_impact_edge_safety),
         float(settings.deformation_impact_chaos),
+        float(settings.deformation_impact_asymmetry),
     )
 
 
@@ -1758,6 +1950,7 @@ def impact_control_metadata(settings, *, mode=None):
             "profile": float(settings.deformation_impact_profile),
             "edgeSafety": float(settings.deformation_impact_edge_safety),
             "chaos": float(settings.deformation_impact_chaos),
+            "asymmetry": float(settings.deformation_impact_asymmetry),
         },
         "seed": int(settings.deformation_impact_seed),
     })
@@ -1875,11 +2068,21 @@ def randomize_impact_seed(context):
 def _gore_macro_values(settings):
     return (
         float(settings.deformation_gore_exposure),
-        float(settings.deformation_gore_cavity),
+        float(settings.deformation_gore_inlay_amount) * 100.0,
         float(settings.deformation_gore_clot_fill),
         float(settings.deformation_gore_breakup),
         float(settings.deformation_gore_wetness_macro),
-        float(settings.deformation_gore_variation),
+        float(settings.deformation_gore_raised_amount) * 100.0,
+    )
+
+
+def _surface_gore_macro_values(settings):
+    return (
+        float(settings.deformation_gore_surface_mass),
+        float(settings.deformation_gore_surface_relief),
+        float(settings.deformation_gore_nucleus),
+        float(settings.deformation_gore_lobes),
+        float(settings.deformation_gore_redness),
     )
 
 
@@ -1915,14 +2118,73 @@ def gore_control_metadata(settings, *, mode=None):
         "identityId": identity_id,
         "macros": {
             "exposure": float(settings.deformation_gore_exposure),
-            "cavity": float(settings.deformation_gore_cavity),
+            "cavity": float(settings.deformation_gore_inlay_amount) * 100.0,
             "clotFill": float(settings.deformation_gore_clot_fill),
             "breakup": float(settings.deformation_gore_breakup),
             "wetness": float(settings.deformation_gore_wetness_macro),
-            "variation": float(settings.deformation_gore_variation),
+            "variation": float(settings.deformation_gore_raised_amount) * 100.0,
         },
         "seed": int(settings.deformation_gore_mask_seed),
     })
+
+
+def surface_gore_control_metadata(settings):
+    return parameter_schema.normalize_surface_gore_control({
+        "schema": parameter_schema.SURFACE_GORE_CONTROL_SCHEMA,
+        "version": parameter_schema.SURFACE_GORE_CONTROL_VERSION,
+        "macros": {
+            "mass": float(settings.deformation_gore_surface_mass),
+            "relief": float(
+                settings.deformation_gore_surface_relief
+            ),
+            "nucleus": float(settings.deformation_gore_nucleus),
+            "lobes": float(settings.deformation_gore_lobes),
+            "redness": float(settings.deformation_gore_redness),
+        },
+    })
+
+
+def _combined_gore_identity_digest(settings):
+    control = gore_control_metadata(settings)
+    surface = surface_gore_control_metadata(settings)
+    return hashlib.sha256(
+        (
+            str(control["identityDigest"])
+            + "|"
+            + str(surface["identityDigest"])
+        ).encode("ascii")
+    ).hexdigest()
+
+
+def _derive_complete_gore_parameters(
+    context,
+    settings,
+    *,
+    identity_id,
+    stamp_depth,
+    region_scale=None,
+    mean_edge_length=None,
+):
+    if region_scale is None or mean_edge_length is None:
+        region_scale, mean_edge_length = _gore_scale_inputs(
+            context,
+            settings,
+        )
+    derived = parameter_schema.derive_gore_parameters(
+        _gore_macro_values(settings),
+        identity_id=str(identity_id),
+        region_scale=float(region_scale),
+        stamp_depth=float(stamp_depth),
+        mean_edge_length=float(mean_edge_length),
+    )
+    derived.update(
+        parameter_schema.derive_surface_gore_parameters(
+            _surface_gore_macro_values(settings),
+            region_scale=float(region_scale),
+            mean_edge_length=float(mean_edge_length),
+        )
+    )
+    return derived
 
 
 def _assign_gore_derived_values(settings, derived):
@@ -1959,6 +2221,11 @@ def _assign_gore_derived_values(settings, derived):
         "goreHostDeformationContribution": "deformation_gore_host_deformation_contribution",
         "goreBoneReveal": "deformation_gore_bone_reveal",
         "goreTissueCoverage": "deformation_gore_tissue_coverage",
+        "goreInlayAmount": "deformation_gore_inlay_amount",
+        "goreRaisedAmount": "deformation_gore_raised_amount",
+        "goreSurfaceMass": "deformation_gore_surface_mass_value",
+        "goreNucleusAmount": "deformation_gore_nucleus_amount",
+        "goreNucleusLobes": "deformation_gore_nucleus_lobes",
     }
     boolean_properties = {
         "goreWoundBedEnabled": "deformation_gore_wound_bed_enabled",
@@ -1982,7 +2249,9 @@ def _assign_gore_derived_values(settings, derived):
 
 def _mark_gore_dirty(settings, metadata):
     settings.deformation_gore_dirty = True
-    settings.deformation_gore_identity_digest = str(metadata["identityDigest"])
+    settings.deformation_gore_identity_digest = (
+        _combined_gore_identity_digest(settings)
+    )
     settings.deformation_gore_transaction_count = int(settings.deformation_gore_transaction_count) + 1
     settings.deformation_gore_validation_status = "DIRTY"
 
@@ -1997,21 +2266,23 @@ def apply_gore_macro_transaction(context, reason="Gore Pedal changed"):
     if str(settings.deformation_gore_control_mode) != "MACRO":
         return {}
     metadata = gore_control_metadata(settings, mode="MACRO")
-    region_scale, mean_edge_length = _gore_scale_inputs(context, settings)
-    derived = parameter_schema.derive_gore_parameters(
-        _gore_macro_values(settings),
+    derived = _derive_complete_gore_parameters(
+        context,
+        settings,
         identity_id=str(metadata["identityId"]),
-        region_scale=region_scale,
         stamp_depth=float(settings.deformation_seed_depth),
-        mean_edge_length=mean_edge_length,
     )
     _GORE_TRANSACTION_DEPTH += 1
     try:
         with preview_service.suspend_updates():
             settings.deformation_gore_enabled = True
             settings.deformation_gore_identity = str(metadata["identityId"])
-            settings.deformation_gore_preset = str(
-                parameter_schema.GORE_IDENTITIES[str(metadata["identityId"])]["presetId"]
+            settings.deformation_gore_preset = "USER_AUTHORED"
+            settings.deformation_gore_cavity = (
+                float(settings.deformation_gore_inlay_amount) * 100.0
+            )
+            settings.deformation_gore_variation = (
+                float(settings.deformation_gore_raised_amount) * 100.0
             )
             _assign_gore_derived_values(settings, derived)
             _mark_gore_dirty(settings, metadata)
@@ -2084,6 +2355,67 @@ def randomize_gore_seed(context):
     return result
 
 
+def randomize_damage_recipe(context):
+    """Randomize impact and gore together and request exactly one preview."""
+
+    global _IMPACT_TRANSACTION_DEPTH, _GORE_TRANSACTION_DEPTH
+    settings = context.scene.daf_settings
+    previous = (
+        int(settings.deformation_impact_seed),
+        int(settings.deformation_gore_mask_seed),
+    )
+    master_seed = secrets.randbelow(parameter_schema.MAX_SEED + 1)
+    impact_seed = blueprint_service.derive_subseed(master_seed, "impact")
+    gore_seed = blueprint_service.derive_subseed(master_seed, "gore")
+    _IMPACT_TRANSACTION_DEPTH += 1
+    _GORE_TRANSACTION_DEPTH += 1
+    try:
+        with preview_service.suspend_updates():
+            settings.deformation_impact_control_mode = "MACRO"
+            settings.deformation_gore_control_mode = "MACRO"
+            settings.deformation_impact_seed = impact_seed
+            settings.deformation_gore_mask_seed = gore_seed
+            impact_derived = parameter_schema.derive_impact_parameters(
+                _impact_macro_values(settings),
+                region_scale=_impact_region_scale(settings),
+                family=str(settings.deformation_stamp_family),
+                seed=impact_seed,
+            )
+            region_scale, mean_edge_length = _gore_scale_inputs(
+                context,
+                settings,
+            )
+            gore_derived = _derive_complete_gore_parameters(
+                context,
+                settings,
+                identity_id=str(settings.deformation_gore_identity),
+                region_scale=region_scale,
+                stamp_depth=float(impact_derived["depth"]),
+                mean_edge_length=mean_edge_length,
+            )
+            _assign_impact_derived_values(settings, impact_derived)
+            _assign_gore_derived_values(settings, gore_derived)
+            _mark_impact_dirty(
+                settings, impact_control_metadata(settings, mode="MACRO")
+            )
+            _mark_gore_dirty(
+                settings, gore_control_metadata(settings, mode="MACRO")
+            )
+    finally:
+        _IMPACT_TRANSACTION_DEPTH = max(0, _IMPACT_TRANSACTION_DEPTH - 1)
+        _GORE_TRANSACTION_DEPTH = max(0, _GORE_TRANSACTION_DEPTH - 1)
+    generation = request_managed_preview(
+        context, "complete damage recipe randomized"
+    )
+    return {
+        "masterSeed": master_seed,
+        "impactSeed": impact_seed,
+        "goreSeed": gore_seed,
+        "previousSeeds": previous,
+        "generation": generation,
+    }
+
+
 def enter_manual_gore_control(context):
     settings = context.scene.daf_settings
     settings.deformation_gore_control_mode = "MANUAL"
@@ -2117,6 +2449,7 @@ def fit_impact_macros_to_current_values(context):
             "falloff": float(settings.deformation_seed_falloff),
             "seamProtection": float(settings.deformation_seed_seam_protection),
             "impactChaos": float(settings.deformation_impact_chaos) / 100.0,
+            "impactAsymmetry": float(settings.deformation_impact_asymmetry) / 100.0,
         },
         region_scale=_impact_region_scale(settings),
         family=str(settings.deformation_stamp_family),
@@ -2129,6 +2462,7 @@ def fit_impact_macros_to_current_values(context):
             settings.deformation_impact_profile = fitted["profile"]
             settings.deformation_impact_edge_safety = fitted["edgeSafety"]
             settings.deformation_impact_chaos = fitted["chaos"]
+            settings.deformation_impact_asymmetry = fitted["asymmetry"]
             metadata = impact_control_metadata(settings, mode="MANUAL")
             _mark_impact_dirty(settings, metadata)
     finally:
@@ -2163,6 +2497,7 @@ def _load_impact_control_into_settings(settings, entry, stamp=None):
                 "falloff": float(stamp.get("falloff", settings.deformation_seed_falloff)),
                 "seamProtection": float(stamp.get("seamProtection", settings.deformation_seed_seam_protection)),
                 "impactChaos": float(stamp.get("impactChaos", 0.0)),
+                "impactAsymmetry": float(stamp.get("impactAsymmetry", 0.38)),
             },
             region_scale=_impact_region_scale(settings),
             family=str(stamp.get("family", settings.deformation_stamp_family)),
@@ -2183,6 +2518,7 @@ def _load_impact_control_into_settings(settings, entry, stamp=None):
             settings.deformation_impact_profile = float(macros["profile"])
             settings.deformation_impact_edge_safety = float(macros["edgeSafety"])
             settings.deformation_impact_chaos = float(macros["chaos"])
+            settings.deformation_impact_asymmetry = float(macros.get("asymmetry", 38.0))
             settings.deformation_impact_seed = int(metadata["seed"])
             settings.deformation_impact_identity = str(metadata["identityDigest"])
             settings.deformation_impact_dirty = False
@@ -2285,11 +2621,12 @@ def _restore_preview_state(context):
 
 
 def _preview_stamp_stack(context, quality):
-    settings, _registry, region, attached, detached, _payload, name, entry = _active_key_context(context)
+    settings, _registry, region, attached, detached, payload, name, entry = _active_key_context(context)
     stored = _active_stamp(settings, entry)
     order_index = int(stored.get("orderIndex", 0))
     current = _stamp_from_settings(context, stamp_id=str(stored["stampId"]), order_index=order_index)
-    if quality == "FAST":
+    alternative_mode = str(entry.get("stampMode", "STACK")) == "ALTERNATIVES"
+    if quality == "FAST" or alternative_mode:
         stamps = [current]
     else:
         stamps = [
@@ -2298,9 +2635,6 @@ def _preview_stamp_stack(context, quality):
             if stamp.get("enabled", True)
         ]
     weights, distances = _stamp_weights(attached, region, current)
-    clear_damage_preview(context, update_status=False)
-    attached, detached, attached_preview, _detached_preview = _ensure_key_pair(PREVIEW_KEY_NAME, preview=True)
-    _zero_managed_weights(attached)
     coordinates = (
         _stamp_local_coordinates_from_inputs(
             attached,
@@ -2310,27 +2644,131 @@ def _preview_stamp_stack(context, quality):
         )
         if quality == "FAST" else _stamp_local_coordinates(attached, stamps, region)
     )
-    _set_key_coordinates(attached_preview, coordinates)
-    if detached is not None:
-        _sync_exact_index_key_pair(attached, detached, PREVIEW_KEY_NAME)
-    attached_preview.value = 1.0
-    attached_preview.slider_max = 1.0
-    inspection = 'CORE' if detached is None else 'ATTACHED'
-    _set_single_damage_preview_state(context, region.get("regionId", ""), PREVIEW_KEY_NAME, 1.0, inspection)
-    _set_authoring_view(attached, detached, inspection, context)
-    estimated = 0
-    if settings.deformation_gore_enabled and settings.deformation_gore_raised_enabled:
-        estimated = min(
-            int(settings.deformation_gore_maximum_triangles),
-            int(sum(float(value) > 1e-4 for value in weights) * 2 * float(settings.deformation_gore_geometry_density)),
+    coordinates = _clamp_local_coordinates_to_world_limit(
+        attached,
+        coordinates,
+        settings.deformation_max_vertex_displacement,
+    )
+    if alternative_mode:
+        target = _key(attached, name)
+        if target is None:
+            raise RuntimeError(f"Damage Key {name!r} is missing.")
+        _set_key_coordinates(target, coordinates)
+        if detached is not None:
+            _sync_exact_index_key_pair(attached, detached, name)
+        apply_damage_key_previews(context)
+    else:
+        clear_damage_preview(context, update_status=False)
+        attached, detached, attached_preview, _detached_preview = _ensure_key_pair(PREVIEW_KEY_NAME, preview=True)
+        _zero_managed_weights(attached)
+        _set_key_coordinates(attached_preview, coordinates)
+        if detached is not None:
+            _sync_exact_index_key_pair(attached, detached, PREVIEW_KEY_NAME)
+        attached_preview.value = 1.0
+        attached_preview.slider_max = 1.0
+        inspection = 'CORE' if detached is None else 'ATTACHED'
+        _set_single_damage_preview_state(
+            context,
+            region.get("regionId", ""),
+            PREVIEW_KEY_NAME,
+            1.0,
+            inspection,
         )
+        _set_authoring_view(attached, detached, inspection, context)
+
+    # The VIP controls are an exploration surface. Build their gore indication
+    # from the current unsaved Stamp and macro values instead of leaving an old
+    # committed gore mesh visible until Save is pressed.
+    preview_key_name = name if alternative_mode else PREVIEW_KEY_NAME
+    temporary_entry = copy.deepcopy(entry)
+    temporary_entry["stamps"] = trauma_field.reindex_stamps([
+        current
+        if str(stamp.get("stampId", "")) == str(current["stampId"])
+        else stamp
+        for stamp in entry.get("stamps", [])
+    ])
+    temporary_entry["activeStampId"] = str(current["stampId"])
+    preview_objects = []
+    mask_values = []
+    if bool(settings.deformation_gore_enabled):
+        overlay = _gore_overlay_from_settings(context)
+        temporary_entry["surfaceGoreOverlay"] = overlay
+        temporary_entry["goreOverlayDigest"] = (
+            trauma_field.gore_overlay_digest(overlay)
+        )
+        _overlay, mask_values = _install_surface_stain_preview(
+            region,
+            attached,
+            detached,
+            payload,
+            preview_key_name,
+            temporary_entry,
+            persist=False,
+        )
+        if (
+            bool(settings.deformation_gore_raised_enabled)
+            and overlay["goreGeometryMode"] != "STAIN_ONLY"
+            and quality in {"BALANCED", "FINAL"}
+        ):
+            preview_objects = _build_preview_gore_for_entry(
+                region,
+                attached,
+                detached,
+                preview_key_name,
+                temporary_entry,
+                quality=quality,
+            )
+        else:
+            _remove_preview_gore_objects(
+                str(region.get("regionId", "")),
+                preview_key_name,
+            )
+    else:
+        _clear_gore_preview_pair(attached, detached)
+        _remove_preview_gore_objects(
+            str(region.get("regionId", "")),
+            preview_key_name,
+        )
+
+    # A final mesh from the saved recipe is deliberately hidden while the
+    # active recipe is dirty; otherwise it can be mistaken for the current
+    # slider result. Other enabled Damage Keys remain untouched.
+    for obj in generated_gore_objects(
+        str(region.get("regionId", "")),
+        name,
+    ):
+        obj.hide_viewport = False
+        obj.hide_set(True)
+    inspection_roles = (
+        {"CORE"} if detached is None else {"ATTACHED"}
+    )
+    for obj in preview_objects:
+        role = str(obj.get("dsb_gore_pair_role", "")).upper()
+        obj.hide_viewport = False
+        obj.hide_set(role not in inspection_roles)
+    triangle_count = sum(
+        int(obj.get("dsb_gore_triangle_count", 0))
+        for obj in preview_objects
+    )
+    if preview_objects:
+        message = (
+            f"{quality.title()} live deformation + temporary gore geometry ready"
+        )
+    elif mask_values:
+        message = f"{quality.title()} live deformation + gore stain ready"
+    else:
+        message = f"{quality.title()} live deformation preview ready"
     return {
         "key": name,
         "stampId": current["stampId"],
         "affectedVertexCount": sum(float(value) > 1e-8 for value in weights),
-        "estimatedGoreTriangleCount": estimated,
+        "goreMaskedVertexCount": sum(
+            float(value) > 1e-8 for value in mask_values
+        ),
+        "previewGoreObjectCount": len(preview_objects),
+        "estimatedGoreTriangleCount": triangle_count,
         "finalGoreTriangleCount": 0,
-        "message": f"{quality.title()} non-destructive preview ready",
+        "message": message,
     }
 
 
@@ -2394,7 +2832,9 @@ def commit_current_tuning(context):
         if settings.deformation_gore_enabled:
             gore_metadata = gore_control_metadata(settings)
             settings.deformation_gore_dirty = False
-            settings.deformation_gore_identity_digest = str(gore_metadata["identityDigest"])
+            settings.deformation_gore_identity_digest = (
+                _combined_gore_identity_digest(settings)
+            )
             settings.deformation_gore_validation_status = str(
                 result.get("validation", {}).get("status", "NOT_VALIDATED")
             )
@@ -2419,19 +2859,7 @@ def _unique_impact_name(attached, entry_names, settings, region_id):
         if not base:
             raise RuntimeError("Impact Name must contain at least one letter or digit.")
     else:
-        preset_names = {
-            "HEAD_LEFT": "Head_Impact_Left",
-            "HEAD_RIGHT": "Head_Impact_Right",
-            "HEAD_FRONT": "Head_Impact_Front",
-            "HEAD_BACK": "Head_Impact_Back",
-            "BODY_FRONT": "Body_Impact_Front",
-            "BODY_LEFT": "Body_Impact_Left",
-            "BODY_RIGHT": "Body_Impact_Right",
-            "BODY_BACK": "Body_Impact_Back",
-            "FOREARM_OUTER": "Forearm_Impact_Outer",
-            "CUSTOM": region_id.replace("_", " ").title().replace(" ", "_") + "_Impact",
-        }
-        base = preset_names.get(settings.deformation_impact_preset, "Impact")
+        base = region_id.replace("_", " ").title().replace(" ", "_") + "_Damage"
     base = base[:52].rstrip("_")
     for version in range(1, 10000):
         candidate = f"{base}_v{version:03d}"
@@ -2440,14 +2868,11 @@ def _unique_impact_name(attached, entry_names, settings, region_id):
     raise RuntimeError("Could not allocate a unique managed impact name.")
 
 
-def _configure_impact_defaults(settings, capture):
+def _configure_impact_defaults(context, settings, capture):
     global _IMPACT_TRANSACTION_DEPTH
-    intensity = str(settings.deformation_impact_intensity)
-    macros = {
-        "LIGHT": (34.0, 28.0, 58.0, 66.0, 22.0),
-        "MEDIUM": (50.0, 50.0, 45.0, 55.0, 35.0),
-        "HEAVY": (68.0, 78.0, 34.0, 46.0, 60.0),
-    }[intensity]
+    # One neutral starting point replaces every factory preset.  The strong
+    # macros plus master seed are the intended authoring path.
+    macros = (52.0, 56.0, 46.0, 45.0, 42.0, 38.0)
     estimated = float(capture.get("estimatedRadius", 0.0))
     _IMPACT_TRANSACTION_DEPTH += 1
     try:
@@ -2459,13 +2884,25 @@ def _configure_impact_defaults(settings, capture):
                 settings.deformation_impact_profile,
                 settings.deformation_impact_edge_safety,
                 settings.deformation_impact_chaos,
+                settings.deformation_impact_asymmetry,
             ) = macros
-            settings.deformation_capture_mode = 'SELECTED_FACE_PATCH'
-            if intensity == "HEAVY" and settings.deformation_default_heavy_gore:
-                settings.deformation_gore_enabled = True
-                settings.deformation_gore_raised_enabled = True
-                settings.deformation_gore_preset = "Gore_Bloody_Crater"
-                apply_gore_preset_to_settings(bpy.context)
+            settings.deformation_capture_mode = str(
+                capture.get("placementMode", "SELECTED_FACE_PATCH")
+            )
+            settings.deformation_gore_enabled = True
+            settings.deformation_gore_raised_enabled = True
+            settings.deformation_gore_preset = "USER_AUTHORED"
+            settings.deformation_gore_inlay_amount = 0.70
+            settings.deformation_gore_raised_amount = 0.70
+            settings.deformation_gore_exposure = 70.0
+            settings.deformation_gore_clot_fill = 52.0
+            settings.deformation_gore_breakup = 58.0
+            settings.deformation_gore_wetness_macro = 68.0
+            settings.deformation_gore_surface_mass = 82.0
+            settings.deformation_gore_surface_relief = 68.0
+            settings.deformation_gore_nucleus = 32.0
+            settings.deformation_gore_lobes = 72.0
+            settings.deformation_gore_redness = 88.0
             derived = parameter_schema.derive_impact_parameters(
                 macros,
                 region_scale=estimated,
@@ -2474,9 +2911,64 @@ def _configure_impact_defaults(settings, capture):
             )
             _assign_impact_derived_values(settings, derived)
             settings.deformation_gore_mask_seed = int(settings.deformation_impact_seed)
+            gore_derived = _derive_complete_gore_parameters(
+                context,
+                settings,
+                identity_id="BLOODY_CRATER",
+                region_scale=estimated,
+                stamp_depth=float(derived["depth"]),
+                mean_edge_length=max(1e-6, estimated * 0.05),
+            )
+            _assign_gore_derived_values(settings, gore_derived)
             _mark_impact_dirty(settings, impact_control_metadata(settings, mode="MACRO"))
     finally:
         _IMPACT_TRANSACTION_DEPTH = max(0, _IMPACT_TRANSACTION_DEPTH - 1)
+
+
+def _capture_current_mesh_selection(context):
+    """Capture the current face or vertex selection using Blender's select mode."""
+
+    _registry, _region, attached, _detached = _resolve_active_region(context)
+    if context.active_object != attached or context.mode != 'EDIT_MESH':
+        raise RuntimeError(
+            f"Make {attached.name} active, enter Edit Mode, and select "
+            "one vertex, multiple vertices, one face, or one connected face patch."
+        )
+    mesh = bmesh.from_edit_mesh(attached.data)
+    mesh.verts.ensure_lookup_table()
+    mesh.faces.ensure_lookup_table()
+    selected_vertices = [vertex for vertex in mesh.verts if vertex.select]
+    selected_faces = [face for face in mesh.faces if face.select]
+    select_mode = tuple(
+        bool(value)
+        for value in getattr(
+            getattr(context, "tool_settings", None),
+            "mesh_select_mode",
+            (True, False, False),
+        )
+    )
+    face_mode = len(select_mode) >= 3 and bool(select_mode[2])
+    vertex_or_edge_mode = bool(select_mode[0]) or (
+        len(select_mode) >= 2 and bool(select_mode[1])
+    )
+    if face_mode and selected_faces:
+        return _capture_face_selection(
+            context,
+            require_single=len(selected_faces) == 1,
+        )
+    if vertex_or_edge_mode and selected_vertices:
+        return _capture_vertex_selection(context)
+    if selected_faces:
+        return _capture_face_selection(
+            context,
+            require_single=len(selected_faces) == 1,
+        )
+    if selected_vertices:
+        return _capture_vertex_selection(context)
+    raise RuntimeError(
+        "Select one vertex, multiple vertices, one face, or one connected "
+        "face patch on the active registered mesh."
+    )
 
 
 def create_impact_from_current_selection(context):
@@ -2493,20 +2985,25 @@ def create_impact_from_current_selection(context):
             context,
             "Create Impact From Current Selection",
             objects=tuple(value for value in (attached, detached) if value is not None),
-            metadata_keys=(METADATA_PROPERTY, REGISTRY_PROPERTY),
+            metadata_keys=(
+                METADATA_PROPERTY,
+                REGISTRY_PROPERTY,
+                DAMAGE_PREVIEW_STATE_PROPERTY,
+                GORE_PREVIEW_STATE_PROPERTY,
+            ),
             property_groups=((settings, "deformation_"),),
             ownership_predicate=lambda value: bool(value.get("dsb_generated_role", "") or value.get("dsb_damage_generated", False)),
         ) as transaction:
-            transaction.set_stage("validate selected connected patch")
+            transaction.set_stage("validate current mesh selection")
             settings.deformation_active_key = ""
             settings.deformation_active_stamp_id = ""
-            capture = _capture_face_selection(context, require_single=False)
+            capture = _capture_current_mesh_selection(context)
 
             transaction.set_stage("configure impact defaults")
             auto = settings.deformation_auto_preview
             settings.deformation_auto_preview = False
             try:
-                _configure_impact_defaults(settings, capture)
+                _configure_impact_defaults(context, settings, capture)
                 impact_metadata = impact_control_metadata(settings, mode="MACRO")
                 payload = _metadata(attached)
                 name = _unique_impact_name(attached, payload.get("keys", {}), settings, str(region.get("regionId", "")))
@@ -2520,6 +3017,9 @@ def create_impact_from_current_selection(context):
                     "maximumInfluence": float(settings.deformation_maximum_influence),
                     "maximumDisplacement": float(settings.deformation_max_vertex_displacement),
                     "impactControl": impact_metadata,
+                    "previewEnabled": True,
+                    "activeStampId": "",
+                    "stampMode": "ALTERNATIVES",
                 })
                 transaction.set_stage("create default trauma stamp")
                 stamp = _stamp_from_settings(context, order_index=0)
@@ -2527,6 +3027,9 @@ def create_impact_from_current_selection(context):
                 payload = _metadata(attached)
                 entry = payload["keys"][name]
                 entry["stamps"] = [stamp]
+                entry["activeStampId"] = str(stamp["stampId"])
+                entry["previewEnabled"] = True
+                entry["stampMode"] = "ALTERNATIVES"
                 entry["recipeDigest"] = trauma_field.recipe_digest(entry["stamps"])
                 entry["status"] = "IMPACT_DRAFT"
                 entry["draftStatus"] = "UNCOMMITTED"
@@ -2559,6 +3062,8 @@ def create_impact_from_current_selection(context):
                 "stampId": str(stamp["stampId"]),
                 "faceCount": len(capture.get("faceIndices", [])),
                 "vertexCount": len(capture.get("vertexIndices", [])),
+                "placementMode": str(capture.get("placementMode", "")),
+                "selectionKind": str(capture.get("selectionKind", "")),
                 "preview": result,
                 "workflow": (
                     "key selected", "surface captured", "first stamp created",
@@ -2573,6 +3078,10 @@ def create_impact_from_current_selection(context):
                 setattr(settings, name, value)
         finally:
             settings.deformation_auto_preview = auto
+        try:
+            _refresh_authoring_ui_cache(str(region.get("regionId", "")))
+        except Exception:
+            validation_service.clear_cache("impact creation rollback")
         raise
 
 
@@ -2637,14 +3146,43 @@ def _select_key(settings, name):
             settings.deformation_max_vertex_displacement = float(entry.get("maximumDisplacement", 0.045))
             stamps = entry.get("stamps", [])
             settings.deformation_active_stamp_id = ""
-            active_stamp = None
-            if stamps:
-                active_stamp = sorted(stamps, key=lambda stamp: int(stamp.get("orderIndex", 0)))[0]
+            active_stamp = _entry_active_stamp(entry)
+            if active_stamp is not None:
                 _load_stamp_into_settings(settings, active_stamp)
             _load_gore_into_settings(settings, entry.get("surfaceGoreOverlay"))
             _load_impact_control_into_settings(settings, entry, active_stamp)
     finally:
         settings.deformation_auto_preview = auto_preview
+
+
+def select_damage_key_stamp(context, key_name, stamp_id):
+    """Focus a key and activate exactly one of its child Stamp alternatives."""
+
+    settings = context.scene.daf_settings
+    _select_key(settings, str(key_name))
+    _registry, _region, attached, detached = _resolve_active_region(context)
+    payload = _metadata(attached)
+    entry = payload.get("keys", {}).get(str(key_name), {})
+    stamp = next(
+        (
+            value
+            for value in entry.get("stamps", [])
+            if str(value.get("stampId", "")) == str(stamp_id)
+        ),
+        None,
+    )
+    if stamp is None:
+        raise RuntimeError("The selected Stamp alternative no longer exists.")
+    _load_stamp_into_settings(settings, stamp)
+    entry["activeStampId"] = str(stamp["stampId"])
+    entry["stampMode"] = "ALTERNATIVES"
+    _store_metadata(attached, detached, payload)
+    if bool(entry.get("previewEnabled", False)):
+        preview_service.run_now(context, quality="FAST")
+    settings.deformation_status = (
+        f"ACTIVE STAMP — {stamp.get('displayName', stamp_id)}"
+    )
+    return {"key": str(key_name), "stamp": stamp}
 
 
 def _load_gore_into_settings(settings, overlay):
@@ -2656,7 +3194,11 @@ def _load_gore_into_settings(settings, overlay):
     else:
         recipe = trauma_field.default_gore_overlay()
     settings.deformation_gore_enabled = bool(recipe["goreOverlayEnabled"])
-    settings.deformation_gore_preset = str(recipe["gorePresetId"])
+    settings.deformation_gore_preset = str(
+        recipe["gorePresetId"]
+        if recipe["gorePresetId"] in parameter_schema.GORE_PRESETS
+        else "USER_AUTHORED"
+    )
     settings.deformation_gore_identity = str(recipe["goreControl"]["identityId"])
     settings.deformation_gore_geometry_mode = str(recipe["goreGeometryMode"])
     settings.deformation_gore_control_mode = str(recipe["goreControl"]["mode"])
@@ -2666,7 +3208,39 @@ def _load_gore_into_settings(settings, overlay):
     settings.deformation_gore_breakup = float(recipe["goreControl"]["macros"]["breakup"])
     settings.deformation_gore_wetness_macro = float(recipe["goreControl"]["macros"]["wetness"])
     settings.deformation_gore_variation = float(recipe["goreControl"]["macros"]["variation"])
-    settings.deformation_gore_identity_digest = str(recipe["goreControl"]["identityDigest"])
+    surface_macros = recipe["goreSurfaceControl"]["macros"]
+    settings.deformation_gore_surface_mass = float(
+        surface_macros["mass"]
+    )
+    settings.deformation_gore_surface_relief = float(
+        surface_macros["relief"]
+    )
+    settings.deformation_gore_nucleus = float(
+        surface_macros["nucleus"]
+    )
+    settings.deformation_gore_lobes = float(
+        surface_macros["lobes"]
+    )
+    settings.deformation_gore_redness = float(
+        surface_macros["redness"]
+    )
+    settings.deformation_gore_inlay_amount = float(recipe.get(
+        "goreInlayAmount",
+        recipe["goreControl"]["macros"]["cavity"] / 100.0,
+    ))
+    settings.deformation_gore_raised_amount = float(recipe.get(
+        "goreRaisedAmount",
+        recipe["goreControl"]["macros"]["variation"] / 100.0,
+    ))
+    settings.deformation_gore_identity_digest = hashlib.sha256(
+        (
+            str(recipe["goreControl"]["identityDigest"])
+            + "|"
+            + str(
+                recipe["goreSurfaceControl"]["identityDigest"]
+            )
+        ).encode("ascii")
+    ).hexdigest()
     settings.deformation_gore_coverage = float(recipe["goreCoverage"])
     settings.deformation_gore_scatter = float(recipe["goreScatter"])
     settings.deformation_gore_edge_feather = float(recipe["goreEdgeFeather"])
@@ -2677,6 +3251,15 @@ def _load_gore_into_settings(settings, overlay):
     settings.deformation_gore_raised_enabled = bool(recipe["goreRaisedEnabled"])
     settings.deformation_gore_clot_coverage = float(recipe["goreClotCoverage"])
     settings.deformation_gore_core_density = float(recipe["goreCoreDensity"])
+    settings.deformation_gore_surface_mass_value = float(
+        recipe["goreSurfaceMass"]
+    )
+    settings.deformation_gore_nucleus_amount = float(
+        recipe["goreNucleusAmount"]
+    )
+    settings.deformation_gore_nucleus_lobes = float(
+        recipe["goreNucleusLobes"]
+    )
     settings.deformation_gore_clot_thickness = float(recipe["goreClotThickness"])
     settings.deformation_gore_thickness_variation = float(recipe["goreThicknessVariation"])
     settings.deformation_gore_island_breakup = float(recipe["goreIslandBreakup"])
@@ -2744,8 +3327,9 @@ def apply_gore_preset_to_settings(context):
         if preview_service.updates_suspended():
             metadata = gore_control_metadata(settings, mode="MACRO")
             region_scale, mean_edge_length = _gore_scale_inputs(context, settings)
-            derived = parameter_schema.derive_gore_parameters(
-                _gore_macro_values(settings),
+            derived = _derive_complete_gore_parameters(
+                context,
+                settings,
                 identity_id=identity_id,
                 region_scale=region_scale,
                 stamp_depth=float(settings.deformation_seed_depth),
@@ -2773,6 +3357,15 @@ def apply_gore_preset_to_settings(context):
     settings.deformation_gore_raised_enabled = bool(raised["goreRaisedEnabled"])
     settings.deformation_gore_clot_coverage = float(raised["goreClotCoverage"])
     settings.deformation_gore_core_density = float(raised["goreCoreDensity"])
+    settings.deformation_gore_surface_mass_value = float(
+        raised["goreSurfaceMass"]
+    )
+    settings.deformation_gore_nucleus_amount = float(
+        raised["goreNucleusAmount"]
+    )
+    settings.deformation_gore_nucleus_lobes = float(
+        raised["goreNucleusLobes"]
+    )
     settings.deformation_gore_clot_thickness = float(raised["goreClotThickness"])
     settings.deformation_gore_thickness_variation = float(raised["goreThicknessVariation"])
     settings.deformation_gore_island_breakup = float(raised["goreIslandBreakup"])
@@ -2985,6 +3578,8 @@ def _stamp_from_settings(context, stamp_id=None, order_index=0):
         stamp_payload.update({
             "impactSeed": int(settings.deformation_impact_seed),
             "impactChaos": float(settings.deformation_impact_chaos) / 100.0,
+            "impactEdgeDamage": float(settings.deformation_impact_edge_safety) / 100.0,
+            "impactAsymmetry": float(settings.deformation_impact_asymmetry) / 100.0,
             "impactProfile": float(settings.deformation_impact_profile) / 100.0,
             "profileCenterRimBalance": float(settings.deformation_impact_profile) / 100.0,
         })
@@ -3140,10 +3735,11 @@ def _gore_overlay_from_settings(context):
     elif geometry_mode not in trauma_field.GORE_GEOMETRY_MODES or geometry_mode == "STAIN_ONLY":
         geometry_mode = "CAVITY_INLAY"
     control = gore_control_metadata(settings)
+    surface_control = surface_gore_control_metadata(settings)
     recipe = trauma_field.normalize_gore_overlay({
         "goreRecipeVersion": trauma_field.GORE_RECIPE_VERSION,
         "goreOverlayEnabled": bool(settings.deformation_gore_enabled),
-        "gorePresetId": settings.deformation_gore_preset,
+        "gorePresetId": "USER_AUTHORED",
         "goreCoverage": float(settings.deformation_gore_coverage),
         "goreScatter": float(settings.deformation_gore_scatter),
         "goreEdgeFeather": float(settings.deformation_gore_edge_feather),
@@ -3152,11 +3748,14 @@ def _gore_overlay_from_settings(context):
         "goreColorBias": list(settings.deformation_gore_color_bias),
         "gorePatchScale": float(settings.deformation_impact_gore_patch_scale),
         "goreGeometryMode": geometry_mode,
+        "goreInlayAmount": float(settings.deformation_gore_inlay_amount),
+        "goreRaisedAmount": float(settings.deformation_gore_raised_amount),
         "goreIdentityId": str(control["identityId"]),
         "goreControl": control,
+        "goreSurfaceControl": surface_control,
         "goreOverlayMode": "STAIN_AND_RAISED" if geometry_mode != "STAIN_ONLY" else "SURFACE_STAIN",
         "goreIntensityClass": (
-            "HIGH" if geometry_mode == "CAVITY_INLAY"
+            "HIGH" if geometry_mode in {"CAVITY_INLAY", "HYBRID_ADDITIVE"}
             and not settings.deformation_gore_user_customized else "CUSTOM"
         ),
         "goreRaisedEnabled": bool(settings.deformation_gore_raised_enabled),
@@ -3201,6 +3800,15 @@ def _gore_overlay_from_settings(context):
         "goreBarrierLayerEnabled": bool(settings.deformation_gore_barrier_layer_enabled),
         "goreRaisedRimOptIn": bool(settings.deformation_gore_raised_rim_opt_in),
         "goreAllowInternalFragments": bool(settings.deformation_gore_allow_internal_fragments),
+        "goreSurfaceMass": float(
+            settings.deformation_gore_surface_mass_value
+        ),
+        "goreNucleusAmount": float(
+            settings.deformation_gore_nucleus_amount
+        ),
+        "goreNucleusLobes": float(
+            settings.deformation_gore_nucleus_lobes
+        ),
         "goreMaskSeed": int(settings.deformation_gore_mask_seed),
         "linkedRegionId": region.get("regionId", existing.get("linkedRegionId", "")),
         "linkedStampId": stamp.get("stampId", existing.get("linkedStampId", "")) if stamp else existing.get("linkedStampId", ""),
@@ -3223,7 +3831,7 @@ def update_surface_gore_overlay(context):
         entry["raisedGoreStatus"] = "STALE_REBUILD_REQUIRED"
     _store_metadata(attached, detached, payload)
     settings.deformation_status = (
-        f"SURFACE GORE {'ENABLED' if overlay['goreOverlayEnabled'] else 'DISABLED'} â€” {name}"
+        f"SURFACE GORE {'ENABLED' if overlay['goreOverlayEnabled'] else 'DISABLED'} — {name}"
     )
     return overlay
 
@@ -3245,6 +3853,43 @@ def _stamp_local_coordinates_from_inputs(attached, stamps, weights_by_stamp, dis
     final_world = trauma_field.evaluate_stamp_stack(basis_world, stamps, weights_by_stamp, distances_by_stamp)
     inverse_world = attached.matrix_world.inverted()
     return [inverse_world @ Vector(position) for position in final_world]
+
+
+def _clamp_local_coordinates_to_world_limit(
+    attached,
+    coordinates,
+    maximum_displacement,
+):
+    """Project generated coordinates into the recipe's final world-space cap."""
+
+    coordinates = list(coordinates)
+    basis_world = _basis_world_positions(attached)
+    if len(coordinates) != len(basis_world):
+        raise RuntimeError(
+            "Generated coordinate count does not match the active Basis."
+        )
+    maximum = float(maximum_displacement)
+    if not math.isfinite(maximum) or maximum <= 0.0:
+        raise RuntimeError(
+            "Maximum world displacement must be a finite positive value."
+        )
+    world = attached.matrix_world
+    inverse_world = world.inverted()
+    result = []
+    for basis_position, coordinate in zip(basis_world, coordinates):
+        basis_position = Vector(basis_position)
+        generated_world = world @ Vector(coordinate)
+        delta = generated_world - basis_position
+        if not all(math.isfinite(float(value)) for value in delta):
+            raise RuntimeError(
+                "Generated deformation contains a non-finite displacement."
+            )
+        if delta.length > maximum:
+            delta.normalize()
+            delta *= maximum
+            generated_world = basis_position + delta
+        result.append(inverse_world @ generated_world)
+    return result
 
 
 def _portable_direction_fields(attached, stamp):
@@ -3574,6 +4219,288 @@ def save_stamp_library(filepath):
         if temporary.exists():
             temporary.unlink()
     return path, library
+
+
+def _semantic_anchor_for_region(region_id):
+    value = str(region_id or "").upper()
+    if "HEAD" in value:
+        if "LEFT" in value:
+            return "HEAD_LEFT"
+        if "RIGHT" in value:
+            return "HEAD_RIGHT"
+        return "HEAD"
+    if "FOREARM" in value or "ARM" in value:
+        if "LEFT" in value:
+            return "FOREARM_LEFT"
+        if "RIGHT" in value:
+            return "FOREARM_RIGHT"
+        return "CUSTOM"
+    if any(token in value for token in ("BODY", "TORSO", "CORE")):
+        return "BODY"
+    return "CUSTOM"
+
+
+def _current_damage_blueprint(context, name):
+    settings, _registry, region, _attached, _detached, _payload, _key_name, entry = (
+        _active_key_context(context)
+    )
+    stored = _active_stamp(settings, entry)
+    current = _stamp_from_settings(
+        context,
+        stamp_id=str(stored["stampId"]),
+        order_index=int(stored.get("orderIndex", 0)),
+    )
+    current = dict(current)
+    current["maximumInfluence"] = float(
+        settings.deformation_maximum_influence
+    )
+    return blueprint_service.build_blueprint(
+        name,
+        impact_macros={
+            "area": float(settings.deformation_impact_size),
+            "depth": float(settings.deformation_impact_crush),
+            "falloff": float(settings.deformation_impact_profile),
+            "edgeDamage": float(settings.deformation_impact_edge_safety),
+            "distortion": float(settings.deformation_impact_chaos),
+            "asymmetry": float(settings.deformation_impact_asymmetry),
+        },
+        impact_seed=int(settings.deformation_impact_seed),
+        gore_macros={
+            "coverage": float(settings.deformation_gore_exposure),
+            "raised": float(settings.deformation_gore_raised_amount) * 100.0,
+            "inlay": float(settings.deformation_gore_inlay_amount) * 100.0,
+            "breakup": float(settings.deformation_gore_breakup),
+            "fill": float(settings.deformation_gore_clot_fill),
+            "wetness": float(settings.deformation_gore_wetness_macro),
+        },
+        surface_gore_macros={
+            "mass": float(settings.deformation_gore_surface_mass),
+            "relief": float(
+                settings.deformation_gore_surface_relief
+            ),
+            "nucleus": float(settings.deformation_gore_nucleus),
+            "folds": float(settings.deformation_gore_lobes),
+            "redness": float(settings.deformation_gore_redness),
+        },
+        gore_seed=int(settings.deformation_gore_mask_seed),
+        stamp=current,
+        gore_enabled=bool(settings.deformation_gore_enabled),
+        gore_identity_id=str(settings.deformation_gore_identity),
+        texture_enabled=bool(settings.deformation_gore_texture_enabled),
+        fiber_texture_strength=float(settings.deformation_gore_fiber_texture_strength),
+        base_color_strength=float(settings.deformation_gore_base_color_strength),
+        semantic_anchor=_semantic_anchor_for_region(region.get("regionId", "")),
+    )
+
+
+def save_active_damage_blueprint(context):
+    """Upsert the focused key/stamp/gore intent as a portable adaptive recipe."""
+
+    settings = context.scene.daf_settings
+    name = str(settings.deformation_blueprint_name or "").strip()
+    if not name:
+        name = str(
+            settings.deformation_stamp_name or settings.deformation_active_key or ""
+        ).strip()
+    if not name:
+        raise RuntimeError("Name the Damage Blueprint before saving it.")
+    blueprint = _current_damage_blueprint(context, name)
+    path = _blueprint_library_path(settings)
+    library = (
+        refresh_blueprint_library(context)
+        if path.exists()
+        else blueprint_service.normalize_library()
+    )
+    library = blueprint_service.upsert_blueprint(library, blueprint)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    temporary = path.with_name(path.name + ".tmp")
+    try:
+        temporary.write_text(
+            json.dumps(library, indent=2, sort_keys=True, ensure_ascii=False) + "\n",
+            encoding="utf-8",
+        )
+        temporary.replace(path)
+    finally:
+        if temporary.exists():
+            temporary.unlink()
+    _cache_blueprint_library(path, library)
+    settings.deformation_blueprint_name = str(blueprint["name"])
+    settings.deformation_status = f"DAMAGE BLUEPRINT SAVED — {blueprint['name']}"
+    return path, blueprint
+
+
+def apply_damage_blueprint(context, blueprint_id):
+    """Bind portable intent to the focused stamp's fresh destination capture."""
+
+    global _IMPACT_TRANSACTION_DEPTH, _GORE_TRANSACTION_DEPTH
+    settings, _registry, region, attached, detached, payload, key_name, entry = (
+        _active_key_context(context)
+    )
+    active = _active_stamp(settings, entry)
+    capture = dict(active.get("capture", {}))
+    errors = _capture_errors(capture, region, attached)
+    if errors:
+        raise RuntimeError(
+            "A Damage Blueprint needs a fresh valid destination capture. "
+            + " ".join(errors)
+        )
+    library = refresh_blueprint_library(context)
+    try:
+        blueprint = blueprint_service.blueprint_by_id(library, blueprint_id)
+    except KeyError as exc:
+        raise RuntimeError(str(exc)) from exc
+    impact = blueprint["impact"]
+    gore = blueprint["gore"]
+    impact_macros = impact["macros"]
+    gore_macros = gore["macros"]
+    surface_gore_macros = gore["surfaceMacros"]
+    destination_scale = float(
+        capture.get("estimatedRadius", settings.deformation_seed_radius)
+    )
+    adaptive = blueprint_service.adaptive_stamp_values(
+        blueprint, destination_scale
+    )
+    _IMPACT_TRANSACTION_DEPTH += 1
+    _GORE_TRANSACTION_DEPTH += 1
+    try:
+        with preview_service.suspend_updates():
+            settings.deformation_impact_control_mode = "MACRO"
+            settings.deformation_gore_control_mode = "MACRO"
+            settings.deformation_impact_size = float(impact_macros["area"])
+            settings.deformation_impact_crush = float(impact_macros["depth"])
+            settings.deformation_impact_profile = float(impact_macros["falloff"])
+            settings.deformation_impact_edge_safety = float(
+                impact_macros["edgeDamage"]
+            )
+            settings.deformation_impact_chaos = float(
+                impact_macros["distortion"]
+            )
+            settings.deformation_impact_asymmetry = float(
+                impact_macros["asymmetry"]
+            )
+            settings.deformation_impact_seed = int(impact["seed"])
+            settings.deformation_gore_exposure = float(gore_macros["coverage"])
+            settings.deformation_gore_raised_amount = (
+                float(gore_macros["raised"]) / 100.0
+            )
+            settings.deformation_gore_inlay_amount = (
+                float(gore_macros["inlay"]) / 100.0
+            )
+            settings.deformation_gore_breakup = float(gore_macros["breakup"])
+            settings.deformation_gore_clot_fill = float(gore_macros["fill"])
+            settings.deformation_gore_wetness_macro = float(
+                gore_macros["wetness"]
+            )
+            settings.deformation_gore_surface_mass = float(
+                surface_gore_macros["mass"]
+            )
+            settings.deformation_gore_surface_relief = float(
+                surface_gore_macros["relief"]
+            )
+            settings.deformation_gore_nucleus = float(
+                surface_gore_macros["nucleus"]
+            )
+            settings.deformation_gore_lobes = float(
+                surface_gore_macros["folds"]
+            )
+            settings.deformation_gore_redness = float(
+                surface_gore_macros["redness"]
+            )
+            settings.deformation_gore_mask_seed = int(gore["seed"])
+            settings.deformation_gore_enabled = bool(gore["enabled"])
+            settings.deformation_gore_identity = str(gore["identityId"])
+            settings.deformation_gore_texture_enabled = bool(
+                gore["textureEnabled"]
+            )
+            settings.deformation_gore_fiber_texture_strength = float(
+                gore["fiberTextureStrength"]
+            )
+            settings.deformation_gore_base_color_strength = float(
+                gore["baseColorStrength"]
+            )
+            settings.deformation_seed_direction_mode = str(
+                adaptive["directionMode"]
+            )
+            settings.deformation_seed_custom_direction = tuple(
+                adaptive["directionLocal"]
+            )
+            settings.deformation_influence_mode = str(
+                adaptive["influenceMode"]
+            )
+            settings.deformation_distance_mode = str(adaptive["distanceMode"])
+            settings.deformation_stamp_family = str(adaptive["family"])
+            settings.deformation_stamp_name = str(blueprint["name"])
+            settings.deformation_gore_preset = "USER_AUTHORED"
+            impact_derived = parameter_schema.derive_impact_parameters(
+                _impact_macro_values(settings),
+                region_scale=destination_scale,
+                family=str(settings.deformation_stamp_family),
+                seed=int(impact["seed"]),
+            )
+            region_scale, mean_edge_length = _gore_scale_inputs(context, settings)
+            gore_derived = _derive_complete_gore_parameters(
+                context,
+                settings,
+                identity_id=str(settings.deformation_gore_identity),
+                region_scale=region_scale,
+                stamp_depth=float(adaptive["depth"]),
+                mean_edge_length=mean_edge_length,
+            )
+            _assign_impact_derived_values(settings, impact_derived)
+            # Portable ratios author the physical size at the new capture.
+            settings.deformation_seed_radius = float(adaptive["radius"])
+            settings.deformation_seed_depth = float(adaptive["depth"])
+            settings.deformation_feather_distance = float(
+                adaptive["featherDistance"]
+            )
+            settings.deformation_stamp_strength = float(adaptive["strength"])
+            settings.deformation_seed_falloff = float(adaptive["falloff"])
+            settings.deformation_seed_seam_protection = float(
+                adaptive["seamProtection"]
+            )
+            settings.deformation_max_vertex_displacement = float(
+                adaptive["maximumDisplacement"]
+            )
+            settings.deformation_maximum_influence = float(
+                adaptive["maximumInfluence"]
+            )
+            _assign_gore_derived_values(settings, gore_derived)
+            _mark_impact_dirty(
+                settings, impact_control_metadata(settings, mode="MACRO")
+            )
+            _mark_gore_dirty(
+                settings, gore_control_metadata(settings, mode="MACRO")
+            )
+    finally:
+        _IMPACT_TRANSACTION_DEPTH = max(0, _IMPACT_TRANSACTION_DEPTH - 1)
+        _GORE_TRANSACTION_DEPTH = max(0, _GORE_TRANSACTION_DEPTH - 1)
+
+    replacement = _stamp_from_settings(
+        context,
+        stamp_id=str(active["stampId"]),
+        order_index=int(active.get("orderIndex", 0)),
+    )
+    replacement["displayName"] = str(blueprint["name"])
+    entry["stamps"] = trauma_field.reindex_stamps([
+        replacement
+        if str(stamp.get("stampId", "")) == str(active["stampId"])
+        else stamp
+        for stamp in entry.get("stamps", [])
+    ])
+    entry["activeStampId"] = str(replacement["stampId"])
+    entry["stampMode"] = "ALTERNATIVES"
+    entry["impactControl"] = impact_control_metadata(settings, mode="MACRO")
+    entry["surfaceGoreOverlay"] = _gore_overlay_from_settings(context)
+    entry["blueprintId"] = str(blueprint["blueprintId"])
+    entry["blueprintDigest"] = str(blueprint["blueprintDigest"])
+    entry["previewEnabled"] = True
+    _store_metadata(attached, detached, payload)
+    result = rebuild_active_deformation(context)
+    settings.deformation_status = (
+        f"DAMAGE BLUEPRINT APPLIED — {blueprint['name']} / "
+        f"{region.get('regionId', '')}"
+    )
+    return {"blueprint": blueprint, "key": key_name, "rebuild": result}
 
 
 def load_stamp_library(filepath, context):
@@ -4455,9 +5382,19 @@ def _gore_atlas_uv(local_uv, variant):
 
 
 def _build_gore_shell_object(
-    source, key_name, region_id, pair_role, overlay, face_records, *, preview=False
+    source,
+    key_name,
+    region_id,
+    pair_role,
+    overlay,
+    face_records,
+    *,
+    preview=False,
+    component="",
 ):
-    stable_name = trauma_field.gore_generated_object_name(region_id, key_name, pair_role)
+    stable_name = trauma_field.gore_generated_object_name(
+        region_id, key_name, pair_role, component
+    )
     name = stable_name + "__PREVIEW" if preview else stable_name
     if bpy.data.objects.get(name) is not None:
         raise RuntimeError(f"Raised gore object name {name!r} was not cleared before rebuild.")
@@ -4485,21 +5422,21 @@ def _build_gore_shell_object(
     for record_indices in edge_records.values():
         for first in record_indices:
             record_adjacency[first].update(index for index in record_indices if index != first)
-    components = []
+    surface_islands = []
     remaining = set(range(len(face_records)))
     while remaining:
         seed = min(remaining)
         stack = [seed]
-        component = []
+        island_record_indices = []
         remaining.remove(seed)
         while stack:
             current = stack.pop()
-            component.append(current)
+            island_record_indices.append(current)
             neighbors = sorted(record_adjacency[current] & remaining, reverse=True)
             for neighbor in neighbors:
                 remaining.remove(neighbor)
                 stack.append(neighbor)
-        components.append(sorted(component))
+        surface_islands.append(sorted(island_record_indices))
 
     inverse = source_world.inverted()
     normal_matrix = source_world.to_3x3().inverted().transposed()
@@ -4513,12 +5450,19 @@ def _build_gore_shell_object(
     generated_source_indices = []
     generated_source_blends = []
     generated_surface_positions = []
-    material_lookup = {material_id: index for index, material_id in enumerate(trauma_field.GORE_MATERIAL_IDS)}
+    material_lookup = {
+        material_id: index
+        for index, material_id in enumerate(
+            trauma_field.RAISED_GORE_MATERIAL_IDS
+        )
+    }
     faces = []
     material_indices = []
     face_uvs = []
     face_texture_variants = []
     face_layers = []
+    nucleus_candidates = []
+    nucleus_triangle_count = 0
 
     world_points = {index: source_world @ point for index, point in enumerate(positions)}
     world_normals = {}
@@ -4566,15 +5510,15 @@ def _build_gore_shell_object(
     triangle_uv = ((0.05, 0.05), (0.95, 0.05), (0.50, 0.95))
     quad_uv = ((0.04, 0.04), (0.96, 0.04), (0.96, 0.96), (0.04, 0.96))
 
-    for component in components:
+    for island_record_indices in surface_islands:
         source_indices = sorted({
             int(index)
-            for record_index in component
+            for record_index in island_record_indices
             for index in face_records[record_index]["vertices"]
         })
         component_edges = {}
         face_data = {}
-        for record_index in component:
+        for record_index in island_record_indices:
             face = [int(index) for index in face_records[record_index]["vertices"]]
             center_blend = {index: 1.0 / len(face) for index in face}
             center_shift = 0.12 * organic * _gore_unit(master_seed, record_index, 901)
@@ -4591,6 +5535,70 @@ def _build_gore_shell_object(
                 component_edges.setdefault(tuple(sorted((first, second))), []).append(
                     (record_index, first, second)
                 )
+
+        nucleus_blend = _normalized_source_blend({
+            source_index: 1.0 / len(source_indices)
+            for source_index in source_indices
+        })
+        nucleus_surface = blended_surface(nucleus_blend)
+        nucleus_normal = blended_normal(nucleus_blend)
+        tangent_candidates = []
+        for source_index in source_indices:
+            tangent = world_points[source_index] - nucleus_surface
+            tangent -= nucleus_normal * tangent.dot(nucleus_normal)
+            tangent_candidates.append(tangent)
+        tangent_u = max(
+            tangent_candidates,
+            key=lambda value: value.length_squared,
+            default=Vector((1.0, 0.0, 0.0)),
+        )
+        if tangent_u.length_squared <= 1e-16:
+            tangent_u = nucleus_normal.cross(Vector((1.0, 0.0, 0.0)))
+            if tangent_u.length_squared <= 1e-16:
+                tangent_u = nucleus_normal.cross(
+                    Vector((0.0, 1.0, 0.0))
+                )
+        tangent_u.normalize()
+        tangent_v = nucleus_normal.cross(tangent_u).normalized()
+        extent_u = max(
+            (
+                abs(
+                    (world_points[index] - nucleus_surface).dot(
+                        tangent_u
+                    )
+                )
+                for index in source_indices
+            ),
+            default=base_thickness,
+        )
+        extent_v = max(
+            (
+                abs(
+                    (world_points[index] - nucleus_surface).dot(
+                        tangent_v
+                    )
+                )
+                for index in source_indices
+            ),
+            default=base_thickness,
+        )
+        nucleus_candidates.append({
+            "blend": nucleus_blend,
+            "surface": nucleus_surface,
+            "normal": nucleus_normal,
+            "tangentU": tangent_u,
+            "tangentV": tangent_v,
+            "extentU": extent_u,
+            "extentV": extent_v,
+            "priority": sum(
+                float(face_records[index].get("priority", 0.0))
+                for index in island_record_indices
+            ),
+            "faceIndex": min(
+                int(face_records[index]["faceIndex"])
+                for index in island_record_indices
+            ),
+        })
 
         corner_bottom = {}
         corner_top = {}
@@ -4631,7 +5639,7 @@ def _build_gore_shell_object(
 
         center_bottom = {}
         center_top = {}
-        for record_index in component:
+        for record_index in island_record_indices:
             data = face_data[record_index]
             face = data["vertices"]
             average_thickness = sum(thickness_by_vertex[index] for index in face) / len(face)
@@ -4645,7 +5653,7 @@ def _build_gore_shell_object(
                 data["centerWorld"], data["normalWorld"], offset + center_thickness, data["centerBlend"]
             )
 
-        for record_index in component:
+        for record_index in island_record_indices:
             record = face_records[record_index]
             face = face_data[record_index]["vertices"]
             top_material = material_lookup[str(record["materialId"])]
@@ -4754,6 +5762,193 @@ def _build_gore_shell_object(
                         2,
                     )
 
+    nucleus_amount = float(overlay["goreNucleusAmount"])
+    if nucleus_amount > 1e-8 and nucleus_candidates:
+        nucleus = max(
+            nucleus_candidates,
+            key=lambda value: (
+                float(value["priority"]),
+                -int(value["faceIndex"]),
+            ),
+        )
+        current_triangles = sum(max(1, len(face) - 2) for face in faces)
+        available_triangles = max(
+            0,
+            int(overlay["goreMaximumTriangles"]) - current_triangles,
+        )
+        lobes = float(overlay["goreNucleusLobes"])
+        latitude_segments = 8 + int(round(lobes * 6.0))
+        longitude_segments = 12 + int(round(lobes * 10.0))
+        while (
+            2 * longitude_segments * (latitude_segments - 1)
+            > available_triangles
+            and (latitude_segments > 6 or longitude_segments > 8)
+        ):
+            if longitude_segments > 8:
+                longitude_segments -= 1
+            elif latitude_segments > 6:
+                latitude_segments -= 1
+        expected_nucleus_triangles = (
+            2 * longitude_segments * (latitude_segments - 1)
+        )
+        if (
+            latitude_segments >= 6
+            and longitude_segments >= 8
+            and expected_nucleus_triangles <= available_triangles
+        ):
+            anchor = Vector(nucleus["surface"])
+            normal = Vector(nucleus["normal"])
+            tangent_u = Vector(nucleus["tangentU"])
+            tangent_v = Vector(nucleus["tangentV"])
+            blend = dict(nucleus["blend"])
+            patch_scale = float(overlay["gorePatchScale"])
+            extent_u = float(nucleus["extentU"])
+            extent_v = float(nucleus["extentV"])
+            radius_u = min(
+                patch_scale * (0.78 + 0.72 * nucleus_amount),
+                max(
+                    base_thickness * 1.8,
+                    extent_u * (0.30 + 0.28 * nucleus_amount),
+                ),
+            )
+            radius_v = min(
+                patch_scale * (0.68 + 0.58 * nucleus_amount),
+                max(
+                    base_thickness * 1.6,
+                    extent_v * (0.30 + 0.24 * nucleus_amount),
+                ),
+            )
+            vertical_radius = min(
+                patch_scale * (0.34 + 0.34 * nucleus_amount),
+                max(
+                    base_thickness * (1.10 + 2.20 * nucleus_amount),
+                    min(radius_u, radius_v) * 0.42,
+                ),
+            )
+            center_height = (
+                offset
+                + vertical_radius * (0.24 + 0.18 * nucleus_amount)
+            )
+            phase = (
+                _gore_unit(
+                    master_seed,
+                    int(nucleus["faceIndex"]),
+                    17011,
+                )
+                * math.tau
+            )
+
+            def nucleus_vertex(phi, theta):
+                latitude_scale = max(0.0, math.cos(phi))
+                fold = (
+                    math.sin(theta * (4.0 + lobes * 4.0) + phase)
+                    * math.sin((phi + math.pi * 0.5) * 3.0)
+                )
+                cross_fold = math.sin(
+                    theta * 2.0
+                    - phi * (5.0 + lobes * 3.0)
+                    + phase * 0.63
+                )
+                radial = max(
+                    0.66,
+                    1.0
+                    + lobes * (0.13 * fold + 0.07 * cross_fold),
+                )
+                x = math.cos(theta) * latitude_scale * radius_u * radial
+                y = math.sin(theta) * latitude_scale * radius_v * radial
+                z = math.sin(phi) * vertical_radius * (
+                    1.0 + lobes * 0.08 * cross_fold
+                )
+                surface = anchor + tangent_u * x + tangent_v * y
+                return add_vertex(
+                    surface,
+                    normal,
+                    center_height + z,
+                    blend,
+                )
+
+            bottom = nucleus_vertex(-math.pi * 0.5, 0.0)
+            rings = []
+            for latitude in range(1, latitude_segments):
+                phi = (
+                    -math.pi * 0.5
+                    + math.pi * latitude / latitude_segments
+                )
+                rings.append([
+                    nucleus_vertex(
+                        phi,
+                        math.tau * longitude / longitude_segments,
+                    )
+                    for longitude in range(longitude_segments)
+                ])
+            top = nucleus_vertex(math.pi * 0.5, 0.0)
+            nucleus_material = material_lookup[
+                "DSB_GORE_CRUSHED_TISSUE"
+            ]
+            face_index = int(nucleus["faceIndex"])
+            first_ring = rings[0]
+            last_ring = rings[-1]
+            for longitude in range(longitude_segments):
+                following = (longitude + 1) % longitude_segments
+                add_face(
+                    (
+                        bottom,
+                        first_ring[following],
+                        first_ring[longitude],
+                    ),
+                    nucleus_material,
+                    triangle_uv,
+                    choose_variant(face_index, 4000 + longitude),
+                    3,
+                )
+                add_face(
+                    (
+                        top,
+                        last_ring[longitude],
+                        last_ring[following],
+                    ),
+                    nucleus_material,
+                    triangle_uv,
+                    choose_variant(face_index, 5000 + longitude),
+                    3,
+                )
+            for ring_index in range(len(rings) - 1):
+                lower = rings[ring_index]
+                upper = rings[ring_index + 1]
+                v0 = ring_index / max(1, len(rings) - 1)
+                v1 = (ring_index + 1) / max(
+                    1, len(rings) - 1
+                )
+                for longitude in range(longitude_segments):
+                    following = (
+                        longitude + 1
+                    ) % longitude_segments
+                    u0 = longitude / longitude_segments
+                    u1 = (longitude + 1) / longitude_segments
+                    add_face(
+                        (
+                            lower[longitude],
+                            lower[following],
+                            upper[following],
+                            upper[longitude],
+                        ),
+                        nucleus_material,
+                        (
+                            (u0, v0),
+                            (u1, v0),
+                            (u1, v1),
+                            (u0, v1),
+                        ),
+                        choose_variant(
+                            face_index,
+                            6000
+                            + ring_index * longitude_segments
+                            + longitude,
+                        ),
+                        3,
+                    )
+            nucleus_triangle_count = expected_nucleus_triangles
+
     constructed_edge_counts = {}
     for face in faces:
         for index, first in enumerate(face):
@@ -4775,13 +5970,13 @@ def _build_gore_shell_object(
     target_collection.objects.link(obj)
     _copy_gore_skinning(source, obj, generated_source_blends)
     material_names = []
-    for material_id in trauma_field.GORE_MATERIAL_IDS:
+    for material_id in trauma_field.RAISED_GORE_MATERIAL_IDS:
         material = _ensure_gore_material(material_id, overlay)
         mesh.materials.append(material)
         material_names.append(material.name)
     for polygon_index, (polygon, material_index) in enumerate(zip(mesh.polygons, material_indices)):
         polygon.material_index = material_index
-        polygon.use_smooth = face_layers[polygon_index] == 1
+        polygon.use_smooth = face_layers[polygon_index] in {1, 3}
     uv_layer = mesh.uv_layers.new(name="UVMap")
     for polygon_index, polygon in enumerate(mesh.polygons):
         local_uvs = face_uvs[polygon_index]
@@ -4802,7 +5997,7 @@ def _build_gore_shell_object(
     mesh.calc_loop_triangles()
     triangle_count = len(mesh.loop_triangles)
     mesh_id = GORE_MESH_ID_PREFIX + hashlib.sha256(
-        f"{region_id}|{key_name}|{pair_role}".encode("utf-8")
+        f"{region_id}|{key_name}|{pair_role}|{component}".encode("utf-8")
     ).hexdigest()[:20]
     obj["dsb_damage_generated"] = True
     obj["dsb_gore_owned"] = True
@@ -4812,20 +6007,35 @@ def _build_gore_shell_object(
     obj["dsb_gore_region_id"] = str(region_id)
     obj["dsb_gore_deformation_key"] = str(key_name)
     obj["dsb_gore_pair_role"] = str(pair_role).upper()
+    obj["dsb_gore_component"] = str(component or "RAISED").upper()
     obj["dsb_gore_geometry_mode"] = "LEGACY_RAISED"
     obj["dsb_gore_identity_id"] = str(overlay.get("goreIdentityId", overlay["gorePresetId"]))
     obj["dsb_gore_source_object"] = source.name
     obj["dsb_gore_source_topology_fingerprint"] = _topology_fingerprint(source)
     obj["dsb_gore_recipe_digest"] = trauma_field.gore_overlay_digest(overlay)
-    obj["dsb_gore_material_ids"] = json.dumps(list(trauma_field.GORE_MATERIAL_IDS))
+    obj["dsb_gore_material_ids"] = json.dumps(
+        list(trauma_field.RAISED_GORE_MATERIAL_IDS)
+    )
     obj["dsb_gore_material_names"] = json.dumps(material_names)
     obj["dsb_gore_texture_enabled"] = textured
     obj["dsb_gore_texture_variants"] = json.dumps(list(trauma_field.GORE_TEXTURE_VARIANTS))
     obj["dsb_gore_inner_rim_enabled"] = bool(overlay["goreInnerRimEnabled"])
+    obj["dsb_gore_surface_mass"] = float(
+        overlay["goreSurfaceMass"]
+    )
+    obj["dsb_gore_nucleus_amount"] = nucleus_amount
+    obj["dsb_gore_nucleus_lobes"] = float(
+        overlay["goreNucleusLobes"]
+    )
+    obj["dsb_gore_nucleus_triangle_count"] = (
+        nucleus_triangle_count
+    )
     obj["dsb_gore_default_visible"] = False
     obj["dsb_gore_activation_weight"] = float(overlay["goreActivationWeight"])
     obj["dsb_gore_triangle_count"] = triangle_count
-    obj["dsb_gore_shell_quality"] = "ORGANIC_REFINED_TEXTURED_RIM_V3"
+    obj["dsb_gore_shell_quality"] = (
+        "COHESIVE_SURFACE_MASS_LOBULATED_NUCLEUS_V4"
+    )
     obj["dsb_gore_mesh_geometry_digest"] = _mesh_digest(obj)
     obj.hide_render = True
     obj.hide_set(not preview)
@@ -4833,9 +6043,19 @@ def _build_gore_shell_object(
 
 
 def _build_cavity_inlay_object(
-    source, key_name, region_id, pair_role, overlay, face_records, *, preview=False
+    source,
+    key_name,
+    region_id,
+    pair_role,
+    overlay,
+    face_records,
+    *,
+    preview=False,
+    component="",
 ):
-    stable_name = trauma_field.gore_generated_object_name(region_id, key_name, pair_role)
+    stable_name = trauma_field.gore_generated_object_name(
+        region_id, key_name, pair_role, component
+    )
     name = stable_name + "__PREVIEW" if preview else stable_name
     if bpy.data.objects.get(name) is not None:
         raise RuntimeError(f"Cavity/inlay object name {name!r} was not cleared before rebuild.")
@@ -4950,7 +6170,7 @@ def _build_cavity_inlay_object(
             "Cavity/inlay triangle accounting changed during Blender mesh construction."
         )
     mesh_id = GORE_MESH_ID_PREFIX + hashlib.sha256(
-        f"{region_id}|{key_name}|{pair_role}".encode("utf-8")
+        f"{region_id}|{key_name}|{pair_role}|{component}".encode("utf-8")
     ).hexdigest()[:20]
     obj["dsb_damage_generated"] = True
     obj["dsb_gore_owned"] = True
@@ -4960,6 +6180,7 @@ def _build_cavity_inlay_object(
     obj["dsb_gore_region_id"] = str(region_id)
     obj["dsb_gore_deformation_key"] = str(key_name)
     obj["dsb_gore_pair_role"] = str(pair_role).upper()
+    obj["dsb_gore_component"] = str(component or "INLAY").upper()
     obj["dsb_gore_geometry_mode"] = "CAVITY_INLAY"
     obj["dsb_gore_identity_id"] = str(overlay["goreIdentityId"])
     obj["dsb_gore_source_object"] = source.name
@@ -5012,49 +6233,83 @@ def _expected_raised_gore_inputs(region, attached, detached, key_name, entry):
         role: _deformation_input_digest(source, key_name)
         for source, role in sources
     }
-    cache_key = hashlib.sha256(
-        (
-            trauma_field.gore_overlay_digest(overlay) + "|" + topology + "|"
-            + deformation_digests.get("ATTACHED", deformation_digests.get("CORE", "")) + "|" + capture_hash
-        ).encode("utf-8")
-    ).hexdigest()
+    weights, _distances = _stamp_weights(attached, region, stamp)
+    basis = _ensure_basis(attached)
+    target = _key(attached, key_name)
+    if target is None:
+        raise RuntimeError(f"The deformation key {key_name!r} is missing.")
+    basis_world = [attached.matrix_world @ point.co for point in basis.data]
+    target_world = [attached.matrix_world @ point.co for point in target.data]
+    displacement = [
+        (deformed - original).length
+        for original, deformed in zip(basis_world, target_world)
+    ]
+    components = trauma_field.gore_component_recipes(overlay)
+    component_inputs = []
+    generation_digests = {}
+    for component, component_overlay in components:
+        cache_key = hashlib.sha256(
+            (
+                trauma_field.gore_overlay_digest(component_overlay)
+                + "|"
+                + topology
+                + "|"
+                + deformation_digests.get(
+                    "ATTACHED", deformation_digests.get("CORE", "")
+                )
+                + "|"
+                + capture_hash
+                + "|"
+                + component
+            ).encode("utf-8")
+        ).hexdigest()
 
-    def evaluate_records():
-        weights, _distances = _stamp_weights(attached, region, stamp)
-        basis = _ensure_basis(attached)
-        target = _key(attached, key_name)
-        if target is None:
-            raise RuntimeError(f"The deformation key {key_name!r} is missing.")
-        basis_world = [attached.matrix_world @ point.co for point in basis.data]
-        target_world = [attached.matrix_world @ point.co for point in target.data]
-        displacement = [(deformed - original).length for original, deformed in zip(basis_world, target_world)]
-        return trauma_field.gore_face_records(
-            [tuple(point) for point in target_world], mesh_snapshot.faces(attached), weights, displacement, overlay
-        )
+        def evaluate_records(recipe=component_overlay):
+            return trauma_field.gore_face_records(
+                [tuple(point) for point in target_world],
+                mesh_snapshot.faces(attached),
+                weights,
+                displacement,
+                recipe,
+            )
 
-    records, _cache_hit = gore_service.face_records(cache_key, evaluate_records)
-    if not records:
-        raise RuntimeError(
-            "The linked capture produced no gore geometry faces at the current exposure, density, and breakup settings."
+        records, _cache_hit = gore_service.face_records(
+            cache_key, evaluate_records
         )
-    generation_digests = {
-        role: trauma_field.raised_gore_geometry_digest(
-            overlay,
-            source_topology_fingerprint=topology,
-            deformation_digest=deformation_digests[role],
-            capture_hash=capture_hash,
-            pair_role=role,
-            face_records=records,
-        )
-        for _source, role in sources
-    }
-    return overlay, stamp, records, topology, capture_hash, deformation_digests, generation_digests
+        if not records:
+            raise RuntimeError(
+                f"The linked capture produced no {component.lower()} gore geometry "
+                "faces at the current coverage, density, and breakup settings."
+            )
+        component_inputs.append((component, component_overlay, records))
+        multi_component = len(components) > 1
+        for _source, role in sources:
+            storage_key = f"{role}:{component}" if multi_component else role
+            generation_digests[storage_key] = (
+                trauma_field.raised_gore_geometry_digest(
+                    component_overlay,
+                    source_topology_fingerprint=topology,
+                    deformation_digest=deformation_digests[role],
+                    capture_hash=capture_hash,
+                    pair_role=storage_key,
+                    face_records=records,
+                )
+            )
+    return (
+        overlay,
+        stamp,
+        component_inputs,
+        topology,
+        capture_hash,
+        deformation_digests,
+        generation_digests,
+    )
 
 
 def rebuild_raised_gore_for_key(region, attached, detached, key_name, entry):
     """Regenerate one core shell or matching paired shells from one recipe."""
 
-    overlay, stamp, records, topology, capture_hash, deformation_digests, generation_digests = (
+    overlay, stamp, component_inputs, topology, capture_hash, deformation_digests, generation_digests = (
         _expected_raised_gore_inputs(region, attached, detached, key_name, entry)
     )
     region_id = str(region.get("regionId", ""))
@@ -5068,23 +6323,55 @@ def rebuild_raised_gore_for_key(region, attached, detached, key_name, entry):
             mesh.name = f"__DSB_GORE_MESH_ROLLBACK_{index:03d}"
     built = []
     try:
-        for source, role in _region_gore_sources(region, attached, detached):
-            builder = (
-                _build_cavity_inlay_object
-                if overlay["goreGeometryMode"] == "CAVITY_INLAY"
-                else _build_gore_shell_object
-            )
-            obj = builder(source, key_name, region_id, role, overlay, records)
-            obj["dsb_gore_linked_stamp_id"] = str(stamp.get("stampId", ""))
-            obj["dsb_gore_capture_hash"] = capture_hash
-            obj["dsb_gore_deformation_digest"] = deformation_digests[role]
-            obj["dsb_gore_generation_digest"] = generation_digests[role]
-            built.append(obj)
+        multi_component = len(component_inputs) > 1
+        for component, component_overlay, records in component_inputs:
+            for source, role in _region_gore_sources(
+                region, attached, detached
+            ):
+                builder = (
+                    _build_cavity_inlay_object
+                    if component_overlay["goreGeometryMode"] == "CAVITY_INLAY"
+                    else _build_gore_shell_object
+                )
+                storage_key = (
+                    f"{role}:{component}" if multi_component else role
+                )
+                obj = builder(
+                    source,
+                    key_name,
+                    region_id,
+                    role,
+                    component_overlay,
+                    records,
+                    component=component if multi_component else "",
+                )
+                obj["dsb_gore_parent_recipe_digest"] = (
+                    trauma_field.gore_overlay_digest(overlay)
+                )
+                obj["dsb_gore_linked_stamp_id"] = str(
+                    stamp.get("stampId", "")
+                )
+                obj["dsb_gore_capture_hash"] = capture_hash
+                obj["dsb_gore_deformation_digest"] = deformation_digests[role]
+                obj["dsb_gore_generation_digest"] = generation_digests[
+                    storage_key
+                ]
+                built.append(obj)
     except Exception:
-        expected_names = {
-            trauma_field.gore_generated_object_name(region_id, key_name, role)
-            for _source, role in _region_gore_sources(region, attached, detached)
-        }
+        expected_names = set()
+        multi_component = len(component_inputs) > 1
+        for component, _component_overlay, _records in component_inputs:
+            for _source, role in _region_gore_sources(
+                region, attached, detached
+            ):
+                expected_names.add(
+                    trauma_field.gore_generated_object_name(
+                        region_id,
+                        key_name,
+                        role,
+                        component if multi_component else "",
+                    )
+                )
         for name in expected_names:
             obj = bpy.data.objects.get(name)
             if obj is None:
@@ -5107,22 +6394,41 @@ def rebuild_raised_gore_for_key(region, attached, detached, key_name, entry):
     entry["goreIdentityId"] = str(overlay["goreIdentityId"])
     entry["goreGeneratedMeshIds"] = [str(obj["dsb_gore_mesh_id"]) for obj in built]
     entry["goreGeneratedNodeNames"] = [obj.name for obj in built]
+    multi_component = len(component_inputs) > 1
     entry["goreGeometryDigests"] = {
-        str(obj["dsb_gore_pair_role"]): str(obj["dsb_gore_mesh_geometry_digest"])
+        (
+            f"{obj['dsb_gore_pair_role']}:{obj['dsb_gore_component']}"
+            if multi_component
+            else str(obj["dsb_gore_pair_role"])
+        ): str(obj["dsb_gore_mesh_geometry_digest"])
         for obj in built
     }
     entry["goreGenerationDigests"] = dict(generation_digests)
     entry["goreTriangleCounts"] = {
-        str(obj["dsb_gore_pair_role"]): int(obj["dsb_gore_triangle_count"])
+        (
+            f"{obj['dsb_gore_pair_role']}:{obj['dsb_gore_component']}"
+            if multi_component
+            else str(obj["dsb_gore_pair_role"])
+        ): int(obj["dsb_gore_triangle_count"])
         for obj in built
     }
-    entry["goreMaterialIds"] = list(
-        trauma_field.gore_material_ids_for_mode(overlay["goreGeometryMode"])
-    )
-    entry["goreMaterialNames"] = json.loads(str(built[0]["dsb_gore_material_names"]))
+    entry["goreMaterialIds"] = sorted({
+        material_id
+        for obj in built
+        for material_id in json.loads(str(obj["dsb_gore_material_ids"]))
+    })
+    entry["goreMaterialNames"] = sorted({
+        material_name
+        for obj in built
+        for material_name in json.loads(str(obj["dsb_gore_material_names"]))
+    })
     entry["goreGeneratedAtBuild"] = DEFORMATION_BUILD_ID
     entry["goreValidationMeasurements"] = {
-        str(obj["dsb_gore_pair_role"]): json.loads(
+        (
+            f"{obj['dsb_gore_pair_role']}:{obj['dsb_gore_component']}"
+            if multi_component
+            else str(obj["dsb_gore_pair_role"])
+        ): json.loads(
             str(obj.get("dsb_gore_validation_measurements", "{}"))
         )
         for obj in built
@@ -5633,63 +6939,124 @@ def _raised_gore_errors(region, attached, detached, key_name, entry, overlay):
         }
     errors = []
     try:
-        (_recipe, _stamp, _records, topology, capture_hash,
+        (_recipe, _stamp, component_inputs, topology, capture_hash,
          deformation_digests, generation_digests) = _expected_raised_gore_inputs(
             region, attached, detached, key_name, entry
         )
     except Exception as exc:
         return [str(exc)], {"status": "FAIL", "nodeNames": [obj.name for obj in objects], "triangleCounts": {}, "errors": [str(exc)]}
     sources = _region_gore_sources(region, attached, detached)
-    expected_names = {
-        role: trauma_field.gore_generated_object_name(region_id, key_name, role)
-        for _source, role in sources
+    multi_component = len(component_inputs) > 1
+    expected_items = []
+    for component, component_overlay, _records in component_inputs:
+        for source, role in sources:
+            storage_key = f"{role}:{component}" if multi_component else role
+            expected_items.append({
+                "component": component,
+                "overlay": component_overlay,
+                "source": source,
+                "role": role,
+                "storageKey": storage_key,
+                "name": trauma_field.gore_generated_object_name(
+                    region_id,
+                    key_name,
+                    role,
+                    component if multi_component else "",
+                ),
+            })
+    by_component_role = {
+        (
+            str(obj.get("dsb_gore_pair_role", "")).upper(),
+            str(obj.get("dsb_gore_component", "")).upper(),
+        ): obj
+        for obj in objects
     }
-    by_role = {str(obj.get("dsb_gore_pair_role", "")).upper(): obj for obj in objects}
-    expected_roles = {role for _source, role in sources}
-    if len(objects) != len(expected_roles) or set(by_role) != expected_roles:
+    expected_keys = {
+        (item["role"], item["component"]) for item in expected_items
+    }
+    if len(objects) != len(expected_items) or set(by_component_role) != expected_keys:
         errors.append(
-            "Raised gore ownership does not match the registered region mode: expected "
-            + ", ".join(sorted(expected_roles)) + "."
+            "Gore component ownership does not match the recipe and region mode: "
+            + ", ".join(
+                f"{role.lower()} {component.lower()}"
+                for role, component in sorted(expected_keys)
+            )
+            + "."
         )
     triangle_counts = {}
-    for source, role in sources:
-        obj = by_role.get(role)
+    for item in expected_items:
+        source = item["source"]
+        role = item["role"]
+        component = item["component"]
+        component_overlay = item["overlay"]
+        storage_key = item["storageKey"]
+        obj = by_component_role.get((role, component))
         if obj is None:
-            errors.append(f"Raised gore {role.lower()} mesh is missing.")
+            errors.append(
+                f"Gore {role.lower()} {component.lower()} mesh is missing."
+            )
             continue
-        if obj.name != expected_names[role]:
-            errors.append(f"Raised gore {role.lower()} node name is not deterministic.")
+        if obj.name != item["name"]:
+            errors.append(
+                f"Gore {role.lower()} {component.lower()} node name is not deterministic."
+            )
         expected_metadata = {
             "dsb_gore_region_id": region_id,
             "dsb_gore_deformation_key": key_name,
             "dsb_gore_pair_role": role,
+            "dsb_gore_component": component,
             "dsb_gore_source_object": source.name,
             "dsb_gore_source_topology_fingerprint": topology,
             "dsb_gore_capture_hash": capture_hash,
             "dsb_gore_deformation_digest": deformation_digests[role],
-            "dsb_gore_recipe_digest": trauma_field.gore_overlay_digest(overlay),
-            "dsb_gore_generation_digest": generation_digests[role],
-            "dsb_gore_geometry_mode": str(overlay["goreGeometryMode"]),
+            "dsb_gore_recipe_digest": trauma_field.gore_overlay_digest(
+                component_overlay
+            ),
+            "dsb_gore_parent_recipe_digest": trauma_field.gore_overlay_digest(
+                overlay
+            ),
+            "dsb_gore_generation_digest": generation_digests[storage_key],
+            "dsb_gore_geometry_mode": str(
+                component_overlay["goreGeometryMode"]
+            ),
         }
         for field, expected in expected_metadata.items():
             if str(obj.get(field, "")) != str(expected):
                 errors.append(f"Raised gore object {obj.name} has stale or incorrect {field} metadata.")
-        mesh_errors = _raised_gore_mesh_errors(obj, source, key_name, overlay, role)
+        mesh_errors = _raised_gore_mesh_errors(
+            obj, source, key_name, component_overlay, role
+        )
         errors.extend(mesh_errors)
-        triangle_counts[role] = int(obj.get("dsb_gore_triangle_count", 0))
-        stored_geometry = entry.get("goreGeometryDigests", {}).get(role, "")
+        triangle_counts[storage_key] = int(
+            obj.get("dsb_gore_triangle_count", 0)
+        )
+        stored_geometry = entry.get("goreGeometryDigests", {}).get(
+            storage_key, ""
+        )
         if str(stored_geometry) != str(obj.get("dsb_gore_mesh_geometry_digest", "")):
             errors.append(f"Raised gore object {obj.name} does not match the deformation manifest geometry digest.")
+    errors.extend(
+        trauma_field.raised_gore_budget_errors(
+            list(triangle_counts.values()),
+            per_deformation_limit=int(overlay["goreMaximumTriangles"]),
+            total_limit=trauma_field.GORE_MAX_TRIANGLES_PER_ASSET,
+        )
+    )
     if entry.get("raisedGoreStatus") != "READY":
         errors.append("Raised gore recipe is marked stale or not generated.")
     stored_names = list(entry.get("goreGeneratedNodeNames", []))
-    ordered_roles = [role for _source, role in sources]
-    if stored_names != [expected_names[role] for role in ordered_roles]:
+    expected_names = [item["name"] for item in expected_items]
+    if stored_names != expected_names:
         errors.append("Raised gore manifest node mapping is missing or stale.")
     stored_ids = list(entry.get("goreGeneratedMeshIds", []))
     actual_ids = [
-        str(by_role[role].get("dsb_gore_mesh_id", ""))
-        for role in ordered_roles if role in by_role
+        str(
+            by_component_role[(item["role"], item["component"])].get(
+                "dsb_gore_mesh_id", ""
+            )
+        )
+        for item in expected_items
+        if (item["role"], item["component"]) in by_component_role
     ]
     if stored_ids != actual_ids or len(set(actual_ids)) != len(actual_ids):
         errors.append("Raised gore stable mesh ID mapping is missing, duplicated, or stale.")
@@ -5697,12 +7064,10 @@ def _raised_gore_errors(region, attached, detached, key_name, entry, overlay):
         "status": "FAIL" if errors else "PASS",
         "geometryMode": str(overlay["goreGeometryMode"]),
         "identityId": str(overlay["goreIdentityId"]),
-        "nodeNames": [expected_names[role] for role in ordered_roles],
+        "nodeNames": expected_names,
         "meshIds": list(entry.get("goreGeneratedMeshIds", [])),
         "triangleCounts": triangle_counts,
-        "materialIds": list(
-            trauma_field.gore_material_ids_for_mode(overlay["goreGeometryMode"])
-        ),
+        "materialIds": list(entry.get("goreMaterialIds", [])),
         "measurements": dict(entry.get("goreValidationMeasurements", {})),
         "defaultVisible": False,
         "activationWeight": float(overlay["goreActivationWeight"]),
@@ -5923,35 +7288,51 @@ def _install_existing_surface_stain_preview(context, region_id, key_name):
 def _build_preview_gore_for_entry(
     region, attached, detached, key_name, entry, *, quality
 ):
-    overlay, stamp, records, _topology, capture_hash, deformation_digests, generation_digests = (
+    overlay, stamp, component_inputs, _topology, capture_hash, deformation_digests, generation_digests = (
         _expected_raised_gore_inputs(region, attached, detached, key_name, entry)
     )
-    if quality == "BALANCED" and len(records) > 1:
-        records = records[::2]
     region_id = str(region.get("regionId", ""))
     _remove_preview_gore_objects(region_id, key_name)
     built = []
     try:
-        for source, role in _region_gore_sources(region, attached, detached):
-            builder = (
-                _build_cavity_inlay_object
-                if overlay["goreGeometryMode"] == "CAVITY_INLAY"
-                else _build_gore_shell_object
-            )
-            obj = builder(
-                source,
-                key_name,
-                region_id,
-                role,
-                overlay,
-                records,
-                preview=True,
-            )
-            obj["dsb_gore_linked_stamp_id"] = str(stamp.get("stampId", ""))
-            obj["dsb_gore_capture_hash"] = capture_hash
-            obj["dsb_gore_deformation_digest"] = deformation_digests[role]
-            obj["dsb_gore_generation_digest"] = generation_digests[role]
-            built.append(obj)
+        multi_component = len(component_inputs) > 1
+        for component, component_overlay, full_records in component_inputs:
+            records = list(full_records)
+            if quality == "BALANCED" and len(records) > 1:
+                records = records[::2]
+            for source, role in _region_gore_sources(
+                region, attached, detached
+            ):
+                builder = (
+                    _build_cavity_inlay_object
+                    if component_overlay["goreGeometryMode"] == "CAVITY_INLAY"
+                    else _build_gore_shell_object
+                )
+                storage_key = (
+                    f"{role}:{component}" if multi_component else role
+                )
+                obj = builder(
+                    source,
+                    key_name,
+                    region_id,
+                    role,
+                    component_overlay,
+                    records,
+                    preview=True,
+                    component=component if multi_component else "",
+                )
+                obj["dsb_gore_parent_recipe_digest"] = (
+                    trauma_field.gore_overlay_digest(overlay)
+                )
+                obj["dsb_gore_linked_stamp_id"] = str(
+                    stamp.get("stampId", "")
+                )
+                obj["dsb_gore_capture_hash"] = capture_hash
+                obj["dsb_gore_deformation_digest"] = deformation_digests[role]
+                obj["dsb_gore_generation_digest"] = generation_digests[
+                    storage_key
+                ]
+                built.append(obj)
     except Exception:
         _remove_preview_gore_objects(region_id, key_name)
         raise
@@ -6125,7 +7506,7 @@ def preview_surface_gore(context, *, rebuild_raised=True):
     for area in getattr(screen, "areas", ()):
         if area.type == 'VIEW_3D':
             area.spaces.active.shading.type = 'MATERIAL'
-    settings.deformation_status = f"SURFACE GORE PREVIEW READY â€” {name} / {overlay['gorePresetId']}"
+    settings.deformation_status = f"SURFACE GORE PREVIEW READY — {name} / {overlay['gorePresetId']}"
     return {
         "key": name,
         "presetId": overlay["gorePresetId"],
@@ -6201,22 +7582,37 @@ def validate_active_deformation(context, *, include_gore=True):
 
 def rebuild_active_deformation(context):
     settings, _registry, region, attached, detached, payload, name, entry = _active_key_context(context)
-    stamps = trauma_field.reindex_stamps(entry.get("stamps", []))
+    alternative_mode = str(entry.get("stampMode", "STACK")) == "ALTERNATIVES"
+    stamps = _entry_preview_stamps(entry, settings.deformation_active_stamp_id)
+    stamps = trauma_field.reindex_stamps(stamps)
     if not stamps:
         raise RuntimeError("The active deformation has no trauma stamps; legacy/manual geometry was not overwritten.")
     errors = trauma_field.validate_stamp_stack(stamps)
     if errors:
         raise RuntimeError(" ".join(errors))
-    clear_damage_preview(context, update_status=False)
+    if not alternative_mode:
+        clear_damage_preview(context, update_status=False)
     coordinates = _stamp_local_coordinates(attached, stamps)
+    coordinates = _clamp_local_coordinates_to_world_limit(
+        attached,
+        coordinates,
+        entry.get(
+            "maximumDisplacement",
+            settings.deformation_max_vertex_displacement,
+        ),
+    )
     target = _key(attached, name)
     _set_key_coordinates(target, coordinates)
     sync_key_to_detached(name)
-    entry["stamps"] = stamps
+    entry["stamps"] = (
+        trauma_field.reindex_stamps(entry.get("stamps", []))
+        if alternative_mode
+        else stamps
+    )
     entry["status"] = "TRAUMA_REBUILT"
     entry["recipeStatus"] = "PROCEDURAL_STACK"
     entry["legacy"] = False
-    entry["recipeDigest"] = trauma_field.recipe_digest(stamps)
+    entry["recipeDigest"] = trauma_field.recipe_digest(entry["stamps"])
     entry["region"] = region.get("regionId")
     entry["regionId"] = region.get("regionId")
     raw_overlay = entry.get("surfaceGoreOverlay")
@@ -6226,12 +7622,18 @@ def rebuild_active_deformation(context):
             rebuild_raised_gore_for_key(region, attached, detached, name, entry)
     _store_metadata(attached, detached, payload)
     clear_seed_preview()
-    _zero_managed_weights(attached)
-    target.value = min(1.0, target.slider_max)
+    if alternative_mode:
+        apply_damage_key_previews(context)
+    else:
+        _zero_managed_weights(attached)
+        target.value = min(1.0, target.slider_max)
     if raw_overlay and raw_overlay.get("goreOverlayEnabled", False):
         _install_existing_surface_stain_preview(context, str(region.get("regionId", "")), name)
     inspection = 'CORE' if detached is None else 'ATTACHED'
-    _set_single_damage_preview_state(context, region.get("regionId", ""), name, target.value, inspection)
+    if not alternative_mode:
+        _set_single_damage_preview_state(
+            context, region.get("regionId", ""), name, target.value, inspection
+        )
     _set_authoring_view(attached, detached, inspection, context)
     validation = validate_active_deformation(context)
     if validation["status"] != "PASS":
@@ -7321,9 +8723,17 @@ def get_deformation_manifest():
                 "legacySyncErrorBefore": source_entry.get("legacySyncErrorBefore"),
                 "legacySyncErrorAfter": source_entry.get("legacySyncErrorAfter"),
                 "legacySyncRepairApplied": bool(source_entry.get("legacySyncRepairApplied", False)),
+                "previewEnabled": bool(source_entry.get("previewEnabled", False)),
+                "activeStampId": str(source_entry.get("activeStampId", "")),
+                "stampMode": str(source_entry.get("stampMode", "STACK")),
                 "orderedStamps": [_manifest_stamp(stamp) for stamp in source_entry.get("stamps", [])],
                 "recipeDigest": source_entry.get("recipeDigest"),
             }
+            if source_entry.get("blueprintId"):
+                entry["blueprintId"] = str(source_entry["blueprintId"])
+                entry["blueprintDigest"] = str(
+                    source_entry.get("blueprintDigest", "")
+                )
             if isinstance(source_entry.get("impactControl"), dict):
                 entry["impactControl"] = parameter_schema.normalize_impact_control(
                     source_entry["impactControl"]
@@ -7374,6 +8784,10 @@ def get_deformation_manifest():
                         "generationDigest": str(gore_obj.get("dsb_gore_generation_digest", "")),
                         "geometryDigest": str(gore_obj.get("dsb_gore_mesh_geometry_digest", "")),
                         "geometryMode": str(gore_obj.get("dsb_gore_geometry_mode", "")),
+                        "component": str(gore_obj.get("dsb_gore_component", "")),
+                        "parentRecipeDigest": str(
+                            gore_obj.get("dsb_gore_parent_recipe_digest", "")
+                        ),
                         "identityId": str(gore_obj.get("dsb_gore_identity_id", "")),
                         "materialIds": json.loads(
                             str(gore_obj.get("dsb_gore_material_ids", "[]"))
@@ -7894,37 +9308,15 @@ class DAF_OT_add_trauma_stamp(Operator):
             created = _stamp_from_settings(context, order_index=len(stamps))
             stamps.append(created)
             entry["stamps"] = trauma_field.reindex_stamps(stamps)
+            entry["stampMode"] = "ALTERNATIVES"
+            entry["activeStampId"] = str(created["stampId"])
             entry["recipeStatus"] = "PROCEDURAL_STACK"
             entry["legacy"] = False
-            existing_overlay = entry.get("surfaceGoreOverlay")
-            defaultable_overlay = not existing_overlay
-            if existing_overlay:
-                try:
-                    existing_recipe = trauma_field.normalize_gore_overlay(existing_overlay)
-                    defaultable_overlay = (
-                        not existing_recipe["goreOverlayEnabled"]
-                        and not existing_recipe["linkedStampId"]
-                        and not existing_recipe["goreUserCustomized"]
-                    )
-                except (TypeError, ValueError):
-                    defaultable_overlay = False
-            if settings.deformation_default_heavy_gore and defaultable_overlay:
-                capture = created.get("capture", {})
-                overlay = trauma_field.default_gore_overlay(
-                    "Gore_Bloody_Crater",
-                    enabled=True,
-                    region_id=str(_region.get("regionId", "")),
-                    linked_stamp_id=str(created.get("stampId", "")),
-                    selection_hash=str(capture.get("selectionHash", "")),
-                    topology_fingerprint=str(capture.get("topologyFingerprint", "")),
-                )
-                entry["surfaceGoreOverlay"] = overlay
-                entry["goreOverlayDigest"] = trauma_field.gore_overlay_digest(overlay)
-                entry["raisedGoreStatus"] = "NOT_GENERATED"
-                _load_gore_into_settings(settings, overlay)
             _store_metadata(attached, detached, payload)
             _invalidate_geodesic_cache()
             settings.deformation_active_stamp_id = created["stampId"]
+            if bool(entry.get("previewEnabled", False)):
+                preview_service.run_now(context, quality="FAST")
             settings.deformation_status = f"STAMP ADDED — {created['displayName']}"
             return {'FINISHED'}
         except Exception as exc:
@@ -7945,6 +9337,11 @@ class DAF_OT_select_trauma_stamp(Operator):
             if stamp is None:
                 raise RuntimeError("The selected trauma stamp no longer exists.")
             _load_stamp_into_settings(settings, stamp)
+            entry["activeStampId"] = str(stamp["stampId"])
+            entry["stampMode"] = "ALTERNATIVES"
+            _store_metadata(_attached, _detached, _payload)
+            if bool(entry.get("previewEnabled", False)):
+                preview_service.run_now(context, quality="FAST")
             settings.deformation_status = f"ACTIVE STAMP — {stamp.get('displayName', self.stamp_id)}"
             return {'FINISHED'}
         except Exception as exc:
@@ -8019,11 +9416,17 @@ class DAF_OT_remove_trauma_stamp(Operator):
             overlay = entry.get("surfaceGoreOverlay", {})
             if overlay.get("linkedStampId") == active["stampId"] and overlay.get("goreRaisedEnabled", False):
                 entry["raisedGoreStatus"] = "STALE_REBUILD_REQUIRED"
-            _store_metadata(attached, detached, payload)
             _invalidate_geodesic_cache()
             settings.deformation_active_stamp_id = ""
             if stamps:
-                _load_stamp_into_settings(settings, stamps[min(int(active.get("orderIndex", 0)), len(stamps) - 1)])
+                next_stamp = stamps[min(int(active.get("orderIndex", 0)), len(stamps) - 1)]
+                entry["activeStampId"] = str(next_stamp.get("stampId", ""))
+                _load_stamp_into_settings(settings, next_stamp)
+            else:
+                entry["activeStampId"] = ""
+                entry["previewEnabled"] = False
+            _store_metadata(attached, detached, payload)
+            apply_damage_key_previews(context)
             settings.deformation_status = f"STAMP REMOVED — {active.get('displayName', active['stampId'])}"
             return {'FINISHED'}
         except Exception as exc:
@@ -8122,24 +9525,6 @@ class DAF_OT_rebuild_active_deformation(Operator):
             return {'CANCELLED'}
 
 
-class DAF_OT_apply_surface_gore_preset(Operator):
-    bl_idname = "daf.apply_surface_gore_preset"
-    bl_label = "Use Gore Preset Defaults"
-    bl_description = "Load the selected built-in procedural surface gore preset into the visible controls"
-    bl_options = {'REGISTER', 'UNDO'}
-
-    def execute(self, context):
-        try:
-            apply_gore_preset_to_settings(context)
-            context.scene.daf_settings.deformation_status = (
-                "GORE PRESET DEFAULTS â€” " + context.scene.daf_settings.deformation_gore_preset
-            )
-            return {'FINISHED'}
-        except Exception as exc:
-            self.report({'ERROR'}, str(exc))
-            return {'CANCELLED'}
-
-
 class DAF_OT_randomize_gore_seed(Operator):
     bl_idname = "daf.randomize_gore_seed"
     bl_label = "RANDOMIZE GORE SEED"
@@ -8211,35 +9596,6 @@ class DAF_OT_clear_surface_gore_overlay_preview(Operator):
         try:
             clear_surface_gore_preview()
             context.scene.daf_settings.deformation_status = "SURFACE GORE PREVIEW CLEARED"
-            return {'FINISHED'}
-        except Exception as exc:
-            self.report({'ERROR'}, str(exc))
-            return {'CANCELLED'}
-
-
-class DAF_OT_apply_heavy_gore_all_deformations(Operator):
-    bl_idname = "daf.apply_heavy_gore_all_deformations"
-    bl_label = "Apply Heavy Gore to All Deformations"
-    bl_description = "Assign and build the heavy-clotted recipe for every valid non-custom authored deformation"
-    bl_options = {'REGISTER', 'UNDO'}
-
-    def execute(self, context):
-        try:
-            result = apply_heavy_gore_to_all_deformations(context)
-            summary = (
-                f"Heavy gore: {len(result['applied'])} applied, "
-                f"{len(result['skipped'])} skipped, {len(result['failed'])} failed"
-            )
-            context.scene["dsb_last_gore_batch_report_json"] = json.dumps(
-                result, sort_keys=True, separators=(",", ":")
-            )
-            context.scene.daf_settings.deformation_status = (
-                summary.upper() + (" - " + "; ".join(result["failed"][:4]) if result["failed"] else "")
-            )
-            if result["failed"]:
-                self.report({'WARNING'}, summary + ". " + "; ".join(result["failed"][:2]))
-            else:
-                self.report({'INFO'}, summary + ".")
             return {'FINISHED'}
         except Exception as exc:
             self.report({'ERROR'}, str(exc))
@@ -8501,7 +9857,7 @@ class DAF_OT_create_damage_shape_key(Operator):
 class DAF_OT_create_standard_head_deformations(Operator):
     bl_idname = "daf.create_standard_head_deformations"
     bl_label = "Create Standard Head Set"
-    bl_description = "Create the four standard head deformation keys for one-click presets or optional artist sculpting"
+    bl_description = "Create four empty compatibility keys for optional artist sculpting"
     bl_options = {'REGISTER', 'UNDO'}
 
     def execute(self, context):
@@ -8613,9 +9969,8 @@ class DAF_OT_select_deformation_key(Operator):
 
     def execute(self, context):
         try:
-            clear_damage_preview(context, update_status=False)
             _select_key(context.scene.daf_settings, self.key_name)
-            preview_managed_deformation(context, self.key_name)
+            apply_damage_key_previews(context)
             return {'FINISHED'}
         except Exception as exc:
             self.report({'ERROR'}, str(exc))
@@ -8940,28 +10295,6 @@ class DAF_OT_create_mirrored_deformation(Operator):
             return {'CANCELLED'}
 
 
-class DAF_OT_build_active_preset(Operator):
-    bl_idname = "daf.build_active_deformation_preset"
-    bl_label = "Build Active Preset"
-    bl_description = "Generate, commit, solo, and display a finished procedural starting deformation in one click"
-    bl_options = {'REGISTER', 'UNDO'}
-
-    def execute(self, context):
-        try:
-            settings = context.scene.daf_settings
-            if not settings.deformation_active_key:
-                raise RuntimeError("Select a managed deformation key first.")
-            preview_seed(context)
-            result = bpy.ops.daf.commit_deformation_seed()
-            if 'FINISHED' not in result:
-                raise RuntimeError("The procedural preset could not be committed.")
-            settings.deformation_status = f"OUT-OF-BOX PRESET READY — {settings.deformation_active_key}"
-            return {'FINISHED'}
-        except Exception as exc:
-            self.report({'ERROR'}, str(exc))
-            return {'CANCELLED'}
-
-
 class DAF_OT_show_deformation_attached(Operator):
     bl_idname = "daf.show_deformation_attached"
     bl_label = "Show Attached"
@@ -9211,9 +10544,6 @@ def _legacy_draw_panel_source(box, context, settings):
     if settings.ui_surface_gore_open:
         gore.label(text="Intact exterior + stain + optional exportable raised shell", icon='INFO')
         gore.prop(settings, "deformation_gore_enabled")
-        gore.prop(settings, "deformation_default_heavy_gore")
-        gore.prop(settings, "deformation_gore_preset")
-        gore.operator("daf.apply_surface_gore_preset", text="Use Preset Defaults", icon='PRESET')
         if settings.deformation_gore_enabled:
             stain = gore.box()
             stain.label(text="Surface Stain")
@@ -9270,7 +10600,6 @@ def _legacy_draw_panel_source(box, context, settings):
         actions = gore.box()
         actions.label(text="Actions")
         actions.operator("daf.preview_surface_gore_overlay", text="Preview / Rebuild Current Gore", icon='MATERIAL')
-        actions.operator("daf.apply_heavy_gore_all_deformations", text="APPLY HEAVY GORE TO ALL DEFORMATIONS", icon='PRESET')
         row = actions.row(align=True)
         row.operator("daf.clear_current_generated_gore", text="Clear Current Generated Gore", icon='TRASH')
         row.operator("daf.clear_surface_gore_overlay_preview", text="Clear Stain Preview", icon='X')
@@ -9365,20 +10694,13 @@ def _legacy_draw_panel_source(box, context, settings):
     clear.operator("daf.clear_managed_preview", text="CLEAR DAMAGE PREVIEW", icon='X')
     preview.operator("daf.rebuild_active_deformation", text="REBUILD ACTIVE DEFORMATION", icon='FILE_REFRESH')
     preview.label(text="Rebuild always replays enabled stamps from Basis", icon='INFO')
-    if not stamps:
-        legacy = preview.box()
-        legacy.label(text="Legacy v3.9.1 / Testman Preset", icon='RECOVER_LAST')
-        legacy.operator("daf.build_active_deformation_preset", text="BUILD ACTIVE PRESET", icon='MOD_DISPLACE')
-        row = legacy.row(align=True)
-        row.operator("daf.preview_deformation_seed", text="Preview Legacy Seed", icon='HIDE_OFF')
-        row.operator("daf.commit_deformation_seed", text="Commit Legacy Seed", icon='CHECKMARK')
 
     sculpt = box.box()
     sculpt.label(text="8. Sculpt and Sync", icon='SCULPTMODE_HLT')
     row = sculpt.row(align=True)
     row.operator("daf.begin_deformation_sculpt", text="Begin Sculpt", icon='SCULPTMODE_HLT')
     row.operator("daf.finish_deformation_sculpt", text="Finish Sculpt & Sync", icon='FILE_TICK')
-    sculpt.label(text="Sculpting is optional; presets are now intended to read clearly out of the box", icon='INFO')
+    sculpt.label(text="Sculpting is optional; Damage Blueprints remain procedural.", icon='INFO')
 
     validation_box = box.box()
     validation_box.label(text="9. Validation and Export", icon='CHECKMARK')
@@ -9441,7 +10763,7 @@ def draw_panel(box, context, settings):
             regions.label(text=f"Cached inventory: {int(region.get('vertexCount', 0)):,} vertices / {int(region.get('polygonCount', 0)):,} polygons")
 
     keys = _advanced_authoring_foldout(
-        box, settings, "ui_advanced_deformations_open", "Managed Deformations & Legacy Presets", 'SHAPEKEY_DATA'
+        box, settings, "ui_advanced_deformations_open", "Managed Deformations", 'SHAPEKEY_DATA'
     )
     if keys is not None:
         keys.prop(settings, "deformation_key_name")
@@ -9503,9 +10825,10 @@ def draw_panel(box, context, settings):
         row.operator("daf.move_trauma_stamp_up", text="Move Up")
         row.operator("daf.move_trauma_stamp_down", text="Move Down")
         row.operator("daf.toggle_trauma_stamp", text="Enable / Disable")
-        row = stamps.row(align=True)
-        row.operator("daf.save_trauma_stamp_library", text="Save Stamp Library...")
-        row.operator("daf.load_trauma_stamp_library", text="Load Stamp Library...")
+        stamps.label(
+            text="Portable reuse is handled by Damage Blueprints in the VIP workflow.",
+            icon='ASSET_MANAGER',
+        )
         mode = str(settings.deformation_impact_control_mode)
         stamps.label(
             text=f"Impact Control: {mode} / {'IMPACT PEDAL' if mode == 'MACRO' else 'CUSTOM'}",
@@ -9537,7 +10860,7 @@ def draw_panel(box, context, settings):
         raw_gore = gore.column()
         raw_gore.enabled = mode == 'MANUAL'
         for prop in (
-            "deformation_gore_enabled", "deformation_default_heavy_gore", "deformation_gore_preset",
+            "deformation_gore_enabled",
             "deformation_gore_coverage", "deformation_gore_scatter", "deformation_gore_edge_feather",
             "deformation_gore_raised_enabled", "deformation_gore_clot_coverage", "deformation_gore_core_density",
             "deformation_gore_clot_thickness", "deformation_gore_thickness_variation",
@@ -9557,11 +10880,8 @@ def draw_panel(box, context, settings):
         seed_row = raw_gore.row(align=True)
         seed_row.prop(settings, "deformation_gore_mask_seed")
         seed_row.operator("daf.randomize_gore_seed", text="Randomize Seed")
-        row = raw_gore.row(align=True)
-        row.operator("daf.apply_surface_gore_preset", text="Use Preset Defaults")
-        row.operator("daf.update_surface_gore_overlay", text="Apply Gore Overlay Settings")
+        raw_gore.operator("daf.update_surface_gore_overlay", text="Apply Gore Overlay Settings")
         gore.operator("daf.preview_surface_gore_overlay", text="Preview / Rebuild Current Gore")
-        gore.operator("daf.apply_heavy_gore_all_deformations", text="Apply Heavy Gore to All Deformations")
         row = gore.row(align=True)
         row.operator("daf.clear_current_generated_gore", text="Clear Current Generated Gore")
         row.operator("daf.clear_surface_gore_overlay_preview", text="Clear Stain Preview")
@@ -9614,10 +10934,6 @@ def draw_panel(box, context, settings):
         clear.alert = True
         clear.operator("daf.clear_managed_preview", text="CLEAR DAMAGE PREVIEW", icon='X')
         preview.operator("daf.rebuild_active_deformation", text="REBUILD ACTIVE DEFORMATION")
-        preview.operator("daf.build_active_deformation_preset", text="BUILD ACTIVE PRESET")
-        row = preview.row(align=True)
-        row.operator("daf.preview_deformation_seed", text="Preview Legacy Seed")
-        row.operator("daf.commit_deformation_seed", text="Commit Legacy Seed")
         row = preview.row(align=True)
         row.operator("daf.begin_deformation_sculpt", text="Begin Sculpt")
         row.operator("daf.finish_deformation_sculpt", text="Finish Sculpt & Sync")
@@ -9785,12 +11101,10 @@ CLASSES = (
     DAF_OT_toggle_trauma_stamp,
     DAF_OT_preview_active_trauma_stamp,
     DAF_OT_rebuild_active_deformation,
-    DAF_OT_apply_surface_gore_preset,
     DAF_OT_randomize_gore_seed,
     DAF_OT_update_surface_gore_overlay,
     DAF_OT_preview_surface_gore_overlay,
     DAF_OT_clear_surface_gore_overlay_preview,
-    DAF_OT_apply_heavy_gore_all_deformations,
     DAF_OT_clear_current_generated_gore,
     DAF_OT_rebuild_all_generated_gore,
     DAF_OT_validate_gore_geometry,
@@ -9809,7 +11123,6 @@ CLASSES = (
     DAF_OT_begin_deformation_sculpt,
     DAF_OT_finish_deformation_sculpt,
     DAF_OT_create_mirrored_deformation,
-    DAF_OT_build_active_preset,
     DAF_OT_show_deformation_attached,
     DAF_OT_show_deformation_detached,
     DAF_OT_show_deformation_overlay,

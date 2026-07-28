@@ -90,8 +90,6 @@ def main():
         deformation_authoring._set_active_region(region_id, bpy.context)
         _registry, _region, target, _detached = deformation_authoring._resolve_active_region(bpy.context)
         face_indices = select_patch(target, args.technical_face)
-        settings.deformation_impact_preset = 'CUSTOM'
-        settings.deformation_impact_intensity = 'HEAVY'
         settings.deformation_impact_semantic_name = semantic_name
         result = bpy.ops.daf.create_impact_from_selection()
         if 'FINISHED' not in result:

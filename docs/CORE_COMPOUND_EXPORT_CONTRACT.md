@@ -1,6 +1,9 @@
 # Core and compound trauma export contract
 
-Forge 3.14 adds explicit single-mesh core regions and synchronized compound trauma events while preserving the existing paired-segment contract. glTF morph targets always remain owned by an individual mesh or primitive; Forge never represents a compound event as one literal cross-object shape key.
+Forge 3.19 supports explicit single-mesh core regions and synchronized compound
+trauma events while preserving the paired-segment contract. glTF morph targets
+always remain owned by an individual mesh or primitive; Forge never represents
+a compound event as one literal cross-object shape key.
 
 ## Region modes
 
@@ -9,7 +12,11 @@ Each `registeredRegions[]` entry declares `regionMode`:
 - `PAIRED_SEGMENT` owns an attached mesh and its exact-index detached counterpart. A managed deformation name exists on both meshes, and the detached morph receives the attached morph's world-space delta by the same vertex index.
 - `CORE_SINGLE` owns one `targetObject`; `detachedObject` is empty. The core morph and optional `CORE` gore node belong only to that mesh.
 
-Both modes export target identity, topology and source-weight fingerprints, counts, seam association, managed key names, validation state, morph metadata, ordered stamp recipes, and gore linkage. Missing detached data does not implicitly change a region to core mode.
+Both modes export target identity, topology and source-weight fingerprints,
+counts, seam association, managed key names, validation state, morph metadata,
+ordered Stamp recipes, `activeStampId`, `stampMode`, `previewEnabled`, optional
+Blueprint ID/digest, and gore linkage. Missing detached data does not implicitly
+change a region to core mode.
 
 ## Compound event mapping
 
@@ -33,7 +40,18 @@ Forge does not weld, merge, add, or delete source/generated vertices. Source Dam
 
 ## Gore nodes
 
-`generatedGoreMeshes[]` is the flat runtime map. Core keys produce one `CORE` owner; paired keys produce `ATTACHED` and `DETACHED` owners. Compound participants share the event's gore family but derive deterministic, coordinated, non-identical seeds from event seed + region ID + mesh identity. Every node is ordinary exportable mesh geometry using the three glTF-safe Principled gore materials and is inactive by default.
+`generatedGoreMeshes[]` is the flat runtime map. A single-mode recipe produces
+one owner for each required `CORE`, `ATTACHED`, or `DETACHED` role. A
+`HYBRID_ADDITIVE` recipe produces independent `RAISED` and `INLAY` components
+for every required role. Each record exposes `component`,
+`parentRecipeDigest`, its component recipe/generation/geometry digests, and the
+shared activation mapping. Recipe-v6 raised components may also contain a
+closed lobulated nucleus in the same node; its surface controls, material role,
+and nucleus triangle count remain part of that component's recipe and mesh
+metadata. Compound participants derive deterministic,
+coordinated, non-identical seeds from event seed + region ID + mesh identity.
+Every node is ordinary exportable mesh geometry with glTF-safe Principled
+materials and is inactive by default.
 
 ## Mace head-guard Actions
 

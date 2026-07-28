@@ -1,4 +1,4 @@
-"""Self-contained Blender 5.1.2 acceptance for Forge 3.18 cavity/inlay gore.
+"""Self-contained Blender 5.1.2 acceptance for Forge 3.19 cavity/inlay gore.
 
 Run:
 
@@ -567,7 +567,7 @@ def main():
 
     report = {
         "status": "PASS",
-        "forgeVersion": "3.18.0",
+        "forgeVersion": "3.19.0",
         "blenderVersion": bpy.app.version_string,
         "identityCount": len(IDENTITIES),
         "macroMatrixGenerationCount": matrix_count,

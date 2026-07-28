@@ -1,5 +1,62 @@
 # Changelog
 
+## 3.19.0
+
+- Replaced factory-preset authoring with the collapsible **VIP DAMAGE WORKFLOW**:
+  clear Damage Key cards, unmistakable **WORKING ON** focus, independent
+  per-key Preview toggles, and visible child Stamp alternatives.
+- Added simultaneous multi-key preview persistence. Selecting a key changes
+  editing focus without soloing it; new keys save multiple Stamp alternatives
+  while previewing exactly one active Stamp per key.
+- Replaced the old low-leverage front controls with six strong Impact macros
+  (**AREA**, **DEPTH**, **FALLOFF**, **EDGE DAMAGE**, **DISTORTION**,
+  **ASYMMETRY**) and six direct Gore controls.
+- Added the five-control **COHESIVE LEGACY SURFACE GORE** deck: **SURFACE
+  MASS**, **RELIEF**, **NUCLEUS**, **FOLDS**, and **REDNESS**. These macros
+  expose the existing raised-gore manual controls as a coherent high-leverage
+  surface system instead of relying on scattered triangular overlay patches.
+- Added a deterministic closed, lobulated solid-tissue nucleus to each raised
+  component. It is anchored to the dominant captured island, inherits source
+  skinning, stays inside the per-key triangle budget, uses the crushed-tissue
+  material role, and composes additively with the full inlay channel.
+- Added one master **RANDOMIZE DAMAGE** transaction that deterministically
+  derives independent impact and gore seeds and schedules one managed preview.
+- Added `HYBRID_ADDITIVE` gore with independent 0.0–1.0 raised and inlay
+  channels. A 1.0 + 1.0 recipe generates full raised and full recessed
+  components with stable component nodes, IDs, digests, manifests, validation,
+  preview, and export behavior.
+- Added `dreadstone.damage_blueprint.v1` and its JSON library. Blueprints save
+  macros, seeds, texture contributions, semantic intent, and capture-relative
+  scale ratios while excluding object names, topology, indices, coordinates,
+  and generated mesh bytes. Applying always rebinds to a fresh destination
+  capture, enabling adaptive reuse across regions and characters.
+- Removed preset operators and preset controls from registered/user-facing
+  workflows while retaining internal migration data for older authored files.
+- Fixed paired-region Damage Key creation failing during preview with an
+  undefined detached-mesh reference. The same button now accepts one vertex,
+  multiple vertices, one face, or one connected face patch, and a cancelled
+  transaction immediately rebuilds the panel cache so no phantom Stamp remains.
+- Fixed raised-gore component ownership being overwritten by an internal face
+  island list. Paired hybrid saves now retain all four final nodes (attached
+  raised/inlay and detached raised/inlay), pass stable-ID validation, and show
+  the saved gore without discarding the Damage Key or Stamp recipe.
+- Fixed legal Gore macro combinations placing the clot plate shallower than
+  the generated cavity rim. Internal clot/tissue medians are now projected
+  into the measured rim-to-liner interval, so slider edits and VIP Save retain
+  strict surface-to-rim-to-clot/tissue-to-liner depth order.
+- Made the VIP preview contract explicit and executable: debounced macro edits
+  and Randomize update the unsaved look, FAST shows its live stain, BALANCED
+  adds temporary raised/inlay geometry, and **UPDATE GORE PREVIEW** refreshes
+  immediately. Save now reads clearly as the commit/final-validation step.
+- Fixed a macro-edit boundary mismatch where a generated Damage Key could
+  remain slightly beyond its newly derived maximum world displacement. Preview
+  and final rebuild coordinates are now independently projected into the
+  current recipe cap before writing the shape key; strict validation remains
+  unchanged.
+- Bumped normalized gore recipes to v6 while preserving v1-v5 digests and
+  keeping new surface mass/nucleus geometry disabled on untouched legacy
+  records. Damage Blueprints now round-trip all five surface macros.
+
 ## 3.18.0
 
 - Added recessed `CAVITY_INLAY` gore that follows the final deformed surface without editing source topology, with closed manifold liners, near-host rims, bounded proudness, scale-relative depth/separation, optional clot/crushed-tissue/exposed-bone layers, normalized deform-bone skinning, and exportable source/depth/layer attributes.

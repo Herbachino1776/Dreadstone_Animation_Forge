@@ -94,14 +94,26 @@ class HealingArchitectureTests(unittest.TestCase):
                             continue
                         if isinstance(value, str) and value.startswith("daf."):
                             actual.add(value)
+        retired_presets = {
+            "daf.apply_heavy_gore_all_deformations",
+            "daf.apply_surface_gore_preset",
+            "daf.build_active_deformation_preset",
+        }
+        preserved = BASELINE_OPERATOR_IDS - retired_presets
         self.assertEqual(len(BASELINE_OPERATOR_IDS), 90)
-        self.assertTrue(BASELINE_OPERATOR_IDS <= actual, sorted(BASELINE_OPERATOR_IDS - actual))
+        self.assertTrue(preserved <= actual, sorted(preserved - actual))
+        self.assertTrue(retired_presets.isdisjoint(actual))
         self.assertTrue({
             "daf.prepare_character_for_damage_authoring",
             "daf.create_impact_from_selection",
             "daf.commit_impact",
             "daf.revert_impact",
             "daf.write_forge_diagnostic_report",
+            "daf.toggle_damage_key_preview",
+            "daf.select_damage_stamp",
+            "daf.randomize_damage_recipe",
+            "daf.save_damage_blueprint",
+            "daf.apply_damage_blueprint",
         } <= actual)
 
     def test_scene_property_contract_is_additive(self):

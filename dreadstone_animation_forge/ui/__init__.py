@@ -1,7 +1,7 @@
 """Task-oriented Forge UI and orchestrating operators."""
 
 from . import panels, properties, workflow_state
-from .operators import character, compound, diagnostics, export, gore, impacts, previews, regions, validation
+from .operators import character, compound, diagnostics, export, gore, impacts, previews, regions, validation, vip
 
 
 CLASSES = (
@@ -14,6 +14,7 @@ CLASSES = (
     *compound.CLASSES,
     *validation.CLASSES,
     *export.CLASSES,
+    *vip.CLASSES,
 )
 
 __all__ = ("CLASSES", "panels", "properties", "workflow_state")

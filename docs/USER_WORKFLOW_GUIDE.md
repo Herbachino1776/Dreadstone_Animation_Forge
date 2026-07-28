@@ -1,231 +1,278 @@
-# Dreadstone Animation Forge 3.18.0 — User Workflow Guide
+# Dreadstone Animation Forge 3.19.0 — User Workflow Guide
 
-- **Supported Blender:** `5.1.2`
-- **Release archive:** `Dreadstone_Animation_Forge_v3_18_0.zip`
-- **Primary rule:** the artist chooses anatomical surfaces; Forge automates processing, not anatomy.
-- **Safety rule:** Source Damage Readiness and `NOT READY` behavior are unchanged and are never bypassed by an orchestrator.
+- Release archive: `Dreadstone_Animation_Forge_v3_19_0.zip`
+- Supported release runtime: Blender 5.1.2
+- Damage authoring model: Damage Keys → child Stamp alternatives → strong macros
+- Reuse model: topology-independent Damage Blueprints
 
-## Fastest beginner route
+## 1. Install Dreadstone Animation Forge 3.19.0
 
-1. Import the source GLB and save a working `.blend`.
-2. Select the character and open **Start / Character**.
-3. Choose an explicit readiness output folder and target height, then run **Prepare Character for Damage Authoring**.
-4. Open **Damage Authoring**, choose Head, Body, Left Forearm, or Right Forearm, enter Face Edit mode, and select one connected patch.
-5. Choose an impact family, direction, and intensity, then click **Create Impact From Current Selection**.
-6. Use the top **IMPACT CONTROL DECK** to turn the five Impact Pedal macros, click **RANDOMIZE SEED**, click **GENERATE / REFRESH PREVIEW**, then click **COMMIT / SAVE IMPACT** without scrolling.
-7. Open **Validate & Export**, run complete validation, export, and clean-reimport.
-
-The top “Next” card derives its recommendation from current source, readiness, region, capture, key, preview, and validation state. It is guidance, not a validation override.
-
-## 1. Install Dreadstone Animation Forge 3.18.0
-
-In Blender 5.1.2 choose **Edit > Preferences > Add-ons > Install from Disk**, select `Dreadstone_Animation_Forge_v3_18_0.zip` without extracting it, and enable the add-on. A successful install shows version 3.18.0 without a registration error.
+In Blender choose **Edit > Preferences > Add-ons > Install from Disk**, select
+`Dreadstone_Animation_Forge_v3_19_0.zip` without extracting it, and enable
+**Dreadstone Animation Forge**.
 
 ## 2. Open the Dreadstone panel
 
-In the 3D Viewport press `N` and open the **Dreadstone** tab. The primary workspaces are:
-
-- **Start / Character** — source preparation dashboard and one safe orchestrator.
-- **Damage Authoring** — active context, region buttons, one-click drafts, tuning, preview, Commit/Revert.
-- **Animation** — rig analysis, imported pack adoption, drafts, guard Actions, and Approved Pack work.
-- **Validate & Export** — focused validation, complete authoring validation, and damage export.
-- **Advanced** — every manual, expert, legacy, portable, compound, gore, and diagnostics control.
-
-Panel display reads cached summaries only. Merely opening or redrawing it does not rebuild meshes, solve geodesics, validate geometry, rewrite JSON, create materials, or alter selection.
+In the 3D Viewport press `N`, open the **Dreadstone** tab, and choose the
+**Damage Authoring** workspace. The collapsible **VIP DAMAGE WORKFLOW** is the
+front-facing authoring surface. Advanced compatibility and repair tools remain
+under **Advanced**.
 
 ## 3. Import and prepare a source GLB
 
-Import with **File > Import > glTF 2.0**, save a working `.blend`, and select the character mesh or armature. Set the target height and explicit readiness folder.
-
-Click **Prepare Character for Damage Authoring**. It performs and reports these stages in order:
-
-1. resolve the selected character hierarchy;
-2. **Analyze Rig**;
-3. measure height and run **Safe Resize** only when the configured target differs;
-4. run Source Damage Readiness into the explicit folder;
-5. stop immediately when the result is `NOT READY`;
-6. load the verified READY handoff;
-7. build the protected authoring asset;
-8. register and validate existing `head`, `body_core`, `forearm_left`, and `forearm_right` generated regions;
-9. recommend the next action.
-
-The summary is stored with the scene. A failed stage is visible and transactional cleanup removes only resources created by that operation. Individual **Analyze Rig**, **Safe Resize**, **Analyze Source Damage Readiness**, **Load READY Handoff**, and **Build Authoring Asset** actions remain in Advanced.
-
-## 4. Create, tune, commit, and revert an impact
-
-In **Damage Authoring**, click a registered region button. Forge activates its managed object; a paired region also shows its detached partner. Enter Face Edit mode and select one connected patch on that active mesh.
-
-Choose the impact family, direction, intensity, and one of Head Left, Head Right, Head Front, Head Back, Body Front, Body Left, Body Right, Body Back, Forearm Outer, or Custom Impact. Presets configure defaults but never select polygons.
-
-Click **Create Impact From Current Selection**. Atomically, Forge validates the region and connected patch, creates or selects a unique managed key, captures the surface, creates the first blunt stamp, applies the Impact Pedal recipe, selects the draft, and produces `FAST` preview. Its result message reports those stages. Any required-stage failure restores shape keys, coordinates, metadata, settings, materials, visibility, selection, mode, frame, and owned helpers.
-
-The authoritative top card is **IMPACT CONTROL DECK**. It keeps **IMPACT PEDAL**, the master seed, **RANDOMIZE SEED**, **GENERATE / REFRESH PREVIEW**, **COMMIT / SAVE IMPACT**, **Revert**, **CLEAR DAMAGE PREVIEW**, Preview Quality, recipe state, affected vertex count, and elapsed time together. The same controls remain available even when live preview is enabled, so the create–explore–preview–keep loop requires no trip to the bottom of the panel.
-
-The five normalized 0–100 macros are:
-
-- **SIZE** — coordinates the captured-region-relative stamp radius, patch feather, influence reach, and later gore-patch scale without changing the selected topology or placement anchor.
-- **CRUSH** — coordinates inward depth, strength, family-specific compression, and a safe maximum-displacement allowance. Zero is a valid no-deformation setting; higher values are bounded and monotonically stronger.
-- **PROFILE** — reshapes center-versus-rim and broad-versus-focused response through perceptual falloff and family-specific profile metadata. It never changes the selected trauma family.
-- **EDGE SAFETY** — coordinates seam protection, boundary attenuation, edge retention, and safe feather behavior. Maximum protection retains an impact instead of attenuating the entire capture away.
-- **CHAOS** — adds deterministic center skew, direction variation, asymmetric falloff, local breakup, and nonuniform response. Redraws do not randomize it.
-
-The current seed and identity digest prefix are shown on the pedal. **RANDOMIZE SEED** creates one new valid seed, marks the recipe dirty once, and requests at most one managed preview. It does not alter region, capture, family, direction, intensity, or macros. The seed and macro section are stored additively with the derived physical recipe, survive portable format-1–4 library workflows, and reproduce the same deformation for the same inputs.
-
-All artist-facing numeric endpoints are inclusive and use one parameter-contract authority shared by Blender RNA, normalization, presets, validation, serialization, rebuild, and export checks. Physical values remain explicit in recipes. Soft ranges, precision, steps, region scaling, and response curves improve dragging without silently clamping or rewriting an accepted endpoint.
-
-Open **Advanced Impact Internals** only when needed; it starts collapsed. In `MACRO` mode, raw Radius, Depth, Falloff, Strength, Maximum Displacement, seam, feather, and gore values are read-only derivations, and one macro edit schedules one preview request. Choose **USE MANUAL CONTROL** for editable raw values and a `CUSTOM` recipe. **FIT MACROS TO CURRENT VALUES** estimates a nearby pedal state without changing the manual recipe. **RETURN TO MACRO CONTROL** asks for confirmation because it replaces manual values with macro-derived values. Legacy recipes without exact macro metadata load safely as `CUSTOM`.
-
-- `OFF` performs no automatic preview and atomically clears any active damage presentation.
-- `FAST` evaluates affected vertices with one reusable temporary key and never builds final raised-gore shells.
-- `BALANCED` evaluates the complete stamp stack non-destructively and may use reduced preview feedback after the debounce.
-- `FINAL` is explicit final work: permanent deformation, final-budget gore, and focused validation.
-
-One macro transaction validates every derived value before assignment, marks the recipe dirty once, increments one generation token, and schedules at most one 200 ms main-thread timer. A newer generation invalidates stale work. Use **COMMIT / SAVE IMPACT** for deterministic final output, **Revert** for the stored recipe and seed, **CLEAR DAMAGE PREVIEW** to zero managed morphs, remove temporary stain resources, and hide inactive raised gore as one operation, or **Undo Draft** for an uncommitted one-click draft. Clearing never deletes a stored recipe or generated export mesh. **FINAL PREVIEW** is an explicit high-quality preview and does not silently commit.
-
-Blender's standard sidebar widgets do not provide a stable arbitrary per-button RGB API. Forge therefore uses native boxes, large `scale_y`, icons, short labels, neutral theme-safe styling for **RANDOMIZE SEED**, and Blender's reliable alert treatment for destructive clear actions. It does not install a fragile custom GPU/event widget merely to force light gray, blue, green, or amber.
-
-## 5. Author and approve animation drafts
-
-Open **Animation** at any point in the character, gore, or deformation workflow and select any mesh or armature that belongs to the target character. Animation authoring is not gated by Source Readiness, the active damage region, or whether the target is an imported source rig or generated damage rig. Use **Adopt Imported Animation Pack** when the GLB already contains appropriate Actions.
-
-The restored collapsible sections expose Ground Preview, Rig Mapping & Direction, Arm & Hand Pose Polish, Walk Draft, Death / Collapse Draft, Flank Hurt Drafts, Mace Head-Guard Drafts, Approved Animation Pack, and Action Approval & Safety. Walk, collapse, and hurt retain their primary and advanced creation sliders. Mace guards retain timing controls and now also use the shared rotation-only arm/hand pose-polish sliders. Change the desired values and click the matching **Generate / Refresh** operation to build a disposable custom draft.
-
-Generation never overwrites an imported, approved, or NLA-used Action. Inspect the draft, then use its **Version / Approve** control to preserve it as a new permanent Action. Use **Protect Active DSB Action** for an adopted or manually edited DSB Action that should be export-eligible. A disposable draft is not exported as approved merely because it exists.
-
-## 6. Build and validate an approved animation pack
-
-Choose the pack output directory and filename, then use **Build Approved Animation Pack** and **Validate Last Built Pack**. Guard Actions retain `Brace_Start`, `Guard_Active`, and `Brace_End` markers and their stable Action naming/semantic contracts.
-
-## 7. Run Source Damage Readiness
-
-The Advanced manual route uses **Analyze Source Damage Readiness**. It inspects the preserved original source inventory only. Review Head–Neck, Left Elbow, Right Elbow, and Lower Spine results and the JSON/Markdown reports. Use **Preview Candidate Seam** for inspection.
-
-If the result is `NOT READY`, stop and correct the source outside any guessed-repair path. **Repair Source Readiness Contract** repairs only an eligible stale identity contract from the preserved original; it does not weaken geometry requirements or substitute generated meshes.
-
-## 8. Build Damage Segment and Stump Authoring assets
-
-For the manual route, select the verified report with **Load READY Handoff** and click **Build Authoring Asset**. Forge preserves the original, creates `DSB_DAMAGE_RIG`, `DSB_SOURCE_MODEL_PROTECTED`, body/head/forearm/lower-body pieces, stump caps, and helpers under owned collections.
-
-## 9. Preview intact and detached states
-
-Use **Preview Intact** and **Preview Detached** to inspect cut boundaries and caps. These views are viewport presentation only. The Trauma Field Attached/Detached/Both view does not rewrite render/export visibility.
-
-## 10. Register and validate trauma regions
-
-Prepare Character registers existing standard generated regions automatically. Advanced manual registration remains available through **Register Selected Pair**, **Register Selected Core Mesh**, and **Validate Region**.
-
-- `PAIRED_SEGMENT` requires exact compatible attached/detached topology and uses exact-index world-space delta synchronization.
-- `CORE_SINGLE` owns one target mesh and never invents a fake partner.
-
-Use **REPAIR LEGACY PAIR SYNC** only for eligible legacy metadata. For compatibility, missing legacy keys are not recreated and unrepairable attached keys are not overwritten.
-
-## 11. Body, forearm, and compound workflows
-
-For Body, select a connected torso patch on `DSB_BODY_CORE`; Forge rebuilds only that core region. For either forearm, select the intended patch on the attached forearm and inspect exact-index attached/detached variants and elbow seam protection.
-
-For a multi-region injury, use **New Compound Trauma Event**, activate each desired region/key, use **Add Active Region to Event**, then **Capture Shared Impact Field**. Link real seam IDs where appropriate, preview, and run the explicit compound rebuild. All child morphs, stains, and gore nodes activate or clear atomically. `Event Zero` returns every child to the inactive preview state without deleting recipes or generated geometry.
-
-Compound continuity modes retain shared-field locking, blend-across-seam, and seam protection. They are analytical only: there is no Blender mesh merge, weld, or topology mutation.
-
-## 12. Capture a surface with every placement mode
-
-Advanced offers **Capture Single Face**, **Capture Connected Face Patch**, **Capture Selected Vertices**, and **Capture 3D Cursor**. Use face/vertex modes for artist-approved anatomy. Cursor capture is an explicit artist placement, not inferred anatomy.
-
-## 13. Choose influence masks, distance modes, and damage axis
-
-Influence choices remain **Patch Only**, **Patch Feathered**, and **Connected Surface**. Distance choices remain **Surface Distance** and **World Distance**. Direction can follow the surface, semantic presets, or an explicit custom vector. Seam safety remains independently controllable.
-
-## 14. Create and manage trauma stamps
-
-**Advanced Impact Internals** and the Advanced workspace retain **Add Stamp**, **Update Active Stamp**, **Enable / Disable**, duplicate/remove/reorder controls, exact placement modes, custom vectors, geometry budgets, and recipe metadata. Portable **Save Stamp Library...** and **Load Stamp Library...** retain formats 1–4; they serialize recipes and analytical anchors, never proprietary mesh payloads.
-
-## Surface Gore Overlay for blunt trauma
-
-Forge 3.18 makes `CAVITY_INLAY` the default for new heavy gore. It generates ordinary manifold glTF mesh nodes just below the final deformed host surface, without cutting, deleting, or rewiring source topology. The outer rim stays near the host while the wound bed recesses inward along stable source normals. Scale-relative cavity depth is always greater than liner separation; the generated node carries source-position, source-normal, depth, layer, material-role, and deterministic-variation attributes for validation and export.
-
-The top **GORE CONTROL DECK** sits directly below the Impact deck. It keeps the active **GORE PEDAL** identity, all six macros, current gore seed and identity digest, **RANDOMIZE GORE SEED**, **GENERATE / REBUILD GORE PREVIEW**, **COMMIT / SAVE GORE**, **Revert Gore**, **CLEAR DAMAGE PREVIEW**, **FINAL GORE PREVIEW**, **Validate Gore Geometry**, status, triangle count, and measured proudness/depth/separation together without scrolling.
-
-The six normalized 0–100 Gore Pedal macros are:
-
-- **EXPOSURE** — coordinates wound coverage, rim opening, tissue visibility, and optional exposed-bone reveal.
-- **CAVITY** — controls scale-relative inward depth and the center-to-rim recess profile.
-- **CLOT FILL** — fills part of the recess with dark clot while preserving a valid separation from the host.
-- **BREAKUP** — adds deterministic irregularity, patch breakup, ragged rim response, and material variation.
-- **WETNESS** — adjusts wet-versus-rough material response without metallic or emission.
-- **VARIATION** — coordinates deterministic spatial and material variation while retaining the same placement, identity, and macro values.
-
-The six distinct identities are **Bruised Dent**, **Bloody Crater**, **Dark Clot Cavity**, **Crushed Tissue**, **Exposed Cranium**, and **Ragged Impact**. Selecting an identity applies its intentional macro defaults and layer policy; it does not move the artist-approved capture. The active preset identity, macros, seed, derived physical values, and `dreadstone.gore_control.v1` digest are serialized additively.
-
-**RANDOMIZE GORE SEED** changes only the gore result. It preserves the Impact Pedal state, gore macros, region, key, capture, linked stamp, identity, and geometry mode; it creates one valid seed, one dirty transition, and at most one managed preview request. The same seed and inputs reproduce the same geometry and material classification. Redrawing the panel never randomizes anything.
-
-Gore preview follows the shared quality setting:
-
-- `OFF` clears preview presentation and creates no preview gore.
-- `FAST` updates host/stain feedback without building the full inlay mesh.
-- `BALANCED` creates reduced-budget, preview-only cavity feedback.
-- `FINAL` creates full-budget preview-only cavity geometry and runs focused checks.
-
-Preview nodes are marked preview-only, excluded from manifests and final-node lookups, and removed by **CLEAR DAMAGE PREVIEW**. **COMMIT / SAVE GORE** transactionally replaces saved owned nodes only after successful final generation and validation. **Revert Gore** restores the stored recipe and seed. A failed preview or commit preserves the previous valid committed geometry.
-
-Open **Advanced Gore Internals** only when needed; it starts collapsed. In `MACRO` mode, scale-relative cavity depth, liner separation, rim width, layer depths, layer toggles, host-deformation contribution, material values, and limits are derived and read-only. **USE MANUAL GORE CONTROL** exposes the raw values as a `CUSTOM` recipe. **RETURN TO GORE PEDAL** returns to macro-derived values. Advanced also retains **Use Preset Defaults**, **Apply Gore Overlay Settings**, **Preview / Rebuild Current Gore**, **Clear Stain Preview**, **Apply Heavy Gore to All Deformations**, **Clear Current Generated Gore**, and **Rebuild All Generated Gore**.
-
-Compatibility modes remain explicit. `STAIN_ONLY` keeps the flat material/attribute overlay and creates no geometry. `LEGACY_RAISED` preserves the v3.13–v3.17 raised-shell recipe, three-material family, fiber atlas, inner-reddening barrier, old controls, and unchanged legacy digest behavior. Old recipes migrate only to their matching compatibility mode; Forge never silently converts an old raised recipe into a cavity. Use **Create Blunt Gore Head Set**, **Enable Surface Gore Overlay**, **Use Preset Defaults**, **Randomize Master Gore Seed**, **Apply Gore Overlay Settings**, **Preview / Rebuild Current Gore**, and **Clear Stain Preview** when reproducing the legacy workflow.
-
-Blender's standard sidebar operator widgets do not expose a stable arbitrary per-button RGB API. Forge uses large native embossed neutral/theme-safe buttons, icons, scale, and Blender's reliable alert state for clear actions; it does not install a fragile custom GPU/event widget just to force exact light-gray, blue, green, or amber button colors.
-
-## 15. Preview, rebuild, compare, sculpt, and repair
-
-The default workflow uses the top **GENERATE / REFRESH PREVIEW** and **COMMIT / SAVE IMPACT** actions. Advanced retains **REBUILD ACTIVE DEFORMATION**, **Attached**, **Detached**, **Both**, optional sculpt begin/finish, synchronization, **REPAIR LEGACY PAIR SYNC**, and the prior seed preview/rebuild controls. Sculpting is optional and never silently substitutes for recipe state.
-
-## 16. Run every validation command
-
-Focused checks are **Validate Morph Targets**, **Validate Gore Geometry**, **Validate Compound Event**, and **Validate Mace Head-Guard Drafts**. **Validate Complete Damage Asset** is Authoring Validation. It remains separate from Export Validation and does not weaken Source Readiness.
-
-The explicit complete validator may briefly evaluate hidden saved hierarchies so Blender returns their real world matrices after reopen; it restores exact visibility before returning.
-
-## 17. Export the damage GLB and manifest
-
-Set the export folder and filename, then click **Export Damage GLB + Manifest**. Export snapshots the exact Blender preview, temporarily zeros every managed morph, clears stain resources, forces generated gore into its inactive/default export state, exports, and restores the snapshot in a guaranteed cleanup block. Recipes, owned raised-gore nodes, compound mappings, materials, stable IDs, object/morph naming, and inactive runtime activation semantics remain independent of viewport state.
-
-## 18. Clean reimport and verification
-
-Import the exported GLB into a clean scene. Click **Restore Reimported GLB Intact Preview** and verify morph names, attached/detached mappings, core targets, gore nodes/materials, compound activation records, default visibility, and ownership extras. Runtime activation remains outside Forge; the existing Folsom Field contract is unchanged.
-
-## 19. Beginner recipes
-
-- Head blunt impact: Head region → connected face patch → Head direction preset → Medium/Heavy → Create → FAST tune → Commit → inspect Both.
-- Body impact: Body region → torso patch → Body direction preset → Create → tune → Commit → validate core target.
-- Forearm impact: forearm region → outer patch → Forearm Outer → Create → tune seam safety → Commit → inspect attached/detached.
-- Compound impact: create authored child impacts first → new event → add participants → capture shared field → preview → rebuild → validate seam mismatch.
-
-## 20. Troubleshooting and recovery
-
-- Slow slider response: confirm Preview Quality is `FAST`; use the normalized pedal rather than MANUAL physical sliders; run **Startup Self-Check** and inspect cache/timer counts.
-- Unexpected manual values: remain in `MANUAL`/`CUSTOM`, use **FIT MACROS TO CURRENT VALUES** for an estimate, and return to macro control only after accepting the confirmation.
-- Unwanted seed result: use **Revert** to restore the stored seed and recipe, or choose another seed and explicitly refresh preview. Seed changes are deterministic and never occur on redraw.
-- `FAILED` preview: the previous valid/clean state is restored. Read the preview message; correct the active region/key/capture before retrying.
-- `NOT READY`: inspect the source report. Do not build from generated substitutes or guess-repair seams.
-- Wrong selected object: click the region button to activate the managed target before entering Face Edit mode.
-- Crash or unexplained slowdown: expand **Advanced > Diagnostics & Crash Support**, choose a folder, run **WRITE FORGE DIAGNOSTIC REPORT**, and attach the JSON/Markdown plus Blender version and exact reproduction steps. Reports omit mesh payloads.
-- Duplicate handler/timer suspicion: run **Startup Self-Check**, disable/re-enable once, and include the report if counts do not return to one handler and at most one active preview timer.
-- Legacy pair problem: use the guarded repair only when validation identifies an eligible stale pair. Virtual welding remains analytical only and user topology is not changed.
-
-## Advanced compatibility reference
-
-Forge 3.18 preserves public operator IDs, scene/custom-property keys, Source Readiness and authoring schemas, generated `DSB_*` names, portable library formats 1–4, paired/core modes, compound semantics, attached/detached exact-index behavior, seam modes, Action names/markers, and GLB/manifest runtime contracts. Impact and Gore Pedal metadata are additive; unchanged legacy stamp and gore recipes retain their existing digests. Expert controls and both legacy gore modes remain under Advanced; they were not removed.
+Import the character, save a working `.blend`, select its mesh or armature, and
+use **Prepare Character for Damage Authoring**. The preparation workflow runs
+Source Readiness, creates the protected authoring asset only after a valid
+handoff, and registers the standard Head, Body, Left Forearm, and Right Forearm
+regions when they exist. A `NOT READY` result is a stop condition; inspect or
+repair the source rather than bypassing it.
+
+## 4. Use the VIP Damage workflow
+
+The normal loop is intentionally short:
+
+1. In **1 · PLACE**, activate a region.
+2. Enter Edit mode and select one vertex, multiple vertices, one face, or one
+   connected face patch. The button follows Blender's active mesh selection
+   mode.
+3. Choose **Direction**, name the key if desired, and click
+   **CREATE DAMAGE KEY FROM SELECTION**.
+4. Work in the new card marked **WORKING ON**.
+5. Tune the Impact and Additive Gore macros or click **RANDOMIZE DAMAGE**.
+6. Click **SAVE DAMAGE KEY + STAMP + GORE**.
+
+There are no factory presets in the authoring UI. A neutral starting recipe,
+high-leverage macros, and deterministic randomization replace them.
+
+The macros and **RANDOMIZE DAMAGE** request a managed preview automatically
+after a short debounce. **FAST** shows the current deformation and live gore
+stain without building geometry. **BALANCED** also builds temporary raised and
+inlay gore geometry from the unsaved values. Use **UPDATE GORE PREVIEW** for an
+immediate explicit refresh. **SAVE DAMAGE KEY + STAMP + GORE** is only the
+commit/final-validation step; it is not required to see macro changes.
+
+## 5. Damage Keys and simultaneous previews
+
+Every Damage Key has a large card. The focused card is highlighted and says
+**WORKING ON** so it is always clear which key receives edits.
+
+Each card owns its own **PREVIEW ON** / **PREVIEW OFF** toggle. Preview state is
+independent of focus:
+
+- Turn on Head Impact Left and Head Impact Right to see both morphs together.
+- Turn either card off to hide only that key.
+- Selecting another card changes the editing focus; it does not solo or clear
+  other enabled previews.
+
+Generated gore follows the same key activation state and attached/detached/core
+role. Preview toggles do not delete saved recipes or export geometry.
+
+## 6. Child Stamp alternatives
+
+A Stamp is shown as a visible **STAMP · name** button directly beneath its
+parent Damage Key. Click **ADD STAMP ALTERNATIVE** to capture another look for
+that key.
+
+New 3.19 keys treat child Stamps as alternatives: all alternatives are saved,
+but exactly one Stamp per Damage Key is active in the preview. Clicking a child
+Stamp focuses its parent key and rebuilds that alternative. This matches
+Blender's one visible shape-key result per Damage Key.
+
+Files authored with the older additive Stamp Stack remain readable and retain
+their recorded stack behavior until deliberately converted by new authoring.
+
+## 7. Strong Impact and Gore macros
+
+Impact has six high-leverage controls:
+
+- **AREA** changes the affected footprint.
+- **DEPTH** spans from no crush to a deep bounded deformation.
+- **FALLOFF** changes center-to-rim response.
+- **EDGE DAMAGE** changes the annular edge response and inversely reduces seam
+  protection.
+- **DISTORTION** strongly changes deterministic breakup and irregularity.
+- **ASYMMETRY** shifts the center and radial response so the result is visibly
+  directional.
+
+Additive Gore has six direct controls:
+
+- **RAISED AMOUNT** and **INLAY AMOUNT** are independent 0.0–1.0 channels.
+- **COVERAGE**, **EDGE BREAKUP**, **FILL**, and **WETNESS** control the remaining
+  mask, geometry, and material response.
+
+The nested **COHESIVE LEGACY SURFACE GORE** deck adds five raised-surface
+macros fed by the detailed manual controls:
+
+- **SURFACE MASS** changes raised gore from separated islands toward one
+  connected, irregular mass. High values suppress the little-triangle look.
+- **RELIEF** controls height, roundness, and the strength of the raised form.
+- **NUCLEUS** grows one closed solid-tissue mass on the dominant captured
+  island. Use it for a substantial organ-like or brain-like center rather than
+  loose plates.
+- **FOLDS** changes corrugation, lobe count, edge irregularity, and peripheral
+  fiber breakup.
+- **REDNESS** increases visible crimson/tissue contribution while reducing the
+  dark-clot bias.
+
+These are deterministic recipe controls, not a separately sculpted object.
+With **NUCLEUS** at zero, Surface Gore remains shell-based. With it above zero,
+the raised component contains a budgeted closed lobulated submesh that follows
+the same Stamp, source skinning, activation, and export contract.
+
+One **RANDOMIZE DAMAGE** click creates a master seed and derives stable,
+independent impact and gore seeds. It requests one managed preview instead of
+triggering multiple competing rebuilds.
+
+## 8. Hybrid additive gore
+
+When both channels are above zero, the recipe mode is `HYBRID_ADDITIVE`.
+Raised and inlay geometry are generated as two independent components per
+attached, detached, or core role.
+
+`RAISED AMOUNT = 1.0` plus `INLAY AMOUNT = 1.0` means full raised geometry plus
+full inlay geometry. It is not a 0.5/0.5 blend. Reducing one channel scales that
+channel without taking strength from the other.
+
+The surface deck controls the character of the raised component; it does not
+subtract from inlay depth. A full inlay can therefore remain visible around and
+under a high-mass raised shell or nucleus.
+
+Final hybrid node names add `_RAISED` or `_INLAY`. Both components remain
+ordinary exportable glTF meshes with their own geometry and generation digests,
+while sharing one parent recipe digest and activation mapping.
+
+## 9. Save and reuse Damage Blueprints
+
+In **4 · ADAPTIVE BLUEPRINT LIBRARY**:
+
+1. Enter a **Blueprint Name**.
+2. Choose the JSON **Library File**.
+3. Click **ADD CURRENT RECIPE**.
+4. Use **REFRESH** after changing the file outside Blender.
+5. On any valid destination Damage Key and freshly captured Stamp, click
+   **APPLY · blueprint name**.
+
+A Damage Blueprint saves authored intent: the six Impact macros, six additive
+Gore macros, five cohesive Surface Gore macros, exact seeds, gore identity,
+Stamp family, direction/influence/distance choices, falloff, strength, maximum
+influence, relative
+radius/depth/feather/seam-protection/displacement ratios, texture
+contributions, and semantic hint.
+
+It deliberately does not save object names, vertex or face indices, topology
+fingerprints, shape-key coordinates, or generated meshes. Applying a Blueprint
+keeps the destination capture and scales the recipe to that capture. This is
+how a head recipe can be adapted to a forearm, body, or another humanoid. It is
+adaptive procedural reuse, not anatomical inference; the artist still chooses
+the destination patch and direction.
+
+The old `.dsbstamps.json` library remains read-compatible for same-source
+migration, but it is not the universal reuse path.
+
+## 10. Advanced capture, repair, and compound work
+
+Use **Advanced** only when the VIP path does not cover the job:
+
+- register a custom paired region with **Register Selected Pair** or a core
+  region with **Register Selected Core Mesh**;
+- use **Capture Single Face**, **Capture Connected Face Patch**,
+  **Capture Selected Vertices**, or **Capture 3D Cursor**;
+- choose **Patch Only**, **Patch Feathered**, or **Connected Surface**, plus
+  **Surface Distance** or **World Distance**;
+- enter manual physical-control modes;
+- use **REBUILD ACTIVE DEFORMATION**, **REPAIR LEGACY PAIR SYNC**, or sculpt and
+  exact-index synchronization tools;
+- create and validate compound trauma events.
+
+Advanced preview/view commands are diagnostic tools. The VIP per-key toggles
+are the normal presentation controls.
+
+## 11. Author and approve animation drafts
+
+The animation workspace remains independent of Damage Key previews. Analyze the
+rig, draft walk/collapse/hurt or mace head-guard actions, inspect them, and use
+the explicit Version/Approve controls. Generated actions do not animate bone
+scale. Approved Actions and NLA-used Actions are protected.
+
+## 12. Validate and export
+
+Before export:
+
+1. Run **Validate Morph Targets**.
+2. Run **Validate Gore Geometry**.
+3. Validate compound events when used.
+4. Run **Validate Complete Damage Asset**.
+5. Click **Export Damage GLB + Manifest**.
+
+Export validation requires current capture/topology/deformation/recipe
+digests, correct Stamp selection, exact-index paired morphs, mode-correct hybrid
+components, glTF-safe materials, skinning, layer ordering, inactive defaults,
+and triangle budgets. Preview-only objects and temporary stain materials are
+removed before export.
+
+## 13. Clean reimport and verification
+
+Reimport the exported GLB into a clean Blender file. Confirm:
+
+- the intact character is visible;
+- each Damage Key morph is present;
+- hybrid recipes have both `_RAISED` and `_INLAY` nodes for every required role;
+- raised nodes with **NUCLEUS** above zero contain a nonzero nucleus triangle
+  count and the crushed-tissue material role;
+- gore nodes default inactive and map to the matching deformation key;
+- materials are non-emissive and zero-metallic;
+- the manifest lists Blueprint metadata, active Stamp, component/node IDs,
+  digests, triangle counts, and activation weight.
+
+Use **Restore Reimported GLB Intact Preview** when inspecting a reimported
+authoring asset.
+
+## 14. Troubleshooting and recovery
+
+- No key is created: make the registered attached/core mesh active in Edit
+  mode, select one vertex, multiple vertices, one face, or one connected face
+  patch, and retry.
+- A Blueprint will not apply: recapture a valid destination surface; stale
+  source indices are intentionally rejected.
+- A Stamp button changes the wrong result: verify the highlighted
+  **WORKING ON** card and the child button marked **ACTIVE**.
+- A key is invisible: turn its card to **PREVIEW ON**.
+- Hybrid validation reports a missing component: save the recipe again and
+  rebuild generated gore. A paired hybrid key must finish with attached and
+  detached `RAISED` plus attached and detached `INLAY` components.
+- An older build reports that a macro-edited key exceeds its maximum world
+  displacement: install the current 3.19 archive and rebuild the key. Current
+  preview and Save paths project the generated coordinates into the recipe's
+  world-space cap before strict validation.
+- A library appears empty: verify **Library File** and click **REFRESH**.
+- Source Readiness says `NOT READY`: fix or explicitly repair the source
+  contract; do not treat generated cut boundaries as source defects.
 
 ## Complete public button inventory
 
-The task UI and Advanced workspace together represent every prior public control plus the new orchestrators. Advanced groups its expert controls into remembered collapsible sections so only the workflows you are using occupy vertical space. Its Trauma group is also divided into region, deformation, capture, stamp, gore, compound, and preview/validation foldouts:
-
-- Character/source: **Adopt Imported Animation Pack**, **Safe Resize**, **Analyze Rig**, **Analyze Source Damage Readiness**, **Repair Source Readiness Contract**, **Preview Candidate Seam**, **Load READY Handoff**, **Build Authoring Asset**, **Prepare Character for Damage Authoring**.
-- Segment preview/region: **Preview Intact**, **Preview Detached**, **Register Selected Pair**, **Register Selected Core Mesh**, **Validate Region**.
-- Capture/influence: **Capture Single Face**, **Capture Connected Face Patch**, **Capture Selected Vertices**, **Capture 3D Cursor**, **Patch Only**, **Patch Feathered**, **Connected Surface**, **Surface Distance**, **World Distance**.
-- Stamps/libraries: **Add Stamp**, **Update Active Stamp**, **Enable / Disable**, **Save Stamp Library...**, **Load Stamp Library...**.
-- Gore: **GORE CONTROL DECK**, **GORE PEDAL**, **EXPOSURE**, **CAVITY**, **CLOT FILL**, **BREAKUP**, **WETNESS**, **VARIATION**, **RANDOMIZE GORE SEED**, **GENERATE / REBUILD GORE PREVIEW**, **COMMIT / SAVE GORE**, **Revert Gore**, **FINAL GORE PREVIEW**, **Advanced Gore Internals**, **USE MANUAL GORE CONTROL**, **RETURN TO GORE PEDAL**, **Create Blunt Gore Head Set**, **Enable Surface Gore Overlay**, **Use Preset Defaults**, **Randomize Master Gore Seed**, **Apply Gore Overlay Settings**, **Preview / Rebuild Current Gore**, **Clear Stain Preview**, **Apply Heavy Gore to All Deformations**, **Clear Current Generated Gore**, **Rebuild All Generated Gore**, **Validate Gore Geometry**.
-- Starters/compound: **Create Body Impact Starters**, **Create Forearm Impact Starter**, **New Compound Trauma Event**, **Add Active Region to Event**, **Capture Shared Impact Field**, **Preview Compound Event**, **Validate Compound Event**.
-- Animation creation: **Create Floor**, **Align Pose**, rig bone mapping/direction, rotation-only left/right arm and hand polish, primary/advanced walk sliders, primary/advanced collapse sliders, primary/advanced flank-hurt sliders, **Generate / Refresh** drafts, and per-draft **Version / Approve** controls.
-- Guards: **Generate Three Mace Head-Guard Drafts**, **Preview Guard_Active**, **Validate Mace Head-Guard Drafts**.
-- Shapes/final: **Compact Dent**, **Broad Cave**, **Flat Compression**, **Directional Shear**, **Raised Impact Rim**, **Ridge Collapse**, **REBUILD ACTIVE DEFORMATION**, **Attached**, **Detached**, **Both**, **REPAIR LEGACY PAIR SYNC**.
-- Validation/export: **Validate Morph Targets**, **Validate Complete Damage Asset**, **Export Damage GLB + Manifest**, **Restore Reimported GLB Intact Preview**, **Build Approved Animation Pack**, **Validate Last Built Pack**.
-- Managed workflow: **Create Impact From Current Selection**, **RANDOMIZE SEED**, **GENERATE / REFRESH PREVIEW**, **COMMIT / SAVE IMPACT**, **Revert**, **CLEAR DAMAGE PREVIEW**, **Undo Draft**, **FINAL PREVIEW**, **USE MANUAL CONTROL**, **FIT MACROS TO CURRENT VALUES**, **RETURN TO MACRO CONTROL**, **Protect Active DSB Action**, **Delete Unapproved DSB Attempts**, **WRITE FORGE DIAGNOSTIC REPORT**, **Startup Self-Check**.
+- Start/character: **Prepare Character for Damage Authoring**,
+  **Analyze Source Damage Readiness**, **Repair Source Readiness Contract**,
+  **Load READY Handoff**, **Build Authoring Asset**.
+- VIP placement: Head, Body, Left Forearm, Right Forearm,
+  **CREATE DAMAGE KEY FROM SELECTION**.
+- VIP keys/stamps: **WORKING ON**, **PREVIEW ON**, **PREVIEW OFF**,
+  **ADD STAMP ALTERNATIVE**, **REMOVE ACTIVE**, **STAMP · name**.
+- VIP macros/actions: **AREA**, **DEPTH**, **FALLOFF**, **EDGE DAMAGE**,
+  **DISTORTION**, **ASYMMETRY**, **RAISED AMOUNT**, **INLAY AMOUNT**,
+  **COVERAGE**, **EDGE BREAKUP**, **FILL**, **WETNESS**,
+  **RANDOMIZE DAMAGE**, **SAVE DAMAGE KEY + STAMP + GORE**.
+- Blueprint library: **ADD CURRENT RECIPE**, **REFRESH**,
+  **APPLY · blueprint name**.
+- Advanced authoring: **Register Selected Pair**,
+  **Register Selected Core Mesh**, **Capture Single Face**,
+  **Capture Connected Face Patch**, **Capture Selected Vertices**,
+  **Capture 3D Cursor**, **REBUILD ACTIVE DEFORMATION**,
+  **REPAIR LEGACY PAIR SYNC**.
+- Validation/export: **Validate Morph Targets**, **Validate Gore Geometry**,
+  **Validate Complete Damage Asset**, **Export Damage GLB + Manifest**,
+  **Restore Reimported GLB Intact Preview**.
+- Animation: **Generate / Refresh Walk Draft**,
+  **Generate / Refresh Death Draft**, flank-hurt draft controls,
+  **Generate Three Mace Head-Guard Drafts**, **Preview Guard_Active**,
+  **Validate Mace Head-Guard Drafts**, **Build Approved Animation Pack**,
+  **Validate Last Built Pack**.

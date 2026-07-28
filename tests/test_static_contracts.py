@@ -60,7 +60,6 @@ class StaticContractTests(unittest.TestCase):
             "daf.preview_surface_gore_overlay",
             "daf.clear_surface_gore_overlay_preview",
             "daf.create_blunt_gore_head_deformations",
-            "daf.apply_heavy_gore_all_deformations",
             "daf.clear_current_generated_gore",
             "daf.rebuild_all_generated_gore",
             "daf.validate_gore_geometry",
@@ -96,7 +95,14 @@ class StaticContractTests(unittest.TestCase):
         self.assertIn('GORE_TEXTURE_ATLAS_IMAGE = "DSB_Muscle_Fibers_Macro_Atlas"', self.deformation)
         self.assertIn('name="DSB_Gore_Texture_Variant"', self.deformation)
         self.assertIn('name="DSB_Gore_Layer"', self.deformation)
-        self.assertIn('"ORGANIC_REFINED_TEXTURED_RIM_V3"', self.deformation)
+        self.assertIn(
+            '"COHESIVE_SURFACE_MASS_LOBULATED_NUCLEUS_V4"',
+            self.deformation,
+        )
+        self.assertIn(
+            'obj["dsb_gore_nucleus_triangle_count"]',
+            self.deformation,
+        )
         self.assertIn('emission.default_value = (0.0, 0.0, 0.0, 1.0)', self.deformation)
         self.assertIn('emission_strength.default_value = 0.0', self.deformation)
         self.assertIn('trauma_field.has_effective_emission(emission.default_value, strength)', self.deformation)
@@ -144,7 +150,7 @@ class StaticContractTests(unittest.TestCase):
         manifest = contracts.MANIFEST_PATH.read_text(encoding="utf-8")
         self.assertIn('schema_version = "1.0.0"', manifest)
         self.assertIn('id = "dreadstone_animation_forge"', manifest)
-        self.assertIn('version = "3.18.0"', manifest)
+        self.assertIn('version = "3.19.0"', manifest)
         builder = (ROOT / "scripts" / "build_release.py").read_text(encoding="utf-8")
         self.assertIn('ARCHIVE_ENTRIES = ("blender_manifest.toml", *MODULES', builder)
         self.assertNotIn('"dreadstone_animation_forge/__init__.py"', builder)
@@ -165,7 +171,7 @@ class StaticContractTests(unittest.TestCase):
         version = contracts.EXPECTED_VERSION
         self.assertEqual(
             f"Dreadstone_Animation_Forge_v{'_'.join(map(str, version))}.zip",
-            "Dreadstone_Animation_Forge_v3_18_0.zip",
+            "Dreadstone_Animation_Forge_v3_19_0.zip",
         )
 
     def test_authoritative_user_workflow_guide_contract(self) -> None:
@@ -183,8 +189,8 @@ class StaticContractTests(unittest.TestCase):
     def test_release_readme_contains_install_quick_start_and_guide_reference(self) -> None:
         readme = (ROOT / "README.md").read_text(encoding="utf-8")
         for marker in (
-            "3.18.0",
-            "Dreadstone_Animation_Forge_v3_18_0.zip",
+            "3.19.0",
+            "Dreadstone_Animation_Forge_v3_19_0.zip",
             "Install from Disk",
             "## Quick start",
             "docs/USER_WORKFLOW_GUIDE.md",
@@ -207,7 +213,7 @@ class StaticContractTests(unittest.TestCase):
         self.assertTrue(contracts.REQUIRED_DEFORMATION_KEYS <= self.literals)
 
     def test_required_operator_identifiers_and_labels(self) -> None:
-        actual = contracts.operator_contracts(self.trees.values())
+        actual = contracts.package_operator_contracts()
         for operator_id, label in contracts.REQUIRED_OPERATORS.items():
             with self.subTest(operator_id=operator_id):
                 self.assertEqual(actual.get(operator_id), label)
@@ -268,9 +274,21 @@ class StaticContractTests(unittest.TestCase):
         self.assertIn("layer_collection.exclude = False", self.deformation)
         self.assertIn("def _visibility_blocker(context, obj):", self.deformation)
 
-    def test_build_active_preset_and_zero_weight_contracts(self) -> None:
-        self.assertIn('bl_idname = "daf.build_active_deformation_preset"', self.deformation)
-        self.assertIn('text="BUILD ACTIVE PRESET"', self.deformation)
+    def test_preset_free_vip_and_zero_weight_contracts(self) -> None:
+        panels = (
+            ROOT / "dreadstone_animation_forge" / "ui" / "panels.py"
+        ).read_text(encoding="utf-8")
+        vip = (
+            ROOT / "dreadstone_animation_forge" / "ui" / "operators" / "vip.py"
+        ).read_text(encoding="utf-8")
+        operators = contracts.operator_contracts(
+            [self.trees["deformation_authoring.py"]]
+        )
+        self.assertNotIn("daf.build_active_deformation_preset", operators)
+        self.assertNotIn('text="BUILD ACTIVE PRESET"', self.deformation)
+        self.assertIn("VIP DAMAGE WORKFLOW", panels)
+        self.assertIn('bl_idname = "daf.randomize_damage_recipe"', vip)
+        self.assertIn('bl_idname = "daf.save_damage_blueprint"', vip)
         self.assertIn("attached_key.value = 0.0", self.deformation)
         self.assertIn("_zero_managed_weights(attached)", self.deformation)
         self.assertIn("outward_world * rim", self.deformation)

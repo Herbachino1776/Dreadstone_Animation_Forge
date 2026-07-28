@@ -19,14 +19,17 @@ IMPACT_CONTROL_SCHEMA = "dreadstone.impact_control.v1"
 IMPACT_CONTROL_VERSION = 1
 GORE_CONTROL_SCHEMA = "dreadstone.gore_control.v1"
 GORE_CONTROL_VERSION = 1
+SURFACE_GORE_CONTROL_SCHEMA = "dreadstone.surface_gore_control.v1"
+SURFACE_GORE_CONTROL_VERSION = 1
 MACRO_IDENTIFIERS = (
     "deformation_impact_size",
     "deformation_impact_crush",
     "deformation_impact_profile",
     "deformation_impact_edge_safety",
     "deformation_impact_chaos",
+    "deformation_impact_asymmetry",
 )
-MACRO_LABELS = ("SIZE", "CRUSH", "PROFILE", "EDGE SAFETY", "CHAOS")
+MACRO_LABELS = ("AREA", "DEPTH", "FALLOFF", "EDGE DAMAGE", "DISTORTION", "ASYMMETRY")
 GORE_MACRO_IDENTIFIERS = (
     "deformation_gore_exposure",
     "deformation_gore_cavity",
@@ -36,13 +39,34 @@ GORE_MACRO_IDENTIFIERS = (
     "deformation_gore_variation",
 )
 GORE_MACRO_LABELS = (
-    "EXPOSURE",
-    "CAVITY",
-    "CLOT FILL",
-    "BREAKUP",
+    "COVERAGE",
+    "INLAY",
+    "FILL",
+    "EDGE BREAKUP",
     "WETNESS",
-    "VARIATION",
+    "RAISED",
 )
+SURFACE_GORE_MACRO_IDENTIFIERS = (
+    "deformation_gore_surface_mass",
+    "deformation_gore_surface_relief",
+    "deformation_gore_nucleus",
+    "deformation_gore_lobes",
+    "deformation_gore_redness",
+)
+SURFACE_GORE_MACRO_LABELS = (
+    "SURFACE MASS",
+    "RELIEF",
+    "NUCLEUS",
+    "FOLDS",
+    "REDNESS",
+)
+SURFACE_GORE_MACRO_DEFAULTS = {
+    "mass": 0.0,
+    "relief": 58.0,
+    "nucleus": 0.0,
+    "lobes": 55.0,
+    "redness": 78.0,
+}
 DEFAULT_IMPACT_SEED = 1776
 MAX_SEED = 2147483647
 
@@ -271,29 +295,34 @@ PARAMETERS = {
         recipe_field="maximumInfluence", measurable_output=False,
     ),
     "deformation_impact_size": _spec(
-        "deformation_impact_size", "SIZE", 50.0, 0.0, 100.0,
+        "deformation_impact_size", "AREA", 50.0, 0.0, 100.0,
         precision=1, step=1, scale_semantics="normalized 0-100",
         recipe_field="size", export_field="impactControl.macros.size",
     ),
     "deformation_impact_crush": _spec(
-        "deformation_impact_crush", "CRUSH", 50.0, 0.0, 100.0,
+        "deformation_impact_crush", "DEPTH", 50.0, 0.0, 100.0,
         precision=1, step=1, scale_semantics="normalized 0-100",
         recipe_field="crush", export_field="impactControl.macros.crush",
     ),
     "deformation_impact_profile": _spec(
-        "deformation_impact_profile", "PROFILE", 50.0, 0.0, 100.0,
+        "deformation_impact_profile", "FALLOFF", 50.0, 0.0, 100.0,
         precision=1, step=1, scale_semantics="normalized 0-100",
         recipe_field="profile", export_field="impactControl.macros.profile",
     ),
     "deformation_impact_edge_safety": _spec(
-        "deformation_impact_edge_safety", "EDGE SAFETY", 50.0, 0.0, 100.0,
+        "deformation_impact_edge_safety", "EDGE DAMAGE", 45.0, 0.0, 100.0,
         precision=1, step=1, scale_semantics="normalized 0-100",
         recipe_field="edgeSafety", export_field="impactControl.macros.edgeSafety",
     ),
     "deformation_impact_chaos": _spec(
-        "deformation_impact_chaos", "CHAOS", 35.0, 0.0, 100.0,
+        "deformation_impact_chaos", "DISTORTION", 42.0, 0.0, 100.0,
         precision=1, step=1, scale_semantics="normalized 0-100",
         recipe_field="chaos", export_field="impactControl.macros.chaos",
+    ),
+    "deformation_impact_asymmetry": _spec(
+        "deformation_impact_asymmetry", "ASYMMETRY", 38.0, 0.0, 100.0,
+        precision=1, step=1, scale_semantics="normalized 0-100",
+        recipe_field="asymmetry", export_field="impactControl.macros.asymmetry",
     ),
     "deformation_impact_seed": _spec(
         "deformation_impact_seed", "Master Impact Seed", DEFAULT_IMPACT_SEED, 0, MAX_SEED,
@@ -301,22 +330,22 @@ PARAMETERS = {
         recipe_field="impactSeed", export_field="impactControl.seed", integer=True,
     ),
     "deformation_gore_exposure": _spec(
-        "deformation_gore_exposure", "EXPOSURE", 72.0, 0.0, 100.0,
+        "deformation_gore_exposure", "COVERAGE", 72.0, 0.0, 100.0,
         precision=1, step=1, scale_semantics="normalized 0-100",
         recipe_field="exposure", export_field="goreControl.macros.exposure",
     ),
     "deformation_gore_cavity": _spec(
-        "deformation_gore_cavity", "CAVITY", 72.0, 0.0, 100.0,
+        "deformation_gore_cavity", "INLAY", 72.0, 0.0, 100.0,
         precision=1, step=1, scale_semantics="normalized 0-100",
         recipe_field="cavity", export_field="goreControl.macros.cavity",
     ),
     "deformation_gore_clot_fill": _spec(
-        "deformation_gore_clot_fill", "CLOT FILL", 52.0, 0.0, 100.0,
+        "deformation_gore_clot_fill", "FILL", 52.0, 0.0, 100.0,
         precision=1, step=1, scale_semantics="normalized 0-100",
         recipe_field="clotFill", export_field="goreControl.macros.clotFill",
     ),
     "deformation_gore_breakup": _spec(
-        "deformation_gore_breakup", "BREAKUP", 62.0, 0.0, 100.0,
+        "deformation_gore_breakup", "EDGE BREAKUP", 62.0, 0.0, 100.0,
         precision=1, step=1, scale_semantics="normalized 0-100",
         recipe_field="breakup", export_field="goreControl.macros.breakup",
     ),
@@ -326,9 +355,51 @@ PARAMETERS = {
         recipe_field="wetness", export_field="goreControl.macros.wetness",
     ),
     "deformation_gore_variation": _spec(
-        "deformation_gore_variation", "VARIATION", 64.0, 0.0, 100.0,
+        "deformation_gore_variation", "RAISED", 64.0, 0.0, 100.0,
         precision=1, step=1, scale_semantics="normalized 0-100",
         recipe_field="variation", export_field="goreControl.macros.variation",
+    ),
+    "deformation_gore_surface_mass": _spec(
+        "deformation_gore_surface_mass", "SURFACE MASS", 0.0, 0.0, 100.0,
+        precision=1, step=1, scale_semantics="normalized 0-100",
+        recipe_field="surfaceMass",
+        export_field="goreSurfaceControl.macros.mass",
+    ),
+    "deformation_gore_surface_relief": _spec(
+        "deformation_gore_surface_relief", "RELIEF", 58.0, 0.0, 100.0,
+        precision=1, step=1, scale_semantics="normalized 0-100",
+        recipe_field="surfaceRelief",
+        export_field="goreSurfaceControl.macros.relief",
+    ),
+    "deformation_gore_nucleus": _spec(
+        "deformation_gore_nucleus", "NUCLEUS", 0.0, 0.0, 100.0,
+        precision=1, step=1, scale_semantics="normalized 0-100",
+        recipe_field="nucleus",
+        export_field="goreSurfaceControl.macros.nucleus",
+    ),
+    "deformation_gore_lobes": _spec(
+        "deformation_gore_lobes", "FOLDS", 55.0, 0.0, 100.0,
+        precision=1, step=1, scale_semantics="normalized 0-100",
+        recipe_field="lobes",
+        export_field="goreSurfaceControl.macros.lobes",
+    ),
+    "deformation_gore_redness": _spec(
+        "deformation_gore_redness", "REDNESS", 78.0, 0.0, 100.0,
+        precision=1, step=1, scale_semantics="normalized 0-100",
+        recipe_field="redness",
+        export_field="goreSurfaceControl.macros.redness",
+    ),
+    "deformation_gore_inlay_amount": _spec(
+        "deformation_gore_inlay_amount", "INLAY AMOUNT", 0.72, 0.0, 1.0,
+        soft_min=0.0, soft_max=1.0, precision=2, step=1,
+        scale_semantics="independent additive factor",
+        recipe_field="goreInlayAmount",
+    ),
+    "deformation_gore_raised_amount": _spec(
+        "deformation_gore_raised_amount", "RAISED AMOUNT", 0.64, 0.0, 1.0,
+        soft_min=0.0, soft_max=1.0, precision=2, step=1,
+        scale_semantics="independent additive factor",
+        recipe_field="goreRaisedAmount",
     ),
     "deformation_impact_gore_patch_scale": _spec(
         "deformation_impact_gore_patch_scale", "Gore Patch Scale", 0.010, 0.001, 0.10,
@@ -389,6 +460,9 @@ for _identifier, _label, _default, _field in (
     ("deformation_gore_host_deformation_contribution", "Host Deformation Contribution", 0.72, "goreHostDeformationContribution"),
     ("deformation_gore_bone_reveal", "Bone Reveal", 0.0, "goreBoneReveal"),
     ("deformation_gore_tissue_coverage", "Tissue Coverage", 0.45, "goreTissueCoverage"),
+    ("deformation_gore_surface_mass_value", "Surface Mass", 0.0, "goreSurfaceMass"),
+    ("deformation_gore_nucleus_amount", "Solid Nucleus", 0.0, "goreNucleusAmount"),
+    ("deformation_gore_nucleus_lobes", "Nucleus Folds", 0.55, "goreNucleusLobes"),
 ):
     _unit_interval(_identifier, _label, _default, _field)
 
@@ -528,6 +602,9 @@ RAISED_GORE_DEFAULTS = {
     "goreBarrierLayerEnabled": False,
     "goreRaisedRimOptIn": False,
     "goreAllowInternalFragments": False,
+    "goreSurfaceMass": 0.0,
+    "goreNucleusAmount": 0.0,
+    "goreNucleusLobes": 0.55,
 }
 
 
@@ -665,6 +742,25 @@ for _identity_id, _identity in GORE_IDENTITIES.items():
         },
     }
 
+# The only default used by the v3.19 front-facing workflow is a neutral
+# user-authored recipe.  Named factory records above remain read-only migration
+# sources for older .blend files and libraries; they are not exposed as choices.
+GORE_PRESETS["USER_AUTHORED"] = copy.deepcopy(
+    GORE_PRESETS["Gore_Bloody_Crater"]
+)
+GORE_PRESETS["USER_AUTHORED"].update({
+    "goreIdentityId": "BLOODY_CRATER",
+    "goreGeometryMode": "HYBRID_ADDITIVE",
+    "goreMacroDefaults": {
+        "exposure": 70.0,
+        "cavity": 70.0,
+        "clotFill": 52.0,
+        "breakup": 58.0,
+        "wetness": 68.0,
+        "variation": 70.0,
+    },
+})
+
 _GORE_PRESET_FIELDS = {
     field
     for preset in GORE_PRESETS.values()
@@ -800,11 +896,16 @@ def _macro_values(macros):
             macros.get("profile", macros.get(MACRO_IDENTIFIERS[2], 50.0)),
             macros.get("edgeSafety", macros.get(MACRO_IDENTIFIERS[3], 50.0)),
             macros.get("chaos", macros.get(MACRO_IDENTIFIERS[4], 35.0)),
+            macros.get("asymmetry", macros.get(MACRO_IDENTIFIERS[5], 38.0)),
         )
     else:
         raw = tuple(macros)
-    if len(raw) != 5:
-        raise ValueError("Impact Pedal requires exactly five macro values.")
+        # v1 Impact Pedal records had five controls.  They remain readable and
+        # receive the neutral v3.19 asymmetry value.
+        if len(raw) == 5:
+            raw = (*raw, 38.0)
+    if len(raw) != 6:
+        raise ValueError("Impact controls require exactly six macro values.")
     values = tuple(float(value) for value in raw)
     for identifier, value in zip(MACRO_IDENTIFIERS, values):
         errors = validate(identifier, value)
@@ -823,7 +924,7 @@ def normalize_impact_control(metadata):
     mode = str(metadata.get("mode", "MANUAL")).upper()
     if mode not in {"MACRO", "MANUAL"}:
         raise ValueError("Impact control mode must be MACRO or MANUAL.")
-    size, crush, profile, edge_safety, chaos = _macro_values(metadata.get("macros", {}))
+    size, crush, profile, edge_safety, chaos, asymmetry = _macro_values(metadata.get("macros", {}))
     seed = int(metadata.get("seed", DEFAULT_IMPACT_SEED))
     errors = validate("deformation_impact_seed", seed)
     if errors:
@@ -839,6 +940,7 @@ def normalize_impact_control(metadata):
             "profile": profile,
             "edgeSafety": edge_safety,
             "chaos": chaos,
+            "asymmetry": asymmetry,
         },
         "seed": seed,
     }
@@ -856,14 +958,14 @@ def impact_identity_digest(metadata):
             "seed": int(metadata.get("seed", DEFAULT_IMPACT_SEED)),
         }
     else:
-        size, crush, profile, edge_safety, chaos = _macro_values(metadata)
+        size, crush, profile, edge_safety, chaos, asymmetry = _macro_values(metadata)
         payload = {
             "schema": IMPACT_CONTROL_SCHEMA,
             "version": IMPACT_CONTROL_VERSION,
             "mode": "MACRO",
             "macros": {
                 "size": size, "crush": crush, "profile": profile,
-                "edgeSafety": edge_safety, "chaos": chaos,
+                "edgeSafety": edge_safety, "chaos": chaos, "asymmetry": asymmetry,
             },
             "seed": DEFAULT_IMPACT_SEED,
         }
@@ -891,6 +993,256 @@ def _gore_macro_values(macros):
         if errors:
             raise ValueError(errors[0])
     return values
+
+
+def _surface_gore_macro_values(macros):
+    defaults = SURFACE_GORE_MACRO_DEFAULTS
+    if isinstance(macros, Mapping):
+        raw = (
+            macros.get(
+                "mass",
+                macros.get(
+                    SURFACE_GORE_MACRO_IDENTIFIERS[0],
+                    defaults["mass"],
+                ),
+            ),
+            macros.get(
+                "relief",
+                macros.get(
+                    SURFACE_GORE_MACRO_IDENTIFIERS[1],
+                    defaults["relief"],
+                ),
+            ),
+            macros.get(
+                "nucleus",
+                macros.get(
+                    SURFACE_GORE_MACRO_IDENTIFIERS[2],
+                    defaults["nucleus"],
+                ),
+            ),
+            macros.get(
+                "lobes",
+                macros.get(
+                    SURFACE_GORE_MACRO_IDENTIFIERS[3],
+                    defaults["lobes"],
+                ),
+            ),
+            macros.get(
+                "redness",
+                macros.get(
+                    SURFACE_GORE_MACRO_IDENTIFIERS[4],
+                    defaults["redness"],
+                ),
+            ),
+        )
+    else:
+        raw = tuple(macros)
+    if len(raw) != len(SURFACE_GORE_MACRO_IDENTIFIERS):
+        raise ValueError("Surface Gore macros require exactly five values.")
+    values = tuple(float(value) for value in raw)
+    for identifier, value in zip(
+        SURFACE_GORE_MACRO_IDENTIFIERS,
+        values,
+    ):
+        errors = validate(identifier, value)
+        if errors:
+            raise ValueError(errors[0])
+    return values
+
+
+def normalize_surface_gore_control(metadata=None):
+    raw = {} if metadata is None else metadata
+    if not isinstance(raw, Mapping):
+        raise ValueError("Surface Gore control metadata must be an object.")
+    schema_name = str(
+        raw.get("schema", SURFACE_GORE_CONTROL_SCHEMA)
+    )
+    version = int(
+        raw.get("version", SURFACE_GORE_CONTROL_VERSION)
+    )
+    if (
+        schema_name != SURFACE_GORE_CONTROL_SCHEMA
+        or version != SURFACE_GORE_CONTROL_VERSION
+    ):
+        raise ValueError(
+            f"Unsupported Surface Gore control metadata "
+            f"{schema_name!r} version {version}."
+        )
+    mass, relief, nucleus, lobes, redness = (
+        _surface_gore_macro_values(raw.get("macros", {}))
+    )
+    normalized = {
+        "schema": SURFACE_GORE_CONTROL_SCHEMA,
+        "version": SURFACE_GORE_CONTROL_VERSION,
+        "macros": {
+            "mass": mass,
+            "relief": relief,
+            "nucleus": nucleus,
+            "lobes": lobes,
+            "redness": redness,
+        },
+    }
+    normalized["identityDigest"] = surface_gore_identity_digest(
+        normalized
+    )
+    return normalized
+
+
+def surface_gore_identity_digest(metadata):
+    if isinstance(metadata, Mapping) and "macros" in metadata:
+        values = _surface_gore_macro_values(
+            metadata.get("macros", {})
+        )
+    else:
+        values = _surface_gore_macro_values(metadata)
+    payload = {
+        "schema": SURFACE_GORE_CONTROL_SCHEMA,
+        "version": SURFACE_GORE_CONTROL_VERSION,
+        "macros": {
+            label: value
+            for label, value in zip(
+                ("mass", "relief", "nucleus", "lobes", "redness"),
+                values,
+            )
+        },
+    }
+    encoded = json.dumps(
+        payload,
+        sort_keys=True,
+        separators=(",", ":"),
+        allow_nan=False,
+    ).encode("utf-8")
+    return hashlib.sha256(encoded).hexdigest()
+
+
+def derive_surface_gore_parameters(
+    macros,
+    *,
+    region_scale=0.075,
+    mean_edge_length=0.004,
+):
+    """Map cohesive surface macros to raised-shell and nucleus controls."""
+
+    mass, relief, nucleus, lobes, redness = (
+        _surface_gore_macro_values(macros)
+    )
+    mass_n, relief_n, nucleus_n, lobes_n, redness_n = (
+        value / 100.0
+        for value in (mass, relief, nucleus, lobes, redness)
+    )
+    region = float(region_scale)
+    if not math.isfinite(region) or region <= 0.0:
+        region = 0.075
+    region = max(0.005, min(2.0, region))
+    edge = float(mean_edge_length)
+    if not math.isfinite(edge) or edge <= 0.0:
+        edge = region * 0.05
+    edge = max(1e-6, edge)
+    scale_floor = max(edge * 1.2, region * 0.012)
+    clot_thickness = max(
+        0.0001,
+        min(
+            0.05,
+            scale_floor
+            * (0.08 + 0.82 * relief_n**1.35)
+            * (0.72 + 0.38 * mass_n),
+        ),
+    )
+    surface_offset = max(
+        0.00015,
+        min(
+            0.012,
+            scale_floor * (0.025 + 0.10 * relief_n),
+        ),
+    )
+    island_breakup = min(
+        1.0,
+        0.04
+        + (1.0 - mass_n) * (0.38 + 0.46 * lobes_n)
+        + 0.10 * lobes_n,
+    )
+    peripheral = min(
+        1.0,
+        (1.0 - mass_n) ** 1.35
+        * (0.16 + 0.84 * lobes_n),
+    )
+    result = {
+        "goreSurfaceMass": mass_n,
+        "goreNucleusAmount": nucleus_n,
+        "goreNucleusLobes": lobes_n,
+        "goreClotCoverage": min(
+            1.0,
+            0.12 + 0.88 * mass_n**0.72,
+        ),
+        "goreCoreDensity": min(
+            1.0,
+            0.18 + 0.82 * mass_n**0.78,
+        ),
+        "goreClotThickness": clot_thickness,
+        "goreThicknessVariation": min(
+            1.0,
+            0.06
+            + 0.72
+            * lobes_n
+            * (0.45 + 0.55 * relief_n),
+        ),
+        "goreIslandBreakup": island_breakup,
+        "gorePeripheralFragments": peripheral,
+        "goreSurfaceOffset": surface_offset,
+        "goreGeometryDensity": min(
+            1.0,
+            0.25 + 0.75 * mass_n**0.65,
+        ),
+        "goreDarkClotBias": min(
+            1.0,
+            max(
+                0.0,
+                0.76
+                - 0.54 * redness_n
+                + 0.12 * (1.0 - mass_n),
+            ),
+        ),
+        "goreRoughEdgeBias": min(
+            1.0,
+            0.16
+            + 0.64 * lobes_n * (1.0 - 0.58 * mass_n),
+        ),
+        "goreColorIntensity": min(
+            1.0,
+            0.36 + 0.64 * redness_n,
+        ),
+        "goreDarkness": min(
+            1.0,
+            max(
+                0.0,
+                0.68
+                - 0.52 * redness_n
+                + 0.08 * (1.0 - relief_n),
+            ),
+        ),
+        "goreOrganicIrregularity": min(
+            1.0,
+            0.10 + 0.86 * lobes_n,
+        ),
+        "goreSurfaceRoundness": min(
+            1.0,
+            0.08 + 0.86 * relief_n,
+        ),
+        "goreFiberTextureStrength": min(
+            1.0,
+            0.20
+            + 0.65 * lobes_n * (1.0 - 0.55 * nucleus_n),
+        ),
+        "goreBaseColorStrength": min(
+            1.0,
+            0.25 + 0.75 * redness_n,
+        ),
+    }
+    for field, value in result.items():
+        errors = validate_recipe_value(field, value)
+        if errors:
+            raise ValueError(errors[0])
+    return result
 
 
 def gore_identity_for_preset(preset_id):
@@ -1004,6 +1356,9 @@ def derive_gore_parameters(
     exposure, cavity, clot_fill, breakup, wetness, variation = _gore_macro_values(macros)
     if identity_id not in GORE_IDENTITIES:
         raise ValueError(f"Unsupported gore identity {identity_id!r}.")
+    # v3.19 keeps the serialized v1 field names readable while presenting a
+    # preset-free contract: exposure=coverage, cavity=inlay amount,
+    # clotFill=fill, and variation=raised amount.
     exposure_n, cavity_n, clot_n, breakup_n, wet_n, variation_n = (
         value / 100.0
         for value in (exposure, cavity, clot_fill, breakup, wetness, variation)
@@ -1076,11 +1431,23 @@ def derive_gore_parameters(
     bone_identity = 1.0 if identity_id == "EXPOSED_CRANIUM" else 0.35
     bone_reveal = min(1.0, bone_identity * cavity_n**1.8 * (1.0 - clot_n)**1.25)
     wet_roughness_response = wet_n**0.82
+    raised_amount = variation_n
+    inlay_amount = cavity_n
+    if raised_amount > 1e-8 and inlay_amount > 1e-8:
+        geometry_mode = "HYBRID_ADDITIVE"
+    elif inlay_amount > 1e-8:
+        geometry_mode = "CAVITY_INLAY"
+    elif raised_amount > 1e-8:
+        geometry_mode = "LEGACY_RAISED"
+    else:
+        geometry_mode = "STAIN_ONLY"
     result = {
-        "goreGeometryMode": "CAVITY_INLAY",
+        "goreGeometryMode": geometry_mode,
         "goreIdentityId": identity_id,
+        "goreInlayAmount": inlay_amount,
+        "goreRaisedAmount": raised_amount,
         "goreCoverage": coverage,
-        "goreScatter": min(1.0, 0.12 + 0.72 * breakup_n + 0.16 * variation_n),
+        "goreScatter": min(1.0, 0.08 + 0.92 * breakup_n),
         "goreEdgeFeather": min(1.0, 0.28 + 0.50 * exposure_n + 0.22 * (1.0 - breakup_n)),
         "goreWetness": wet_roughness_response,
         "goreDarkness": min(1.0, 0.28 + 0.38 * (1.0 - wet_n) + 0.22 * clot_n),
@@ -1088,18 +1455,18 @@ def derive_gore_parameters(
         "goreClotCoverage": clot_coverage,
         "goreCoreDensity": min(1.0, 0.26 + 0.48 * exposure_n + 0.26 * cavity_n),
         "goreClotThickness": max(0.0001, min(0.05, scale_floor * (0.10 + 0.30 * clot_n))),
-        "goreThicknessVariation": min(1.0, 0.08 + 0.88 * variation_n),
+        "goreThicknessVariation": min(1.0, 0.08 + 0.72 * breakup_n),
         "goreIslandBreakup": min(1.0, breakup_factor * (0.06 + 0.88 * breakup_n)),
-        "gorePeripheralFragments": min(1.0, breakup_n**1.4 * variation_n),
+        "gorePeripheralFragments": min(1.0, breakup_n**1.35),
         "goreSurfaceOffset": max(0.00015, min(0.012, liner_separation)),
-        "goreGeometryDensity": min(1.0, 0.22 + 0.54 * exposure_n + 0.24 * variation_n),
-        "goreWetnessVariation": min(1.0, wet_n * (0.22 + 0.78 * variation_n)),
+        "goreGeometryDensity": min(1.0, 0.18 + 0.62 * exposure_n + 0.20 * breakup_n),
+        "goreWetnessVariation": min(1.0, wet_n * (0.30 + 0.70 * breakup_n)),
         "goreDarkClotBias": min(1.0, 0.18 + 0.68 * clot_n + 0.14 * (1.0 - wet_n)),
         "goreRoughEdgeBias": min(1.0, 0.24 + 0.62 * breakup_n),
         "goreColorIntensity": min(1.0, 0.46 + 0.54 * exposure_n),
-        "goreOrganicIrregularity": min(1.0, breakup_n * (0.35 + 0.65 * variation_n)),
+        "goreOrganicIrregularity": min(1.0, breakup_n**0.72),
         "goreSurfaceRoundness": min(1.0, 0.08 + 0.30 * clot_n),
-        "goreFiberTextureStrength": min(1.0, 0.18 + 0.70 * variation_n),
+        "goreFiberTextureStrength": min(1.0, 0.18 + 0.70 * breakup_n),
         "goreBaseColorStrength": min(1.0, 0.28 + 0.58 * exposure_n),
         "goreInnerRimWidth": rim_width,
         "goreInnerRimStrength": min(1.0, 0.22 + 0.68 * cavity_n),
@@ -1137,6 +1504,7 @@ def derive_gore_parameters(
         "goreCavityDepth", "goreLinerSeparation", "goreRimWidth",
         "goreClotFillDepth", "goreProudnessLimit", "goreHostDeformationContribution",
         "goreBoneReveal", "goreTissueCoverage", "goreMaximumTriangles",
+        "goreInlayAmount", "goreRaisedAmount",
     )
     errors = []
     for field in fields:
@@ -1147,20 +1515,21 @@ def derive_gore_parameters(
 
 
 def derive_impact_parameters(macros, *, region_scale=0.075, family="COMPACT_DENT", seed=DEFAULT_IMPACT_SEED):
-    """Map five normalized knobs to one bounded physical recipe.
+    """Map six high-leverage controls to one bounded physical recipe.
 
     ``region_scale`` is the captured patch's estimated world-space radius.  It
     changes only the response scale; it never changes capture indices or the
     placement anchor.
     """
 
-    size, crush, profile, edge_safety, chaos = _macro_values(macros)
+    size, crush, profile, edge_safety, chaos, asymmetry = _macro_values(macros)
     seed = int(seed)
     seed_errors = validate("deformation_impact_seed", seed)
     if seed_errors:
         raise ValueError(seed_errors[0])
-    size_n, crush_n, profile_n, edge_n, chaos_n = (
-        value / 100.0 for value in (size, crush, profile, edge_safety, chaos)
+    size_n, crush_n, profile_n, edge_n, chaos_n, asymmetry_n = (
+        value / 100.0
+        for value in (size, crush, profile, edge_safety, chaos, asymmetry)
     )
     radius_spec = spec("deformation_seed_radius")
     capture_scale = float(region_scale)
@@ -1189,7 +1558,9 @@ def derive_impact_parameters(macros, *, region_scale=0.075, family="COMPACT_DENT
     base_feather = radius * (0.18 + 0.42 * size_n)
     feather = base_feather * (1.0 - 0.30 * edge_n)
     feather = max(0.0, min(0.30, feather))
-    seam_protection = radius * (0.04 * edge_n + 0.70 * edge_n**1.55)
+    # Edge Damage is intentionally visible even away from a registered seam.
+    # Seam protection remains conservative and inversely follows edge damage.
+    seam_protection = radius * (0.02 + 0.18 * (1.0 - edge_n) ** 1.4)
     seam_protection = max(0.0, min(0.10, seam_protection))
     gore_patch_scale = max(0.001, min(0.10, radius * (0.12 + 0.10 * size_n)))
     gore_coverage = min(1.0, 0.20 + 0.62 * crush_n + 0.10 * size_n)
@@ -1212,6 +1583,8 @@ def derive_impact_parameters(macros, *, region_scale=0.075, family="COMPACT_DENT
         "goreOrganicIrregularity": gore_irregularity,
         "impactSeed": seed,
         "impactChaos": chaos_n,
+        "impactEdgeDamage": edge_n,
+        "impactAsymmetry": asymmetry_n,
         "impactProfile": profile_n,
         "profileCenterRimBalance": profile_n,
     }
@@ -1249,15 +1622,17 @@ def fit_macros_to_parameters(values, *, region_scale=0.075, family="COMPACT_DENT
     seam = max(0.0, float(values.get("seamProtection", 0.025)))
     target = seam / max(1e-12, radius)
     edge = min(range(101), key=lambda candidate: abs(
-        0.04 * (candidate / 100.0) + 0.70 * (candidate / 100.0) ** 1.55 - target
+        0.02 + 0.18 * (1.0 - candidate / 100.0) ** 1.4 - target
     ))
     chaos = 100.0 * max(0.0, min(1.0, float(values.get("impactChaos", 0.0))))
+    asymmetry = 100.0 * max(0.0, min(1.0, float(values.get("impactAsymmetry", 0.38))))
     return {
         "size": round(size, 3),
         "crush": round(crush, 3),
         "profile": round(profile, 3),
         "edgeSafety": float(edge),
         "chaos": round(chaos, 3),
+        "asymmetry": round(asymmetry, 3),
     }
 
 

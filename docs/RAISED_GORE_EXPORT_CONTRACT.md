@@ -1,54 +1,117 @@
 # Gore geometry export contract
 
-Forge 3.18 exports `CAVITY_INLAY` and `LEGACY_RAISED` gore as ordinary glTF mesh nodes for paired head/forearm regions, core meshes, and compound-event participants. `STAIN_ONLY` exports no gore geometry. Forge does not cut source topology, export runtime code, or use zero-scale hiding.
+Forge 3.19 exports `LEGACY_RAISED`, `CAVITY_INLAY`, and
+`HYBRID_ADDITIVE` gore as ordinary glTF mesh nodes for paired, core, and
+compound-event regions. `STAIN_ONLY` exports no gore geometry. Source topology
+is never cut by gore generation.
 
-## Node representation
+## Geometry modes
 
-Each enabled geometric recipe owns one stable node per region role:
+- `LEGACY_RAISED` owns one raised component per required region role.
+- `CAVITY_INLAY` owns one recessed manifold component per required role.
+- `HYBRID_ADDITIVE` owns two independent components per role: `RAISED` and
+  `INLAY`.
+- `STAIN_ONLY` owns no final gore node.
 
-- `DSB_GORE_ATTACHED_<region>_<deformation>` follows the skinned attached source and copies normalized deform-bone weights plus its Armature modifier.
-- `DSB_GORE_DETACHED_<region>_<deformation>` follows the exact-index detached target and retains that object's rigid/skinned role.
-- A core region owns one corresponding core node.
+Hybrid amounts are independent. `goreRaisedAmount = 1.0` and
+`goreInlayAmount = 1.0` generate full raised geometry plus full inlay geometry;
+the values are not normalized against each other.
 
-Long or unsafe names receive a deterministic hash suffix. Every final node is Forge-owned, exportable, not preview-only, hidden for the authoring file's undamaged render state, and carries glTF extras for mesh ID, region, key, pair role, source topology, linked stamp/capture, recipe/control/geometry digests, geometry mode, identity, materials, layer measurements, triangle count, activation weight, and `defaultVisible = false`.
+## Stable node representation
 
-`CAVITY_INLAY` is a closed manifold inlay below the final deformed host surface. Its boundary remains near the host while the liner and optional internal layers recess inward along stored stable source normals. It records point-domain source position, source world normal, source vertex/blend ownership, inward depth, and layer/variant attributes. Required ordering is host → rim → optional clot/tissue/bone → wound bed, with positive z-fighting separation and bounded proudness. Vertex skinning uses at most four normalized deform-bone influences.
+Single-component node names retain the compatibility form:
 
-`LEGACY_RAISED` retains the closed refined shell and optional inner-reddening barrier from Forge 3.13–3.17. Its original source-position, texture-variant, layer, fiber-atlas, and three-material contracts remain valid. Portable recipes contain recipes and analytical anchors, never generated mesh bytes.
+- `DSB_GORE_ATTACHED_<region>_<deformation>`
+- `DSB_GORE_DETACHED_<region>_<deformation>`
+- `DSB_GORE_CORE_<region>_<deformation>`
 
-BALANCED and FINAL previews may create temporary owned nodes, but preview-only nodes are excluded from final lookup and manifests and are deleted by clear, commit cleanup, file-load cleanup, and startup self-check.
+Hybrid nodes append `_RAISED` or `_INLAY`. Unsafe or long names receive a
+deterministic hash suffix.
+
+Each final node is Forge-owned, exportable, not preview-only, and inactive in
+the undamaged authoring state. glTF extras include stable mesh ID, region,
+deformation key, pair role, component, source object/topology, linked
+Stamp/capture, component recipe digest, parent hybrid recipe digest,
+deformation/generation/geometry digests, geometry mode, material IDs, layer
+measurements, triangle count, activation weight, and `defaultVisible = false`.
+
+## Raised component
+
+The raised component is a closed refined shell above the final deformed host
+surface. It retains source-position ownership, texture direction, layer,
+fiber-atlas, non-emissive Principled material, and armature-copy contracts.
+`goreRaisedAmount` scales its thickness without reducing the inlay component.
+
+Recipe v6 adds `goreSurfaceControl`, `goreSurfaceMass`,
+`goreNucleusAmount`, and `goreNucleusLobes`. Surface mass changes face
+retention and breakup so the shell can become a connected irregular form rather
+than a collection of isolated plates. A nonzero nucleus amount may add one
+closed lobulated submesh inside the same raised node, anchored to the dominant
+captured island and partially embedded in the host/inlay silhouette. It:
+
+- is deterministic for the recipe and seed;
+- inherits the dominant island's source-position and skinning ownership;
+- uses layer `3` and the `DSB_GORE_CRUSHED_TISSUE` material role;
+- contributes to the same per-deformation triangle budget;
+- reports `dsb_gore_surface_mass`, `dsb_gore_nucleus_amount`,
+  `dsb_gore_nucleus_lobes`, and `dsb_gore_nucleus_triangle_count`.
+
+Untouched v1-v5 recipes normalize with surface mass and nucleus disabled, and
+their historical digests remain unchanged.
+
+## Inlay component
+
+The inlay component is a closed manifold below the final deformed host surface.
+Its boundary remains near the host while liner and enabled internal layers
+recess along stored stable source normals. Required ordering is host → rim →
+optional clot/tissue/bone → wound bed, with positive separation and bounded
+proudness. Skinning uses at most four normalized deform-bone influences.
+`goreInlayAmount` scales its cavity depth without reducing the raised component.
 
 ## Materials
 
-Cavity/inlay nodes use six zero-metallic, non-emissive Principled roles:
+Inlay may use:
 
+- `DSB_GORE_WET_CRIMSON`
+- `DSB_GORE_DARK_CLOT`
+- `DSB_GORE_ROUGH_EDGE`
 - `DSB_GORE_DEEP_WOUND_BED`
 - `DSB_GORE_CRUSHED_TISSUE`
 - `DSB_GORE_EXPOSED_BONE`
-- the retained wet crimson, dark clot, and rough edge roles
 
-Not every identity must use every optional layer, but its enabled layers and material slots must match its normalized recipe. Wetness affects roughness/coat only. Exposed bone remains a material/geometry layer, not a claim of inferred anatomy. Legacy-raised nodes retain their exact three-material family and optional packed fiber-atlas texture. Temporary stain copies and `DSB_Surface_Gore_Mask` are cleared before export.
+Raised uses its compatible wet/clot/edge roles and may additionally use
+`DSB_GORE_CRUSHED_TISSUE` for a solid nucleus. All final materials are
+zero-metallic and non-emissive. Wetness changes roughness/coat; redness changes
+crimson/tissue intensity and dark-clot bias. Temporary stain copies and
+`DSB_Surface_Gore_Mask` are removed before export.
 
-## Manifest mapping
+## Manifest mapping and activation
 
-`deformations.keys[].surfaceGoreOverlay` contains the normalized recipe, geometry mode, identity, `goreControl`, measurements, and deterministic digest. Geometric keys also contain `goreGeneratedMeshIds`, `goreGeneratedNodeNames`, `goreGeometryDigests`, `goreGenerationDigests`, `goreTriangleCounts`, `goreMaterialIds`, `goreMaterialNames`, and `goreActivationContract`.
+`deformations.keys[].surfaceGoreOverlay` contains the normalized parent recipe,
+both additive amounts, `goreControl`, `goreSurfaceControl`, measurements, and
+digest. Geometric keys also contain component-aware node names, mesh IDs,
+geometry/generation digests, total/nucleus triangle counts, materials, and
+activation contract. Hybrid dictionary keys use `<ROLE>:<COMPONENT>`, for
+example `ATTACHED:RAISED`.
 
-`deformations.generatedGoreMeshes[]` maps each final mesh/node to its region, key, attached/detached/core role, source object, geometry mode, identity, materials, layer metrics, triangle count, digests, inactive default, and activation weight. Preview-only nodes are forbidden.
+At runtime:
 
-## Runtime activation
+1. Keep all mapped gore nodes inactive while the Damage Key is inactive.
+2. Apply the deformation identified by `deformationKey`.
+3. At `activationWeight`, activate the node(s) for the current
+   attached/detached/core role.
+4. For hybrid recipes, activate both mapped components.
 
-The exported enemy is semantically clean before impact:
-
-1. Keep every gore node inactive while its matching deformation is inactive.
-2. Apply or animate the deformation identified by `deformationKey`.
-3. Activate the mapped gore node at `activationWeight` (default `0.01`).
-4. Choose attached/detached according to damage-segment state, or the sole core node for `CORE_SINGLE`.
-5. Retain the activated node through death and corpse persistence.
-
-Forge records this contract but does not implement Folsom Field/Godot runtime activation. Consumers must use manifest/extras instead of inferring activation from Blender visibility.
+Forge records this mapping but does not implement engine-side activation.
 
 ## Validation and rebuild
 
-Export blocks when an enabled geometric recipe has missing/wrong nodes, stale recipe/control/deformation/capture/topology/pairing digests, altered geometry, missing ownership/source data, invalid or non-deform skinning, excessive proudness, z-fighting separation, invalid layer ordering, over-depth geometry, empty/degenerate/duplicate/non-manifold faces, material violations, wrong inactive/preview flags, or triangle-budget excess.
+Export blocks on missing or duplicate components, wrong deterministic names,
+stale topology/capture/deformation/component/parent digests, altered or
+non-manifold shell/nucleus geometry, invalid layer ordering, bad skinning, material
+violations, excessive depth/proudness, incorrect inactive/preview flags, or
+triangle-budget excess.
 
-**Rebuild All Generated Gore** deletes only Forge-owned final nodes and recreates them from the recipe plus current capture/deformation inputs. It never changes source topology, source materials, shape keys, deformation values, or Source Readiness. Legacy recipes rebuild in their recorded compatibility mode; they are never silently converted to cavities.
+**Rebuild All Generated Gore** recreates only Forge-owned final nodes from the
+saved recipe, current capture, and current deformation. It does not alter source
+topology, source materials, Damage Key weights, or Source Readiness.

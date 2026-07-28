@@ -16,6 +16,15 @@ if SPEC is None or SPEC.loader is None:
     raise RuntimeError("Could not load trauma_field.py")
 trauma_field = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(trauma_field)
+SCHEMA_PATH = ROOT / "dreadstone_animation_forge" / "parameter_schema.py"
+SCHEMA_SPEC = importlib.util.spec_from_file_location(
+    "dreadstone_surface_gore_schema",
+    SCHEMA_PATH,
+)
+if SCHEMA_SPEC is None or SCHEMA_SPEC.loader is None:
+    raise RuntimeError("Could not load parameter_schema.py")
+parameter_schema = importlib.util.module_from_spec(SCHEMA_SPEC)
+SCHEMA_SPEC.loader.exec_module(parameter_schema)
 
 
 def grid_surface(width: int = 7, height: int = 7):
@@ -132,17 +141,128 @@ class RaisedGoreTests(unittest.TestCase):
             "linkedCaptureTopologyFingerprint": "b" * 64,
         }
         migrated = trauma_field.normalize_gore_overlay(legacy)
-        self.assertEqual(migrated["goreRecipeVersion"], 4)
+        self.assertEqual(migrated["goreRecipeVersion"], 6)
         self.assertEqual(migrated["goreSourceRecipeVersion"], 1)
         self.assertEqual(migrated["goreGeometryMode"], "STAIN_ONLY")
         self.assertEqual(migrated["goreOverlayMode"], "SURFACE_STAIN")
         self.assertFalse(migrated["goreRaisedEnabled"])
+        self.assertEqual(
+            migrated["goreSurfaceControl"]["macros"]["mass"],
+            0.0,
+        )
+        self.assertEqual(
+            migrated["goreSurfaceControl"]["macros"]["nucleus"],
+            0.0,
+        )
 
     def test_geometry_face_selection_is_deterministic(self):
         _positions, _faces, _overlay, first = heavy_records(1001)
         _positions, _faces, _overlay, second = heavy_records(1001)
         self.assertEqual(first, second)
         self.assertTrue(first)
+
+    def test_surface_macros_drive_cohesive_mass_nucleus_and_redness(self):
+        sparse = parameter_schema.derive_surface_gore_parameters(
+            (0, 20, 0, 25, 0)
+        )
+        cohesive = parameter_schema.derive_surface_gore_parameters(
+            (100, 90, 100, 85, 100)
+        )
+        self.assertGreater(
+            cohesive["goreClotCoverage"],
+            sparse["goreClotCoverage"],
+        )
+        self.assertGreater(
+            cohesive["goreCoreDensity"],
+            sparse["goreCoreDensity"],
+        )
+        self.assertLess(
+            cohesive["goreIslandBreakup"],
+            sparse["goreIslandBreakup"],
+        )
+        self.assertLess(
+            cohesive["gorePeripheralFragments"],
+            sparse["gorePeripheralFragments"],
+        )
+        self.assertEqual(cohesive["goreNucleusAmount"], 1.0)
+        self.assertGreater(
+            cohesive["goreBaseColorStrength"],
+            sparse["goreBaseColorStrength"],
+        )
+        self.assertLess(
+            cohesive["goreDarkness"],
+            sparse["goreDarkness"],
+        )
+
+    def test_surface_recipe_round_trip_preserves_control_and_physical_values(self):
+        macros = {
+            "mass": 91,
+            "relief": 84,
+            "nucleus": 72,
+            "lobes": 63,
+            "redness": 96,
+        }
+        overlay = heavy_overlay(seed=2401)
+        overlay["goreSurfaceControl"] = (
+            parameter_schema.normalize_surface_gore_control(
+                {"macros": macros}
+            )
+        )
+        overlay.update(
+            parameter_schema.derive_surface_gore_parameters(macros)
+        )
+        normalized = trauma_field.normalize_gore_overlay(overlay)
+        restored = trauma_field.normalize_gore_overlay(
+            json.loads(json.dumps(normalized))
+        )
+        self.assertEqual(restored, normalized)
+        self.assertEqual(
+            restored["goreSurfaceControl"]["macros"],
+            {key: float(value) for key, value in macros.items()},
+        )
+        self.assertAlmostEqual(restored["goreSurfaceMass"], 0.91)
+        self.assertAlmostEqual(restored["goreNucleusAmount"], 0.72)
+        self.assertAlmostEqual(restored["goreNucleusLobes"], 0.63)
+
+    def test_surface_mass_makes_face_selection_more_cohesive(self):
+        positions, faces, weights, displacement = grid_surface(9, 9)
+        sparse = heavy_overlay(seed=9191)
+        sparse.update(
+            parameter_schema.derive_surface_gore_parameters(
+                (0, 70, 0, 55, 80)
+            )
+        )
+        massive = heavy_overlay(seed=9191)
+        massive.update(
+            parameter_schema.derive_surface_gore_parameters(
+                (100, 70, 0, 55, 80)
+            )
+        )
+        sparse_records = trauma_field.raised_gore_face_records(
+            positions,
+            faces,
+            weights,
+            displacement,
+            sparse,
+        )
+        massive_records = trauma_field.raised_gore_face_records(
+            positions,
+            faces,
+            weights,
+            displacement,
+            massive,
+        )
+        self.assertGreater(len(massive_records), len(sparse_records))
+        self.assertEqual(
+            massive_records,
+            trauma_field.raised_gore_face_records(
+                positions,
+                faces,
+                weights,
+                displacement,
+                massive,
+            ),
+        )
 
     def test_thickness_values_are_deterministic_and_varied(self):
         _positions, _faces, _overlay, records = heavy_records(2002)

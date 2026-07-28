@@ -34,47 +34,64 @@ ALL_MODULE_PATHS = tuple(sorted(
     if "__pycache__" not in path.parts
 ))
 
-EXPECTED_VERSION = (3, 18, 0)
+EXPECTED_VERSION = (3, 19, 0)
 EXPECTED_READINESS_BUILD = "2026-07-18.source-contract.1"
 EXPECTED_AUTHORING_BUILD = "2026-07-18.source-contract.1"
-EXPECTED_DEFORMATION_BUILD = "2026-07-26.cavity-inlay-gore.1"
+EXPECTED_DEFORMATION_BUILD = "2026-07-28.vip-cohesive-surface-gore.6"
 
 REQUIRED_GUIDE_HEADINGS = (
-    "## 1. Install Dreadstone Animation Forge 3.18.0",
+    "## 1. Install Dreadstone Animation Forge 3.19.0",
     "## 2. Open the Dreadstone panel",
     "## 3. Import and prepare a source GLB",
-    "## 5. Author and approve animation drafts",
-    "## 6. Build and validate an approved animation pack",
-    "## 7. Run Source Damage Readiness",
-    "## 8. Build Damage Segment and Stump Authoring assets",
-    "## 9. Preview intact and detached states",
-    "## 10. Register and validate trauma regions",
-    "## 12. Capture a surface with every placement mode",
-    "## 13. Choose influence masks, distance modes, and damage axis",
-    "## 14. Create and manage trauma stamps",
-    "## 15. Preview, rebuild, compare, sculpt, and repair",
-    "## Surface Gore Overlay for blunt trauma",
-    "## 16. Run every validation command",
-    "## 17. Export the damage GLB and manifest",
-    "## 18. Clean reimport and verification",
-    "## 19. Beginner recipes",
-    "## 20. Troubleshooting and recovery",
+    "## 4. Use the VIP Damage workflow",
+    "## 5. Damage Keys and simultaneous previews",
+    "## 6. Child Stamp alternatives",
+    "## 7. Strong Impact and Gore macros",
+    "## 8. Hybrid additive gore",
+    "## 9. Save and reuse Damage Blueprints",
+    "## 10. Advanced capture, repair, and compound work",
+    "## 11. Author and approve animation drafts",
+    "## 12. Validate and export",
+    "## 13. Clean reimport and verification",
+    "## 14. Troubleshooting and recovery",
     "## Complete public button inventory",
 )
 
 REQUIRED_GUIDE_UI_LABELS = {
-    "**Adopt Imported Animation Pack**",
-    "**Safe Resize**",
-    "**Analyze Rig**",
+    "**VIP DAMAGE WORKFLOW**",
+    "**CREATE DAMAGE KEY FROM SELECTION**",
+    "**WORKING ON**",
+    "**PREVIEW ON**",
+    "**PREVIEW OFF**",
+    "**ADD STAMP ALTERNATIVE**",
+    "**STAMP · name**",
+    "**AREA**",
+    "**DEPTH**",
+    "**FALLOFF**",
+    "**EDGE DAMAGE**",
+    "**DISTORTION**",
+    "**ASYMMETRY**",
+    "**RAISED AMOUNT**",
+    "**INLAY AMOUNT**",
+    "**COVERAGE**",
+    "**EDGE BREAKUP**",
+    "**FILL**",
+    "**WETNESS**",
+    "**SURFACE MASS**",
+    "**RELIEF**",
+    "**NUCLEUS**",
+    "**FOLDS**",
+    "**REDNESS**",
+    "**RANDOMIZE DAMAGE**",
+    "**SAVE DAMAGE KEY + STAMP + GORE**",
+    "**ADD CURRENT RECIPE**",
+    "**REFRESH**",
+    "**APPLY · blueprint name**",
     "**Analyze Source Damage Readiness**",
     "**Repair Source Readiness Contract**",
-    "**Preview Candidate Seam**",
     "**Load READY Handoff**",
     "**Build Authoring Asset**",
-    "**Preview Intact**",
-    "**Preview Detached**",
     "**Register Selected Pair**",
-    "**Validate Region**",
     "**Register Selected Core Mesh**",
     "**Capture Single Face**",
     "**Capture Connected Face Patch**",
@@ -85,65 +102,10 @@ REQUIRED_GUIDE_UI_LABELS = {
     "**Connected Surface**",
     "**Surface Distance**",
     "**World Distance**",
-    "**Add Stamp**",
-    "**Update Active Stamp**",
-    "**Enable / Disable**",
-    "**Save Stamp Library...**",
-    "**Load Stamp Library...**",
-    "**Create Blunt Gore Head Set**",
-    "**Enable Surface Gore Overlay**",
-    "**Use Preset Defaults**",
-    "**Randomize Master Gore Seed**",
-    "**Apply Gore Overlay Settings**",
-    "**Preview / Rebuild Current Gore**",
-    "**Clear Stain Preview**",
-    "**Apply Heavy Gore to All Deformations**",
-    "**Clear Current Generated Gore**",
-    "**Rebuild All Generated Gore**",
-    "**Validate Gore Geometry**",
-    "**Create Body Impact Starters**",
-    "**Create Forearm Impact Starter**",
-    "**New Compound Trauma Event**",
-    "**Add Active Region to Event**",
-    "**Capture Shared Impact Field**",
-    "**Preview Compound Event**",
-    "**Validate Compound Event**",
     "**Generate Three Mace Head-Guard Drafts**",
     "**Preview Guard_Active**",
     "**Validate Mace Head-Guard Drafts**",
-    "**Compact Dent**",
-    "**Broad Cave**",
-    "**Flat Compression**",
-    "**Directional Shear**",
-    "**Raised Impact Rim**",
-    "**Ridge Collapse**",
-    "**RANDOMIZE SEED**",
-    "**GENERATE / REFRESH PREVIEW**",
-    "**COMMIT / SAVE IMPACT**",
-    "**USE MANUAL CONTROL**",
-    "**FIT MACROS TO CURRENT VALUES**",
-    "**RETURN TO MACRO CONTROL**",
-    "**FINAL PREVIEW**",
-    "**GORE CONTROL DECK**",
-    "**GORE PEDAL**",
-    "**EXPOSURE**",
-    "**CAVITY**",
-    "**CLOT FILL**",
-    "**BREAKUP**",
-    "**WETNESS**",
-    "**VARIATION**",
-    "**RANDOMIZE GORE SEED**",
-    "**GENERATE / REBUILD GORE PREVIEW**",
-    "**COMMIT / SAVE GORE**",
-    "**Revert Gore**",
-    "**FINAL GORE PREVIEW**",
-    "**Advanced Gore Internals**",
-    "**USE MANUAL GORE CONTROL**",
-    "**RETURN TO GORE PEDAL**",
     "**REBUILD ACTIVE DEFORMATION**",
-    "**Attached**",
-    "**Detached**",
-    "**Both**",
     "**REPAIR LEGACY PAIR SYNC**",
     "**Validate Morph Targets**",
     "**Validate Complete Damage Asset**",
@@ -161,6 +123,7 @@ REQUIRED_SCHEMAS = {
     "dreadstone.damage_deformation.v1",
     "dreadstone.impact_control.v1",
     "dreadstone.gore_control.v1",
+    "dreadstone.surface_gore_control.v1",
     "dreadstone.trauma_stamp_library.v1",
     "dreadstone.compound_trauma_event.v1",
 }
@@ -215,7 +178,6 @@ REQUIRED_OPERATORS = {
     "daf.begin_deformation_sculpt": "Begin Sculpt",
     "daf.finish_deformation_sculpt": "Finish Sculpt & Sync",
     "daf.create_mirrored_deformation": "Create Mirrored Shape Key",
-    "daf.build_active_deformation_preset": "Build Active Preset",
     "daf.show_deformation_attached": "Show Attached",
     "daf.show_deformation_detached": "Show Detached",
     "daf.show_deformation_overlay": "Show Both",
@@ -241,11 +203,9 @@ REQUIRED_OPERATORS = {
     "daf.save_trauma_stamp_library": "Save Trauma Stamp Library",
     "daf.load_trauma_stamp_library": "Load Trauma Stamp Library",
     "daf.create_blunt_gore_head_deformations": "Create Blunt Gore Head Set",
-    "daf.apply_surface_gore_preset": "Use Gore Preset Defaults",
     "daf.update_surface_gore_overlay": "Apply Gore Overlay Settings",
     "daf.preview_surface_gore_overlay": "Preview / Rebuild Current Gore",
     "daf.clear_surface_gore_overlay_preview": "Clear Stain Preview",
-    "daf.apply_heavy_gore_all_deformations": "Apply Heavy Gore to All Deformations",
     "daf.clear_current_generated_gore": "Clear Current Generated Gore",
     "daf.rebuild_all_generated_gore": "Rebuild All Generated Gore",
     "daf.validate_gore_geometry": "Validate Gore Geometry",
@@ -263,20 +223,28 @@ REQUIRED_OPERATORS = {
     "daf.generate_mace_head_guards": "Generate Three Mace Head-Guard Drafts",
     "daf.preview_mace_guard_active": "Preview Guard_Active",
     "daf.validate_mace_head_guards": "Validate Mace Head-Guard Drafts",
+    "daf.toggle_damage_key_preview": "Toggle Damage Key Preview",
+    "daf.select_damage_stamp": "Select Damage Stamp",
+    "daf.randomize_damage_recipe": "RANDOMIZE DAMAGE",
+    "daf.save_vip_damage": "SAVE DAMAGE KEY",
+    "daf.save_damage_blueprint": "ADD TO BLUEPRINT LIBRARY",
+    "daf.refresh_damage_blueprints": "Refresh Damage Blueprints",
+    "daf.apply_damage_blueprint": "Apply Damage Blueprint",
 }
 
 REQUIRED_UI_TEXT = {
     "Source Damage Readiness",
     "Damage Segment & Stump Authoring v3.9",
-    "Trauma Field Authoring v3.18.0",
-    "5. Surface Gore Overlay",
+    "Trauma Field Authoring v3.19.0",
+    "VIP DAMAGE WORKFLOW",
+    "CREATE DAMAGE KEY FROM SELECTION",
+    "RANDOMIZE DAMAGE",
+    "SAVE DAMAGE KEY + STAMP + GORE",
+    "ADDITIVE GORE MACROS",
+    "COHESIVE LEGACY SURFACE GORE",
+    "4 · ADAPTIVE BLUEPRINT LIBRARY",
     "Restore Reimported GLB Intact Preview",
     "Validate Complete Damage Asset",
-    "BUILD ACTIVE PRESET",
-    "Attached",
-    "Detached",
-    "Both",
-    "Sculpting is optional; presets are now intended to read clearly out of the box",
 }
 
 REQUIRED_TRAUMA_FAMILIES = {
@@ -370,6 +338,20 @@ def operator_contracts(trees: Iterable[ast.Module]) -> dict[str, str]:
     return result
 
 
+def package_trees() -> list[ast.Module]:
+    return [
+        ast.parse(
+            path.read_text(encoding="utf-8"),
+            filename=str(path.relative_to(ROOT)),
+        )
+        for path in ALL_MODULE_PATHS
+    ]
+
+
+def package_operator_contracts() -> dict[str, str]:
+    return operator_contracts(package_trees())
+
+
 def dict_literal_pairs(tree: ast.AST) -> set[tuple[str, object]]:
     pairs: set[tuple[str, object]] = set()
     for node in ast.walk(tree):
@@ -446,7 +428,7 @@ def check_extension_manifest() -> None:
         (
             'schema_version = "1.0.0"',
             'id = "dreadstone_animation_forge"',
-            'version = "3.18.0"',
+            'version = "3.19.0"',
             'name = "Dreadstone Animation Forge"',
             'type = "add-on"',
             'blender_version_min = "4.2.0"',
@@ -501,17 +483,12 @@ def check_package_imports(sources: dict[str, str]) -> None:
 def check_surface_gore_contracts(sources: dict[str, str], trees: dict[str, ast.Module]) -> None:
     trauma = sources["trauma_field.py"]
     deformation = sources["deformation_authoring.py"]
-    presets = literal_assignment(trees["parameter_schema.py"], "GORE_PRESETS")
-    require(
-        set(presets) == {
-            "Gore_Ooze_Wet", "Gore_Clot_Dark", "Gore_Smear_Heavy",
-            "Gore_Speckled_Impact", "Gore_Crush_Bloodied", "Gore_Crush_Heavy_Clotted",
-        },
-        "surface gore built-in preset family changed",
-    )
     require_markers(
         trauma,
         (
+            "GORE_RECIPE_VERSION = 6",
+            '"HYBRID_ADDITIVE"',
+            "def gore_component_recipes(",
             "def default_gore_overlay(", "def normalize_gore_overlay(",
             "def validate_gore_overlay(", "def gore_overlay_digest(",
             "def gore_overlay_export_metadata(", "def gore_mask_value(",
@@ -522,6 +499,9 @@ def check_surface_gore_contracts(sources: dict[str, str], trees: dict[str, ast.M
             '"goreEdgeFeather"', '"goreWetness"', '"goreDarkness"', '"goreColorBias"',
             '"goreMaskSeed"', '"linkedRegionId"', '"linkedStampId"',
             '"goreRaisedEnabled"', '"goreClotThickness"', '"goreGeometryDensity"',
+            '"goreInlayAmount"', '"goreRaisedAmount"',
+            '"goreSurfaceControl"', '"goreSurfaceMass"',
+            '"goreNucleusAmount"', '"goreNucleusLobes"',
             '"goreDefaultVisible"', '"goreActivationWeight"',
         ),
         "surface gore logic",
@@ -532,13 +512,16 @@ def check_surface_gore_contracts(sources: dict[str, str], trees: dict[str, ast.M
             'GORE_PREVIEW_ATTRIBUTE = "DSB_Surface_Gore_Mask"',
             "def preview_surface_gore(", "def clear_surface_gore_preview(",
             "def rebuild_raised_gore_for_key(", "def generated_gore_objects(",
-            "def apply_heavy_gore_to_all_deformations(", "def _raised_gore_errors(",
+            "def _raised_gore_errors(",
             "material = source.copy()", "clear_surface_gore_preview(all_regions=True)",
             '"surfaceGoreOverlay"', '"goreOverlayDigest"',
             '"goreOverlayValidationStatus"', '"raisedGoreValidationStatus"', '"exportValidationStatus"',
             '"generatedGoreMeshes"', '"goreActivationContract"',
+            '"dsb_gore_component"', '"dsb_gore_parent_recipe_digest"',
+            '"dsb_gore_nucleus_triangle_count"',
+            '"COHESIVE_SURFACE_MASS_LOBULATED_NUCLEUS_V4"',
             "daf.preview_surface_gore_overlay", "daf.clear_surface_gore_overlay_preview",
-            "daf.apply_heavy_gore_all_deformations", "daf.rebuild_all_generated_gore",
+            "daf.rebuild_all_generated_gore",
             "daf.validate_gore_geometry",
         ),
         "surface gore Blender authoring/export",
@@ -558,14 +541,14 @@ def check_schemas_names_keys_seams(trees: dict[str, ast.Module]) -> None:
 
 
 def check_operators_and_ui(trees: dict[str, ast.Module]) -> None:
-    actual = operator_contracts(trees.values())
+    actual = package_operator_contracts()
     mismatches = [
         f"{operator_id} ({actual.get(operator_id)!r} != {label!r})"
         for operator_id, label in REQUIRED_OPERATORS.items()
         if actual.get(operator_id) != label
     ]
     require(not mismatches, "operator contracts changed: " + "; ".join(mismatches))
-    literals = string_literals(trees.values())
+    literals = string_literals(package_trees())
     missing_ui = sorted(REQUIRED_UI_TEXT - literals)
     require(not missing_ui, f"missing UI labels: {', '.join(missing_ui)}")
 
@@ -576,13 +559,13 @@ def check_impact_parameter_contracts(sources: dict[str, str]) -> None:
     deformation = sources["deformation_authoring.py"]
     trauma = sources["trauma_field.py"]
     panels = (PACKAGE / "ui" / "panels.py").read_text(encoding="utf-8")
-    impacts = (PACKAGE / "ui" / "operators" / "impacts.py").read_text(encoding="utf-8")
-    previews = (PACKAGE / "ui" / "operators" / "previews.py").read_text(encoding="utf-8")
+    vip = (PACKAGE / "ui" / "operators" / "vip.py").read_text(encoding="utf-8")
+    blueprint = (PACKAGE / "deformation" / "blueprint_service.py").read_text(encoding="utf-8")
     require_markers(
         schema,
         (
             'IMPACT_CONTROL_SCHEMA = "dreadstone.impact_control.v1"',
-            'MACRO_LABELS = ("SIZE", "CRUSH", "PROFILE", "EDGE SAFETY", "CHAOS")',
+            'MACRO_LABELS = ("AREA", "DEPTH", "FALLOFF", "EDGE DAMAGE", "DISTORTION", "ASYMMETRY")',
             "class ParameterSpec:",
             '"inclusive_min"', '"inclusive_max"',
             "def blender_kwargs(", "def validate_recipe_value(",
@@ -599,6 +582,9 @@ def check_impact_parameter_contracts(sources: dict[str, str]) -> None:
             'parameter_schema.blender_kwargs("deformation_seed_falloff")',
             'parameter_schema.blender_kwargs("deformation_max_vertex_displacement")',
             'parameter_schema.blender_kwargs("deformation_impact_size")',
+            'parameter_schema.blender_kwargs("deformation_impact_asymmetry")',
+            'parameter_schema.blender_kwargs("deformation_gore_inlay_amount")',
+            'parameter_schema.blender_kwargs("deformation_gore_raised_amount")',
             'parameter_schema.blender_kwargs("deformation_impact_seed")',
         ),
         "RNA parameter authority",
@@ -609,6 +595,9 @@ def check_impact_parameter_contracts(sources: dict[str, str]) -> None:
             "def apply_impact_macro_transaction(",
             "def apply_impact_seed_transaction(",
             "def randomize_impact_seed(",
+            "def randomize_damage_recipe(",
+            "def save_active_damage_blueprint(",
+            "def apply_damage_blueprint(",
             "def fit_impact_macros_to_current_values(",
             "def return_to_macro_control(",
             "preview_service.suspend_updates",
@@ -627,16 +616,29 @@ def check_impact_parameter_contracts(sources: dict[str, str]) -> None:
         "Impact Pedal normalization and deterministic geometry",
     )
     require_markers(
-        panels + impacts + previews,
+        panels + vip,
         (
-            "IMPACT CONTROL DECK", "IMPACT PEDAL", "Advanced Impact Internals",
-            "RANDOMIZE SEED", "GENERATE / REFRESH PREVIEW", "COMMIT / SAVE IMPACT",
-            "FIT MACROS TO CURRENT VALUES", "RETURN TO MACRO CONTROL",
+            "VIP DAMAGE WORKFLOW", "WORKING ON", "PREVIEW ON", "PREVIEW OFF",
+            "IMPACT MACROS", "ADDITIVE GORE MACROS", "RANDOMIZE DAMAGE",
+            "COHESIVE LEGACY SURFACE GORE",
+            "SAVE DAMAGE KEY + STAMP + GORE", "ADAPTIVE BLUEPRINT LIBRARY",
         ),
-        "Impact Control Deck UI",
+        "VIP Damage workflow UI",
     )
-    require((ROOT / "docs" / "DAMAGE_PARAMETER_AUDIT_v3.18.0.json").is_file(), "damage parameter audit report is missing")
-    require((ROOT / "docs" / "IMPACT_RESPONSE_DIAGNOSTICS_v3.18.0.json").is_file(), "impact response diagnostic report is missing")
+    require_markers(
+        blueprint,
+        (
+            'BLUEPRINT_SCHEMA = "dreadstone.damage_blueprint.v1"',
+            '"surfaceMacros"',
+            "def build_blueprint(",
+            "def adaptive_stamp_values(",
+            "def upsert_blueprint(",
+            "def derive_subseed(",
+        ),
+        "topology-independent Damage Blueprint contract",
+    )
+    require((ROOT / "docs" / "DAMAGE_PARAMETER_AUDIT_v3.19.0.json").is_file(), "damage parameter audit report is missing")
+    require((ROOT / "docs" / "IMPACT_RESPONSE_DIAGNOSTICS_v3.19.0.json").is_file(), "impact response diagnostic report is missing")
 
 
 def check_world_space_and_exact_index(source: str) -> None:
@@ -661,7 +663,7 @@ def check_world_space_and_exact_index(source: str) -> None:
     )
 
 
-def check_preview_and_presets(source: str) -> None:
+def check_preview_and_alternatives(source: str) -> None:
     require_markers(
         source,
         (
@@ -675,8 +677,14 @@ def check_preview_and_presets(source: str) -> None:
             'bl_idname = "daf.show_deformation_attached"',
             'bl_idname = "daf.show_deformation_detached"',
             'bl_idname = "daf.show_deformation_overlay"',
-            'bl_idname = "daf.build_active_deformation_preset"',
-            'text="BUILD ACTIVE PRESET"',
+            "def apply_damage_key_previews(",
+            "def set_damage_key_preview_enabled(",
+            "def select_damage_key_stamp(",
+            "def _capture_current_mesh_selection(",
+            '"mesh_select_mode"',
+            "_refresh_authoring_ui_cache",
+            '"stampMode": "ALTERNATIVES"',
+            '"previewEnabled": True',
             'family == "localized_dent"',
             'family == "broad_cave"',
             'family == "directional_displacement"',
@@ -687,7 +695,7 @@ def check_preview_and_presets(source: str) -> None:
             'bl_idname = "daf.finish_deformation_sculpt"',
             "Sculpting is optional",
         ),
-        "legacy preview/preset/sculpt contracts",
+        "multi-key preview, Stamp alternatives, and sculpt contracts",
     )
 
 
@@ -887,24 +895,24 @@ def check_repository_hygiene() -> None:
 
 
 def main() -> int:
-    print("DREADSTONE ANIMATION FORGE v3.18.0 STATIC VALIDATION")
+    print("DREADSTONE ANIMATION FORGE v3.19.0 STATIC VALIDATION")
     print("Blender is not imported; runtime acceptance remains separate.")
 
     sources: dict[str, str] = {}
     trees: dict[str, ast.Module] = {}
     checks: list[tuple[str, Callable[[], None]]] = [
         ("all six contract package modules exist", check_module_files),
-        ("Blender extension manifest exists and matches v3.18.0", check_extension_manifest),
+        ("Blender extension manifest exists and matches v3.19.0", check_extension_manifest),
         ("all Python modules parse with ast.parse", lambda: check_parse(sources)),
         ("all Python modules compile with py_compile", check_compile),
         ("add-on/deformation version and build contracts", lambda: check_versions(trees)),
         ("expected package-relative module imports", lambda: check_package_imports(sources)),
-        ("surface gore presets, preview management, persistence, validation, and export contracts", lambda: check_surface_gore_contracts(sources, trees)),
+        ("additive gore, preview management, persistence, validation, and export contracts", lambda: check_surface_gore_contracts(sources, trees)),
         ("manifest schemas, DSB names, seams, and standard keys", lambda: check_schemas_names_keys_seams(trees)),
         ("required operators and UI labels", lambda: check_operators_and_ui(trees)),
         ("Impact Pedal parameter authority, transactions, UI, and reports", lambda: check_impact_parameter_contracts(sources)),
         ("world-space exact-index deformation synchronization", lambda: check_world_space_and_exact_index(sources["deformation_authoring.py"])),
-        ("attached/detached preview, preset, and optional sculpt contracts", lambda: check_preview_and_presets(sources["deformation_authoring.py"])),
+        ("multi-key preview, Stamp alternatives, and optional sculpt contracts", lambda: check_preview_and_alternatives(sources["deformation_authoring.py"])),
         ("trauma-field algorithms, registry, stamps, rebuild, and additive manifest contracts", lambda: check_trauma_field_contracts(sources, trees)),
         ("source-readiness identity, staleness, repair, and export separation", lambda: check_source_readiness_contracts(sources, trees)),
         ("GLB morph target and morph normal export hooks", lambda: check_glb_morph_hooks(trees["damage_authoring.py"])),

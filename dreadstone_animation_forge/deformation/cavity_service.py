@@ -427,6 +427,94 @@ def build_cavity_inlay(
             4401,
         ))
 
+    # Macro-derived clot/tissue depths are semantic targets, but surface
+    # irregularity changes the actual generated rim and liner medians. Project
+    # the internal plate medians into the measured rim-to-liner interval so
+    # every legal macro combination preserves skin -> rim -> clot -> tissue ->
+    # liner ordering without flattening the macro response.
+    ordered_internal_layers = (LAYER_CLOT, LAYER_TISSUE)
+    internal_specs = [
+        (index, spec)
+        for index, spec in enumerate(plate_specs)
+        if spec[0] in ordered_internal_layers
+    ]
+    if internal_specs:
+        rim_median = _median([
+            depth
+            for depth, layer in zip(vertex_depths, vertex_layers)
+            if layer == LAYER_RIM
+        ])
+        liner_median = _median([
+            depth
+            for depth, layer in zip(vertex_depths, vertex_layers)
+            if layer == LAYER_LINER
+        ])
+        if liner_median + 1e-10 < rim_median:
+            raise ValueError(
+                "cavity shell produced a liner shallower than its rim"
+            )
+        internal_thickness = max(
+            separation * 0.45,
+            wall_thickness * 0.34,
+        )
+        interval = max(0.0, liner_median - rim_median)
+        requested_gap = max(1e-8, separation * 0.02)
+        gap = min(
+            requested_gap,
+            interval / max(2.0, float(len(internal_specs) + 1)),
+        )
+        lower = rim_median + gap
+        upper = liner_median - gap
+        if upper < lower:
+            lower = upper = (rim_median + liner_median) * 0.5
+            gap = 0.0
+        elif len(internal_specs) > 1:
+            gap = min(
+                gap,
+                (upper - lower) / float(len(internal_specs) - 1),
+            )
+        target_centers = [
+            min(
+                upper,
+                max(
+                    lower,
+                    float(spec[1]) + internal_thickness * 0.5,
+                ),
+            )
+            for _index, spec in internal_specs
+        ]
+        for position in range(len(target_centers)):
+            floor = lower + gap * position
+            if position:
+                floor = max(
+                    floor,
+                    target_centers[position - 1] + gap,
+                )
+            target_centers[position] = max(
+                floor,
+                target_centers[position],
+            )
+        for position in range(len(target_centers) - 1, -1, -1):
+            ceiling = upper - gap * (
+                len(target_centers) - 1 - position
+            )
+            target_centers[position] = min(
+                ceiling,
+                target_centers[position],
+            )
+        for (spec_index, spec), center in zip(
+            internal_specs,
+            target_centers,
+        ):
+            layer, _depth, coverage, material_id, salt = spec
+            plate_specs[spec_index] = (
+                layer,
+                max(0.0, center - internal_thickness * 0.5),
+                coverage,
+                material_id,
+                salt,
+            )
+
     for layer, depth, coverage, material_id, salt in plate_specs:
         eligible = [
             record

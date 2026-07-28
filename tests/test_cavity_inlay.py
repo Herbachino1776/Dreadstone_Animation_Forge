@@ -74,6 +74,17 @@ def cavity_overlay(identity_id, macros, seed, scale=1.0):
         stamp_depth=stamp_depth,
         mean_edge_length=0.01 * float(scale),
     )
+    # This fixture isolates the inlay component. Hybrid expansion is covered
+    # separately by the Damage Blueprint/additive-gore contract tests.
+    derived["goreGeometryMode"] = (
+        "CAVITY_INLAY"
+        if float(derived["goreInlayAmount"]) > 0.0
+        else "STAIN_ONLY"
+    )
+    derived["goreRaisedAmount"] = 0.0
+    derived["goreRaisedEnabled"] = (
+        derived["goreGeometryMode"] != "STAIN_ONLY"
+    )
     overlay = trauma.default_gore_overlay(
         identity["presetId"],
         enabled=True,
@@ -255,6 +266,90 @@ class CavityInlayTests(unittest.TestCase):
         medians = [depths[layer]["median"] for layer in ordered]
         self.assertTrue(all(first <= second for first, second in zip(medians, medians[1:])))
         self.assertEqual(overlay["goreGeometryMode"], "CAVITY_INLAY")
+
+    def test_every_macro_matrix_generation_preserves_layer_order(self):
+        expected_order = ("RIM", "CLOT", "TISSUE", "LINER", "BONE")
+        for identity_id, identity in schema.GORE_IDENTITIES.items():
+            for macro_index in range(6):
+                for level in (0, 25, 50, 75, 100):
+                    macros = list(identity["macros"])
+                    macros[macro_index] = level
+                    try:
+                        generated = build(
+                            identity_id,
+                            macros,
+                            1776,
+                        )[2]
+                    except ValueError as exc:
+                        if "requires at least one selected source face" in str(exc):
+                            continue
+                        raise
+                    depths = generated["metrics"]["layerDepths"]
+                    ordered = [
+                        layer for layer in expected_order if layer in depths
+                    ]
+                    medians = [
+                        float(depths[layer]["median"])
+                        for layer in ordered
+                    ]
+                    with self.subTest(
+                        identity=identity_id,
+                        macro=macro_index,
+                        level=level,
+                    ):
+                        self.assertTrue(all(
+                            first <= second + 1e-8
+                            for first, second in zip(medians, medians[1:])
+                        ))
+
+    def test_reported_head_macro_combination_preserves_layer_order(self):
+        macros = (
+            86.45569610595703,
+            70.0,
+            75.20674896240234,
+            58.0,
+            68.0,
+            86.03375244140625,
+        )
+        overlay = cavity_overlay(
+            "BLOODY_CRATER",
+            macros,
+            65502235,
+        )
+        # Exact inlay-component depths recorded from the failing head recipe.
+        overlay.update({
+            "goreCavityDepth": 0.005953514017164707 * 0.699999988079071,
+            "goreLinerSeparation": 0.0009348442545160651 * 0.699999988079071,
+            "goreClotFillDepth": 0.0015730038285255432 * 0.699999988079071,
+            "goreInlayAmount": 0.699999988079071,
+            "goreRaisedAmount": 0.0,
+        })
+        overlay = trauma.normalize_gore_overlay(overlay)
+        positions, faces, weights, normals = grid_surface()
+        displacement = [weight * 0.035 for weight in weights]
+        records = trauma.gore_face_records(
+            positions,
+            faces,
+            weights,
+            displacement,
+            overlay,
+        )
+        generated = cavity.build_cavity_inlay(
+            positions,
+            normals,
+            records,
+            overlay,
+            MATERIAL_ROLES,
+        )
+        depths = generated["metrics"]["layerDepths"]
+        medians = [
+            float(depths[layer]["median"])
+            for layer in ("RIM", "CLOT", "LINER")
+        ]
+        self.assertTrue(all(
+            first <= second + 1e-8
+            for first, second in zip(medians, medians[1:])
+        ))
 
     def test_winding_tamper_is_detected(self):
         identity = schema.GORE_IDENTITIES["BLOODY_CRATER"]

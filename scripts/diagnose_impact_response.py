@@ -13,9 +13,9 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 PACKAGE = ROOT / "dreadstone_animation_forge"
-OUTPUT = ROOT / "docs" / "IMPACT_RESPONSE_DIAGNOSTICS_v3.18.0.json"
+OUTPUT = ROOT / "docs" / "IMPACT_RESPONSE_DIAGNOSTICS_v3.19.0.json"
 LEVELS = (0, 25, 50, 75, 100)
-MACROS = ("size", "crush", "profile", "edgeSafety", "chaos")
+MACROS = ("size", "crush", "profile", "edgeDamage", "distortion", "asymmetry")
 
 
 def load_module(name, path):
@@ -100,6 +100,8 @@ def sample(macros, seed=1776, family="COMPACT_DENT"):
         "maximumDisplacement": derived["maximumDisplacement"],
         "impactSeed": derived["impactSeed"],
         "impactChaos": derived["impactChaos"],
+        "impactEdgeDamage": derived["impactEdgeDamage"],
+        "impactAsymmetry": derived["impactAsymmetry"],
         "impactProfile": derived["impactProfile"],
         "profileCenterRimBalance": derived["profileCenterRimBalance"],
         "orderIndex": 0,
@@ -150,7 +152,7 @@ def analyze_macro(name):
     index = MACROS.index(name)
     records = []
     for level in LEVELS:
-        values = [50.0, 50.0, 50.0, 50.0, 50.0]
+        values = [50.0, 50.0, 50.0, 50.0, 50.0, 50.0]
         values[index] = float(level)
         records.append(sample(values))
     digests = [record["geometryDigest"] for record in records]
@@ -162,16 +164,12 @@ def analyze_macro(name):
     expected_metric = {
         "size": "affectedVertexCount",
         "crush": "maximumDisplacement",
-        "edgeSafety": "seamMovement",
     }.get(name)
     non_monotonic = []
     if expected_metric:
         values = [float(record[expected_metric]) for record in records]
         for position in range(len(values) - 1):
-            if name == "edgeSafety":
-                failed = values[position + 1] > values[position] + 1e-10
-            else:
-                failed = values[position + 1] + 1e-10 < values[position]
+            failed = values[position + 1] + 1e-10 < values[position]
             if failed:
                 non_monotonic.append([LEVELS[position], LEVELS[position + 1]])
     changes = [
@@ -202,7 +200,7 @@ def analyze_macro(name):
 def seed_sweep(count=20):
     records = []
     failures = []
-    macros = (50.0, 60.0, 50.0, 50.0, 65.0)
+    macros = (50.0, 60.0, 50.0, 50.0, 65.0, 50.0)
     for seed in range(7000, 7000 + count):
         try:
             records.append(sample(macros, seed=seed))
@@ -246,7 +244,7 @@ def build_report():
         failures.append("Representative seeds produced duplicate geometry digests")
     return {
         "schema": "dreadstone.impact_response_diagnostics.v1",
-        "forgeVersion": "3.18.0",
+        "forgeVersion": "3.19.0",
         "fixture": {
             "kind": "maintained deterministic 41x41 surface-field fixture",
             "vertexCount": len(POSITIONS),

@@ -1,7 +1,7 @@
 bl_info = {
     "name": "Dreadstone Animation Forge",
     "author": "Dreadstone Black",
-    "version": (3, 18, 0),
+    "version": (3, 19, 0),
     "blender": (3, 6, 0),
     "location": "3D Viewport > Sidebar > Dreadstone",
     "description": "Animation authoring, protected damage assets, and registered-region trauma-field shape-key authoring.",
@@ -802,6 +802,7 @@ class DAFSettings(PropertyGroup):
     ui_advanced_legacy_open: BoolProperty(default=False)
     ui_advanced_impact_internals_open: BoolProperty(default=False)
     ui_advanced_gore_internals_open: BoolProperty(default=False)
+    ui_vip_damage_open: BoolProperty(default=True)
     ui_character_open: BoolProperty(default=True)
     ui_ground_open: BoolProperty(default=False)
     ui_rig_open: BoolProperty(default=False)
@@ -1292,7 +1293,7 @@ class DAFSettings(PropertyGroup):
     last_damage_manifest_path: StringProperty(default="", options={'HIDDEN'})
     last_damage_validation_path: StringProperty(default="", options={'HIDDEN'})
 
-    # Trauma Field Authoring v3.18.0.
+    # Trauma Field Authoring v3.19.0.
     deformation_region: EnumProperty(
         name="Active Region",
         items=_deformation_region_items,
@@ -1391,34 +1392,20 @@ class DAFSettings(PropertyGroup):
     deformation_preview_estimated_gore_triangles: IntProperty(default=0, min=0, options={'HIDDEN'})
     deformation_preview_final_gore_triangles: IntProperty(default=0, min=0, options={'HIDDEN'})
     deformation_impact_semantic_name: StringProperty(
-        name="Impact Name",
-        description="Optional semantic name; Forge creates a safe unique name when blank",
+        name="Damage Key Name",
+        description="Optional universal damage-key name; Forge creates a safe unique name when blank",
         default="",
     )
-    deformation_impact_preset: EnumProperty(
-        name="Impact Preset",
-        items=[
-            ('HEAD_LEFT', "Head Left", "Configure left-head defaults without choosing polygons"),
-            ('HEAD_RIGHT', "Head Right", "Configure right-head defaults without choosing polygons"),
-            ('HEAD_FRONT', "Head Front", "Configure front-head defaults without choosing polygons"),
-            ('HEAD_BACK', "Head Back", "Configure rear-head defaults without choosing polygons"),
-            ('BODY_FRONT', "Body Front", "Configure front-body defaults without choosing polygons"),
-            ('BODY_LEFT', "Body Left", "Configure left-body defaults without choosing polygons"),
-            ('BODY_RIGHT', "Body Right", "Configure right-body defaults without choosing polygons"),
-            ('BODY_BACK', "Body Back", "Configure rear-body defaults without choosing polygons"),
-            ('FOREARM_OUTER', "Forearm Outer", "Configure outer-forearm defaults without choosing polygons"),
-            ('CUSTOM', "Custom Impact", "Use the active region and current controls"),
-        ],
-        default='CUSTOM',
+    deformation_blueprint_name: StringProperty(
+        name="Library Name",
+        description="Name used when saving the focused Damage Key, Stamp, and Gore recipe",
+        default="My Damage",
     )
-    deformation_impact_intensity: EnumProperty(
-        name="Intensity",
-        items=[
-            ('LIGHT', "Light", "Restrained depth and gore"),
-            ('MEDIUM', "Medium", "General-purpose impact"),
-            ('HEAVY', "Heavy", "High-intensity displacement and raised gore"),
-        ],
-        default='MEDIUM',
+    deformation_blueprint_library_path: StringProperty(
+        name="Damage Blueprint Library",
+        description="Project or absolute JSON path for reusable topology-independent Damage Blueprints",
+        default="//dreadstone_damage_blueprints.json",
+        subtype='FILE_PATH',
     )
     deformation_impact_control_mode: EnumProperty(
         name="Impact Control Mode",
@@ -1452,6 +1439,10 @@ class DAFSettings(PropertyGroup):
     )
     deformation_impact_chaos: FloatProperty(
         **parameter_schema.blender_kwargs("deformation_impact_chaos"),
+        update=_impact_macro_property_updated,
+    )
+    deformation_impact_asymmetry: FloatProperty(
+        **parameter_schema.blender_kwargs("deformation_impact_asymmetry"),
         update=_impact_macro_property_updated,
     )
     deformation_impact_seed: IntProperty(
@@ -1541,13 +1532,23 @@ class DAFSettings(PropertyGroup):
             ("STAIN_ONLY", "Stain Only", "Surface stain without generated geometry"),
             ("CAVITY_INLAY", "Cavity / Inlay", "Recessed liner and optional internal layers"),
             ("LEGACY_RAISED", "Legacy Raised", "Compatibility mode for existing raised-shell recipes"),
+            (
+                "HYBRID_ADDITIVE",
+                "Raised + Inlay",
+                "Independent full-strength raised and recessed geometry channels",
+            ),
         ],
-        default="CAVITY_INLAY",
+        default="HYBRID_ADDITIVE",
     )
     deformation_gore_control_mode: EnumProperty(
         name="Gore Control Mode",
         items=[
-            ("MACRO", "MACRO", "The six Gore Pedal controls are authoritative"),
+            (
+                "MACRO",
+                "MACRO",
+                "The additive inlay/raised and cohesive Surface Gore macros "
+                "are authoritative",
+            ),
             ("MANUAL", "MANUAL", "Advanced physical gore values are authoritative"),
         ],
         default="MACRO",
@@ -1576,31 +1577,52 @@ class DAFSettings(PropertyGroup):
         **parameter_schema.blender_kwargs("deformation_gore_variation"),
         update=_gore_macro_property_updated,
     )
+    deformation_gore_surface_mass: FloatProperty(
+        **parameter_schema.blender_kwargs(
+            "deformation_gore_surface_mass"
+        ),
+        update=_gore_macro_property_updated,
+    )
+    deformation_gore_surface_relief: FloatProperty(
+        **parameter_schema.blender_kwargs(
+            "deformation_gore_surface_relief"
+        ),
+        update=_gore_macro_property_updated,
+    )
+    deformation_gore_nucleus: FloatProperty(
+        **parameter_schema.blender_kwargs(
+            "deformation_gore_nucleus"
+        ),
+        update=_gore_macro_property_updated,
+    )
+    deformation_gore_lobes: FloatProperty(
+        **parameter_schema.blender_kwargs(
+            "deformation_gore_lobes"
+        ),
+        update=_gore_macro_property_updated,
+    )
+    deformation_gore_redness: FloatProperty(
+        **parameter_schema.blender_kwargs(
+            "deformation_gore_redness"
+        ),
+        update=_gore_macro_property_updated,
+    )
+    deformation_gore_inlay_amount: FloatProperty(
+        **parameter_schema.blender_kwargs("deformation_gore_inlay_amount"),
+        update=_gore_macro_property_updated,
+    )
+    deformation_gore_raised_amount: FloatProperty(
+        **parameter_schema.blender_kwargs("deformation_gore_raised_amount"),
+        update=_gore_macro_property_updated,
+    )
     deformation_gore_dirty: BoolProperty(default=False, options={"HIDDEN"})
     deformation_gore_identity_digest: StringProperty(default="", options={"HIDDEN"})
     deformation_gore_transaction_count: IntProperty(default=0, min=0, options={"HIDDEN"})
-    deformation_default_heavy_gore: BoolProperty(
-        name="Default New Impacts to High-Intensity Gore",
-        description="Link the heavy-clotted recipe when the first valid stamp is added to a new deformation",
-        default=True,
-    )
-    deformation_gore_preset: EnumProperty(
-        name="Gore Preset",
-        items=[
-            ('Gore_Ooze_Wet', "Ooze Wet", "Wet localized ooze with medium organic breakup"),
-            ('Gore_Clot_Dark', "Clot Dark", "Darker clotted patches with lower gloss"),
-            ('Gore_Smear_Heavy', "Smear Heavy", "Broad heavy smear with soft edges"),
-            ('Gore_Speckled_Impact', "Speckled Impact", "Sparse fine impact breakup"),
-            ('Gore_Crush_Bloodied', "Crush Bloodied", "Dense dark wet coverage for a crushed surface"),
-            ('Gore_Crush_Heavy_Clotted', "Crush Heavy Clotted", "High-intensity raised clots, broken islands, dark recesses, and wet crimson highlights"),
-            ('Gore_Bruised_Dent', "Bruised Dent", "Cavity/inlay identity: shallow compressed dent"),
-            ('Gore_Bloody_Crater', "Bloody Crater", "Cavity/inlay identity: wet crater"),
-            ('Gore_Dark_Clot_Cavity', "Dark Clot Cavity", "Cavity/inlay identity: deep dark clot"),
-            ('Gore_Crushed_Tissue', "Crushed Tissue", "Cavity/inlay identity: crushed fiber layer"),
-            ('Gore_Exposed_Cranium', "Exposed Cranium", "Cavity/inlay identity: exposed pale plate"),
-            ('Gore_Ragged_Impact', "Ragged Impact", "Cavity/inlay identity: torn irregular rim"),
-        ],
-        default='Gore_Bloody_Crater',
+    deformation_gore_preset: StringProperty(
+        name="Legacy Recipe Migration",
+        description="Internal compatibility ID for older authored gore records",
+        default="USER_AUTHORED",
+        options={'HIDDEN'},
     )
     deformation_gore_coverage: FloatProperty(**parameter_schema.blender_kwargs("deformation_gore_coverage"), update=_deformation_preview_property_updated)
     deformation_gore_scatter: FloatProperty(**parameter_schema.blender_kwargs("deformation_gore_scatter"), update=_deformation_preview_property_updated)
@@ -1620,6 +1642,21 @@ class DAFSettings(PropertyGroup):
     )
     deformation_gore_clot_coverage: FloatProperty(**parameter_schema.blender_kwargs("deformation_gore_clot_coverage"))
     deformation_gore_core_density: FloatProperty(**parameter_schema.blender_kwargs("deformation_gore_core_density"))
+    deformation_gore_surface_mass_value: FloatProperty(
+        **parameter_schema.blender_kwargs(
+            "deformation_gore_surface_mass_value"
+        )
+    )
+    deformation_gore_nucleus_amount: FloatProperty(
+        **parameter_schema.blender_kwargs(
+            "deformation_gore_nucleus_amount"
+        )
+    )
+    deformation_gore_nucleus_lobes: FloatProperty(
+        **parameter_schema.blender_kwargs(
+            "deformation_gore_nucleus_lobes"
+        )
+    )
     deformation_gore_clot_thickness: FloatProperty(
         **parameter_schema.blender_kwargs("deformation_gore_clot_thickness"),
         update=_deformation_preview_property_updated,
@@ -4317,7 +4354,7 @@ class DAF_PT_legacy_panel(Panel):
             layout,
             s,
             "ui_deformation_authoring_open",
-            "Trauma Field Authoring v3.18.0",
+            "Trauma Field Authoring v3.19.0",
         )
         if opened:
             configure_property_box(box)

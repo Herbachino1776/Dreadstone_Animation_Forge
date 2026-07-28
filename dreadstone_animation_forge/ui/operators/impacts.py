@@ -10,7 +10,10 @@ from ...deformation import diagnostics, preview_service
 class DAF_OT_create_impact_from_selection(Operator):
     bl_idname = "daf.create_impact_from_selection"
     bl_label = "Create Impact From Current Selection"
-    bl_description = "Transactionally create a unique key, capture one connected face patch, add a blunt stamp and optional heavy gore, then generate FAST preview"
+    bl_description = (
+        "Transactionally create a unique key from selected vertices, one face, "
+        "or one connected face patch, then add its first Stamp and FAST preview"
+    )
     bl_options = {'REGISTER', 'UNDO'}
 
     def execute(self, context):
@@ -19,9 +22,21 @@ class DAF_OT_create_impact_from_selection(Operator):
         try:
             result = deformation_authoring.create_impact_from_current_selection(context)
             stages = " / ".join(result.get("workflow", ()))
+            selected_count = (
+                result["faceCount"]
+                if result["selectionKind"] == "FACE"
+                else result["vertexCount"]
+            )
+            if result["selectionKind"] == "FACE":
+                selected_label = "face" if selected_count == 1 else "faces"
+            else:
+                selected_label = "vertex" if selected_count == 1 else "vertices"
             self.report(
                 {'INFO'},
-                f"{result['key']}: {stages} ({result['faceCount']} selected faces).",
+                (
+                    f"{result['key']}: {stages} "
+                    f"({selected_count} selected {selected_label})."
+                ),
             )
             return {'FINISHED'}
         except Exception as exc:
