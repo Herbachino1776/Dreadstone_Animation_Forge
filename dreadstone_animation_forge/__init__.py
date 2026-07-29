@@ -530,6 +530,103 @@ def key_pose(arm, mapping, frame):
             pb.keyframe_insert("rotation_quaternion", frame=frame, group=name)
             pb.keyframe_insert("location", frame=frame, group=name)
 
+
+def ground_current_pose(
+    context,
+    arm,
+    mapping,
+    meshes,
+    *,
+    target_lowest_z,
+):
+    """Raise the animated hips just enough to keep visible geometry on the floor."""
+    context.view_layer.update()
+    minimum, _maximum = world_bounds(context, meshes)
+    correction = max(0.0, float(target_lowest_z) - float(minimum.z))
+    if correction > 1.0e-7:
+        offset(
+            arm,
+            mapping,
+            "hips",
+            Vector((0.0, 0.0, correction)),
+        )
+        context.view_layer.update()
+    grounded_minimum, _grounded_maximum = world_bounds(context, meshes)
+    return {
+        "correction": correction,
+        "minimum_before": float(minimum.z),
+        "minimum_after": float(grounded_minimum.z),
+    }
+
+
+def set_bone_location_linear(action, pose_bone):
+    """Keep baked root/hips samples from overshooting between floor contacts."""
+    location_path = pose_bone.path_from_id("location")
+    for curve in iter_action_fcurves(action):
+        if str(getattr(curve, "data_path", "")) != location_path:
+            continue
+        for keyframe in curve.keyframe_points:
+            keyframe.interpolation = 'LINEAR'
+
+
+def bake_grounded_death_motion(
+    context,
+    action,
+    arm,
+    mapping,
+    meshes,
+    frame_start,
+    frame_end,
+    *,
+    ground_sink,
+):
+    """Bake per-frame hips translation so a death clip respects world Z=0."""
+    hips = arm.pose.bones.get(mapping.get("hips", ""))
+    if hips is None:
+        raise RuntimeError("Death grounding requires the mapped hips bone.")
+
+    target_lowest_z = -float(ground_sink)
+    maximum_correction = 0.0
+    worst_minimum = float("inf")
+    grounded_frames = 0
+    frames = range(int(math.floor(frame_start)), int(math.ceil(frame_end)) + 1)
+    for frame in frames:
+        context.scene.frame_set(frame)
+        result = ground_current_pose(
+            context,
+            arm,
+            mapping,
+            meshes,
+            target_lowest_z=target_lowest_z,
+        )
+        if result["correction"] > 1.0e-7:
+            grounded_frames += 1
+        maximum_correction = max(maximum_correction, result["correction"])
+        worst_minimum = min(worst_minimum, result["minimum_after"])
+
+        # Key every sampled hips location. This is the actual runtime floor
+        # correction and remains valid even when glTF force sampling is off.
+        hips.keyframe_insert("location", frame=frame, group=hips.name)
+
+    set_bone_location_linear(action, hips)
+    tolerance = 0.001
+    if worst_minimum < target_lowest_z - tolerance:
+        raise RuntimeError(
+            "Death grounding could not keep the visible mesh above the preview "
+            f"floor (lowest {worst_minimum:.4f} m, allowed "
+            f"{target_lowest_z:.4f} m). Check hips mapping and skin weights."
+        )
+    return {
+        "floor_z": 0.0,
+        "ground_sink_m": float(ground_sink),
+        "target_lowest_z": target_lowest_z,
+        "sample_count": int(math.ceil(frame_end)) - int(math.floor(frame_start)) + 1,
+        "grounded_frame_count": grounded_frames,
+        "maximum_correction_m": maximum_correction,
+        "minimum_z": worst_minimum,
+    }
+
+
 DRAFT_ACTION_NAMES = {
     "WALK": "DSB_DRAFT_Walk",
     "DEATH": "DSB_DRAFT_Death",
@@ -2070,8 +2167,8 @@ class DAFSettings(PropertyGroup):
 PREVIEW_FLOOR_NAME = "DSB_PREVIEW_FLOOR"
 
 
-def find_safe_wrapper(context):
-    """Find the outer Dreadstone scale wrapper related to the selection."""
+def find_safe_wrapper(context, *, required=True):
+    """Find an optional outer Dreadstone scale wrapper related to the selection."""
     for obj in related(context):
         current = obj
         while current:
@@ -2087,9 +2184,11 @@ def find_safe_wrapper(context):
     if len(candidates) == 1:
         return candidates[0]
 
-    raise RuntimeError(
-        "Could not find the DSB safe wrapper. Select the character or its armature."
-    )
+    if required:
+        raise RuntimeError(
+            "Could not find the DSB safe wrapper. Select the character or its armature."
+        )
+    return None
 
 
 def create_or_update_preview_floor(context, settings):
@@ -2221,11 +2320,16 @@ class DAF_OT_align_feet_to_floor(Operator):
             return {'CANCELLED'}
 
 def character_objects_for_armature(context, armature):
-    """Collect the imported character without pulling in the preview floor."""
-    objects = set()
-    objects.add(armature)
+    """Collect one rig hierarchy without requiring an outer resize wrapper."""
+    scene_objects = set(context.scene.objects)
+    objects = {armature}
+    objects.update(descendants(armature))
 
-    for obj in related(context):
+    # A normally rigged character often keeps its meshes beside the armature
+    # instead of parenting them below it.  The Armature modifier is the
+    # authoritative relationship in that layout, so scan the scene rather than
+    # limiting export discovery to the current selection.
+    for obj in scene_objects:
         if obj.name == PREVIEW_FLOOR_NAME:
             continue
 
@@ -2241,6 +2345,10 @@ def character_objects_for_armature(context, armature):
         if obj == armature or has_ancestor(obj, armature):
             objects.add(obj)
 
+    # Include character-owned attachments below the discovered rig and meshes.
+    for obj in list(objects):
+        objects.update(descendants(obj))
+
     # Include the full ancestry of every character object.
     for obj in list(objects):
         current = obj.parent
@@ -2251,6 +2359,7 @@ def character_objects_for_armature(context, armature):
 
     return {
         obj for obj in objects
+        if obj in scene_objects
         if obj.type in {'EMPTY', 'ARMATURE', 'MESH'}
         and obj.name != PREVIEW_FLOOR_NAME
     }
@@ -2939,6 +3048,17 @@ class DAF_OT_collapse(Operator):
             if missing:
                 raise RuntimeError("Missing mapped bones: " + ", ".join(missing))
 
+            meshes = [
+                obj for obj in character_objects_for_armature(context, arm)
+                if obj.type == 'MESH'
+                and obj.name != PREVIEW_FLOOR_NAME
+                and not bool(obj.get("dsb_preview_only", False))
+            ]
+            if not meshes:
+                raise RuntimeError(
+                    "No skinned character mesh was found for death grounding."
+                )
+
             style_label = {
                 "CHEST_HOLD": "ChestHold",
                 "FACEPLANT": "Faceplant",
@@ -2960,7 +3080,7 @@ class DAF_OT_collapse(Operator):
             knee_sign = -1.0 if s.invert_knees else 1.0
             elbow_sign = -1.0 if s.invert_elbows else 1.0
 
-            mn, mx = world_bounds(context, character_meshes(context))
+            mn, mx = world_bounds(context, meshes)
             height = max(mx.z - mn.z, .5)
             base_drop = min(max(height * .42, .55), 1.15) * s.death_drop_strength
             base_travel = min(max(height * .22, .28), .60) * s.death_travel_strength
@@ -3101,6 +3221,23 @@ class DAF_OT_collapse(Operator):
             key_pose(arm, m, final_end)
 
             set_bezier(action, cycles=False)
+            grounding = bake_grounded_death_motion(
+                context,
+                action,
+                arm,
+                m,
+                meshes,
+                start,
+                final_end,
+                ground_sink=s.ground_sink,
+            )
+            action["dsb_floor_grounded"] = True
+            action["dsb_ground_floor_z"] = grounding["floor_z"]
+            action["dsb_ground_sink_m"] = grounding["ground_sink_m"]
+            action["dsb_ground_sample_count"] = grounding["sample_count"]
+            action["dsb_grounded_frame_count"] = grounding["grounded_frame_count"]
+            action["dsb_ground_max_correction_m"] = grounding["maximum_correction_m"]
+            action["dsb_ground_minimum_z"] = grounding["minimum_z"]
             animation_library.mark_draft(
                 action,
                 arm,
@@ -3873,6 +4010,20 @@ def action_pack_metadata(action, fps):
         "hold_final_pose": bool(death),
         "return_to_previous_state": bool(hurt),
     }
+    if death:
+        result["floor_grounding"] = {
+            "baked": bool(action.get("dsb_floor_grounded", False)),
+            "floor_z": float(action.get("dsb_ground_floor_z", 0.0)),
+            "ground_sink_m": float(action.get("dsb_ground_sink_m", 0.0)),
+            "sample_count": int(action.get("dsb_ground_sample_count", 0)),
+            "grounded_frame_count": int(
+                action.get("dsb_grounded_frame_count", 0)
+            ),
+            "maximum_correction_m": float(
+                action.get("dsb_ground_max_correction_m", 0.0)
+            ),
+            "minimum_z": float(action.get("dsb_ground_minimum_z", 0.0)),
+        }
     guard_variant = str(action.get("dsb_guard_variant", ""))
     if guard_variant:
         try:
@@ -3895,6 +4046,83 @@ def action_pack_metadata(action, fps):
             "guard_validation_status": str(action.get("dsb_guard_validation_status", "NOT_VALIDATED")),
         })
     return result
+
+
+def validate_death_floor_action(
+    context,
+    action,
+    armature,
+    meshes,
+    *,
+    fallback_ground_sink,
+):
+    """Sample an approved death Action against the same Z=0 preview floor."""
+    sink = float(action.get("dsb_ground_sink_m", fallback_ground_sink))
+    floor_z = float(action.get("dsb_ground_floor_z", 0.0))
+    allowed_minimum = floor_z - sink
+    tolerance = 0.001
+    errors = []
+    worst_minimum = float("inf")
+    worst_frame = None
+    start, end = action_frame_bounds(action)
+
+    if armature.animation_data is None:
+        armature.animation_data_create()
+    animation_data = armature.animation_data
+    previous_action = animation_data.action
+    previous_frame = context.scene.frame_current
+    track_states = [
+        (
+            track,
+            bool(track.mute),
+            bool(getattr(track, "is_solo", False)),
+        )
+        for track in animation_data.nla_tracks
+    ]
+    try:
+        for track, _mute, _solo in track_states:
+            track.mute = True
+            try:
+                track.is_solo = False
+            except (AttributeError, RuntimeError):
+                pass
+        animation_data.action = action
+        for frame in range(
+            int(math.floor(start)),
+            int(math.ceil(end)) + 1,
+        ):
+            context.scene.frame_set(frame)
+            context.view_layer.update()
+            minimum, _maximum = world_bounds(context, meshes)
+            if float(minimum.z) < worst_minimum:
+                worst_minimum = float(minimum.z)
+                worst_frame = frame
+    finally:
+        animation_data.action = previous_action
+        for track, mute, solo in track_states:
+            track.mute = mute
+            try:
+                track.is_solo = solo
+            except (AttributeError, RuntimeError):
+                pass
+        context.scene.frame_set(previous_frame)
+
+    if worst_minimum < allowed_minimum - tolerance:
+        errors.append(
+            f"{action.name} reaches {worst_minimum:.4f} m at frame "
+            f"{worst_frame}; floor policy allows {allowed_minimum:.4f} m."
+        )
+    return {
+        "status": "FAIL" if errors else "PASS",
+        "action": action.name,
+        "floorZ": floor_z,
+        "groundSinkM": sink,
+        "allowedMinimumZ": allowed_minimum,
+        "minimumZ": worst_minimum,
+        "worstFrame": worst_frame,
+        "sampleCount": int(math.ceil(end)) - int(math.floor(start)) + 1,
+        "errors": errors,
+    }
 
 
 def sanitize_pack_filename(value):
@@ -4004,10 +4232,21 @@ def exporter_enum_supports(property_name, value):
         return False
 
 
-def select_pack_character(context, wrapper, *, include_hidden=False):
+def select_pack_character(
+    context,
+    source_root,
+    *,
+    objects=None,
+    include_hidden=False,
+):
     bpy.ops.object.select_all(action='DESELECT')
     selected = []
-    for obj in {wrapper} | descendants(wrapper):
+    candidates = (
+        set(objects)
+        if objects is not None
+        else {source_root} | descendants(source_root)
+    )
+    for obj in candidates:
         if obj.name == PREVIEW_FLOOR_NAME or obj.type not in {'EMPTY', 'ARMATURE', 'MESH'}:
             continue
         if obj.hide_get() and not include_hidden:
@@ -4016,26 +4255,83 @@ def select_pack_character(context, wrapper, *, include_hidden=False):
         selected.append(obj)
     if not selected:
         raise RuntimeError('No character objects were selected for export.')
-    context.view_layer.objects.active = wrapper
+    context.view_layer.objects.active = (
+        source_root if source_root in selected else selected[0]
+    )
     return selected
 
 
 def resolve_pack_source(context):
-    """Prefer the preserved original rig/hierarchy in a damage authoring file."""
+    """Resolve a selected character without requiring a resize wrapper."""
 
+    armature = None
     try:
         from . import damage_authoring
         state = damage_authoring._load_state()
         armature = bpy.data.objects.get(state.get("source_armature_name", ""))
-        if armature is not None and armature.type == 'ARMATURE':
-            current = armature
-            while current is not None:
-                if current.get("dsb_safe_size_wrapper", False):
-                    return armature, current
-                current = current.parent
     except Exception:
-        pass
-    return find_armature(context), find_safe_wrapper(context)
+        armature = None
+
+    if armature is None or armature.type != 'ARMATURE':
+        armature = find_armature(context)
+
+    wrapper = None
+    current = armature
+    while current is not None:
+        if current.get("dsb_safe_size_wrapper", False):
+            wrapper = current
+            break
+        current = current.parent
+
+    if wrapper is not None:
+        export_objects = {
+            obj for obj in ({wrapper} | descendants(wrapper))
+            if obj.name != PREVIEW_FLOOR_NAME
+            and obj.type in {'EMPTY', 'ARMATURE', 'MESH'}
+        }
+        source_root = wrapper
+    else:
+        export_objects = character_objects_for_armature(context, armature)
+        source_root = armature
+
+    if armature not in export_objects:
+        export_objects.add(armature)
+    if not any(obj.type == 'MESH' for obj in export_objects):
+        raise RuntimeError(
+            "Could not find a skinned character mesh for the selected armature."
+        )
+
+    return {
+        "armature": armature,
+        "source_root": source_root,
+        "wrapper": wrapper,
+        "objects": export_objects,
+    }
+
+
+def pack_character_metadata(context, source):
+    wrapper = source["wrapper"]
+    armature = source["armature"]
+    meshes = [obj for obj in source["objects"] if obj.type == 'MESH']
+    visible_height = None
+    if meshes:
+        minimum, maximum = world_bounds(context, meshes)
+        visible_height = float(maximum.z - minimum.z)
+    return {
+        "sizing_mode": "SAFE_WRAPPER" if wrapper is not None else "NATIVE_RIG",
+        "source_root_name": source["source_root"].name,
+        "armature_name": armature.name,
+        "wrapper_name": wrapper.name if wrapper is not None else None,
+        "wrapper_location": list(wrapper.location) if wrapper is not None else None,
+        "wrapper_scale": list(wrapper.scale) if wrapper is not None else None,
+        "target_height_m": (
+            wrapper.get('dsb_target_height_m') if wrapper is not None else None
+        ),
+        "original_height_m": (
+            wrapper.get('dsb_original_height_m') if wrapper is not None else None
+        ),
+        "visible_height_m": visible_height,
+    }
 
 
 def build_temporary_export_tracks(armature, actions):
@@ -4136,18 +4432,24 @@ def configure_gltf_action_filter(actions):
     return cleanup
 
 
-def export_approved_glb(context, filepath, actions, force_sampling):
-    armature, wrapper = resolve_pack_source(context)
+def export_approved_glb(
+    context,
+    filepath,
+    actions,
+    force_sampling,
+    *,
+    source=None,
+):
+    source = source or resolve_pack_source(context)
+    armature = source["armature"]
+    source_root = source["source_root"]
+    export_objects = set(source["objects"])
     selected_before = list(context.selected_objects)
     active_before = context.view_layer.objects.active
     frame_before = context.scene.frame_current
     start_before = context.scene.frame_start
     end_before = context.scene.frame_end
     floor = bpy.data.objects.get(PREVIEW_FLOOR_NAME)
-    export_objects = {
-        obj for obj in ({wrapper} | descendants(wrapper))
-        if obj.name != PREVIEW_FLOOR_NAME and obj.type in {'EMPTY', 'ARMATURE', 'MESH'}
-    }
     visibility_before = {
         obj: (bool(obj.hide_viewport), bool(obj.hide_render), bool(obj.hide_get()))
         for obj in export_objects
@@ -4167,7 +4469,12 @@ def export_approved_glb(context, filepath, actions, force_sampling):
             obj.hide_render = False
             obj.hide_set(False)
         context.view_layer.update()
-        select_pack_character(context, wrapper, include_hidden=True)
+        select_pack_character(
+            context,
+            source_root,
+            objects=export_objects,
+            include_hidden=True,
+        )
         previous_action, previous_states, temporary = build_temporary_export_tracks(armature, actions)
         action_filter_cleanup = configure_gltf_action_filter(actions)
         context.scene.frame_start = int(math.floor(min(action_frame_bounds(a)[0] for a in actions)))
@@ -4239,6 +4546,8 @@ class DAF_OT_build_approved_pack(Operator):
             actions = approved_actions()
             if not actions:
                 raise RuntimeError('No approved Actions found. Approve at least one Draft first.')
+            source = resolve_pack_source(context)
+            armature = source["armature"]
             output_dir = bpy.path.abspath(settings.pack_output_directory)
             if not output_dir:
                 raise RuntimeError('Choose a Pack Output Folder.')
@@ -4252,7 +4561,6 @@ class DAF_OT_build_approved_pack(Operator):
             guard_actions = [action for action in actions if action.get("dsb_guard_variant")]
             guard_validation = []
             if guard_actions:
-                armature = find_armature(context)
                 mapping = map_bones(armature, settings)
                 guard_validation = [
                     validate_mace_guard_action(context, action, armature, mapping)
@@ -4266,12 +4574,61 @@ class DAF_OT_build_approved_pack(Operator):
                             message for record in invalid_guards for message in record["errors"][:2]
                         )
                     )
-            export_approved_glb(context, glb_path, actions, settings.pack_force_sampling)
+            death_actions = [
+                action for action in actions
+                if str(action.get("dsb_approved_kind", "")) == "DEATH"
+                or any(
+                    token in action.name.lower()
+                    for token in ("death", "collapse", "faceplant")
+                )
+            ]
+            death_floor_validation = []
+            if death_actions:
+                ground_meshes = [
+                    obj for obj in source["objects"]
+                    if obj.type == 'MESH'
+                    and not bool(obj.get("dsb_preview_only", False))
+                ]
+                if not ground_meshes:
+                    raise RuntimeError(
+                        "Death floor validation found no character meshes."
+                    )
+                death_floor_validation = [
+                    validate_death_floor_action(
+                        context,
+                        action,
+                        armature,
+                        ground_meshes,
+                        fallback_ground_sink=settings.ground_sink,
+                    )
+                    for action in death_actions
+                ]
+                invalid_deaths = [
+                    record for record in death_floor_validation
+                    if record["status"] != "PASS"
+                ]
+                if invalid_deaths:
+                    raise RuntimeError(
+                        "Death floor validation failed: "
+                        + "; ".join(
+                            message
+                            for record in invalid_deaths
+                            for message in record["errors"][:1]
+                        )
+                        + " Regenerate the Death Draft or correct its hips "
+                        "location before approval."
+                    )
+            export_approved_glb(
+                context,
+                glb_path,
+                actions,
+                settings.pack_force_sampling,
+                source=source,
+            )
             validation = validate_pack_file(glb_path, [action.name for action in actions])
             stem = os.path.splitext(glb_path)[0]
             manifest_path = stem + '.json'
             validation_path = stem + '_validation.json'
-            wrapper = find_safe_wrapper(context)
             manifest = {
                 'schema': 'dreadstone.animation_pack.v1',
                 'asset': os.path.basename(glb_path),
@@ -4280,15 +4637,10 @@ class DAF_OT_build_approved_pack(Operator):
                 'source_blend': bpy.data.filepath or None,
                 'approved_animation_count': len(actions),
                 'fps': fps,
-                'character': {
-                    'wrapper_name': wrapper.name,
-                    'wrapper_location': list(wrapper.location),
-                    'wrapper_scale': list(wrapper.scale),
-                    'target_height_m': wrapper.get('dsb_target_height_m'),
-                    'original_height_m': wrapper.get('dsb_original_height_m'),
-                },
+                'character': pack_character_metadata(context, source),
                 'animations': metadata,
                 'mace_head_guard_validation': guard_validation,
+                'death_floor_validation': death_floor_validation,
                 'validation_report': os.path.basename(validation_path),
             }
             write_json(manifest_path, manifest)
@@ -4904,6 +5256,14 @@ class DAF_PT_legacy_panel(Panel):
                 )
             box.label(
                 text="Approved Actions only; preview floor excluded",
+                icon='INFO',
+            )
+            box.label(
+                text="Saved Actions stay editable here; no reimport is required",
+                icon='INFO',
+            )
+            box.label(
+                text="Force Sampling bakes only the exported delivery GLB",
                 icon='INFO',
             )
 

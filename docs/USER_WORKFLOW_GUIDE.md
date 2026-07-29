@@ -254,6 +254,17 @@ custom sliders below fully available:
 6. **DELETE** confirms before removing the saved Action and its NLA strip
    references from the character.
 
+Saving or approving an animation writes the protected, still-editable Action in
+the current authoring `.blend`. It does not require a GLB round trip. Continue
+authoring Damage Keys, gore, or another animation in the same file; those
+workspaces preserve the current Action/NLA state independently.
+
+**Build Approved Animation Pack** is the delivery step, not an import step. With
+**Bake / Force Sampling** enabled (the default), Forge bakes the approved
+Actions while writing the animation-pack GLB. Do not reimport that GLB into the
+same authoring file. Reimport into a separate clean file only when performing
+the verification described in section 13.
+
 For cross-character reuse, choose a folder and press **EXPORT SELECTED**. Forge
 writes a native `.blend` Action clip plus a JSON manifest. On another humanoid,
 choose that `.blend` under **Clip to Import** and press **IMPORT TO CHARACTER**.

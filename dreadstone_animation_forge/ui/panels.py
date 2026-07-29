@@ -1327,6 +1327,8 @@ def _draw_animation_pack(layout, settings):
         row.operator("daf.build_approved_pack", text="Build Approved Pack", icon='EXPORT')
         row.operator("daf.validate_last_pack", text="Validate Last Pack", icon='CHECKMARK')
         pack.label(text="Only explicitly approved Actions are packaged", icon='INFO')
+        pack.label(text="Saved Actions stay editable here; no reimport is required", icon='INFO')
+        pack.label(text="Force Sampling bakes only the exported delivery GLB", icon='INFO')
 
     safety = _animation_foldout(
         layout, settings, "ui_workflow_open", "Action Approval & Safety", icon='LOCKED'
