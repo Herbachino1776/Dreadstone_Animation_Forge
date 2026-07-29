@@ -28,6 +28,8 @@ def arguments():
     parser = argparse.ArgumentParser()
     parser.add_argument("--key", default="")
     parser.add_argument("--commit", action="store_true")
+    parser.add_argument("--max-nuclei", action="store_true")
+    parser.add_argument("--toggle-lifecycle", action="store_true")
     return parser.parse_args(raw)
 
 
@@ -50,6 +52,12 @@ def object_record(obj):
         ),
         "nucleusTriangles": int(
             obj.get("dsb_gore_nucleus_triangle_count", 0)
+        ),
+        "nucleusCount": int(
+            obj.get("dsb_gore_nucleus_count", 0)
+        ),
+        "nucleusDepthFraction": float(
+            obj.get("dsb_gore_nucleus_depth_fraction", 0.0)
         ),
         "layerDepths": layer_depths,
     }
@@ -86,13 +94,69 @@ def main():
                 f"Damage Key {key_name!r} was not found. Available: {candidates}"
             )
         region, attached, detached, payload, entry = selected
+        region_id = str(region.get("regionId", ""))
+        deformation_authoring._set_active_region(region_id, context)
+        deformation_authoring._select_key(settings, key_name)
+        if args.toggle_lifecycle:
+            deformation_authoring.set_damage_key_preview_enabled(
+                context,
+                key_name,
+                True,
+            )
+            toggle_on = {
+                "maskVisible": (
+                    attached.data.color_attributes.get(
+                        deformation_authoring.GORE_PREVIEW_ATTRIBUTE
+                    )
+                    is not None
+                ),
+                "visibleGoreCount": sum(
+                    not obj.hide_get()
+                    for obj in deformation_authoring.generated_gore_objects(
+                        region_id,
+                        key_name,
+                        include_preview=True,
+                    )
+                ),
+            }
+            deformation_authoring.set_damage_key_preview_enabled(
+                context,
+                key_name,
+                False,
+            )
+            toggle_off = {
+                "maskVisible": (
+                    attached.data.color_attributes.get(
+                        deformation_authoring.GORE_PREVIEW_ATTRIBUTE
+                    )
+                    is not None
+                ),
+                "visibleGoreCount": sum(
+                    not obj.hide_get()
+                    for obj in deformation_authoring.generated_gore_objects(
+                        region_id,
+                        key_name,
+                        include_preview=True,
+                    )
+                ),
+            }
+        else:
+            toggle_on = {}
+            toggle_off = {}
+        if args.max_nuclei:
+            with deformation_authoring.preview_service.suspend_updates():
+                settings.deformation_gore_nucleus = 100.0
+                settings.deformation_gore_lobes = 100.0
+            deformation_authoring.apply_gore_macro_transaction(
+                context,
+                "active-file maximum nuclei diagnostic",
+            )
         overlay = trauma_field.normalize_gore_overlay(
             entry.get("surfaceGoreOverlay", {})
         )
         current_overlay = deformation_authoring._gore_overlay_from_settings(
             context
         )
-        region_id = str(region.get("regionId", ""))
         before = [
             object_record(obj)
             for obj in deformation_authoring.generated_gore_objects(
@@ -212,6 +276,10 @@ def main():
                 )
             },
             "before": before,
+            "toggleLifecycle": {
+                "on": toggle_on,
+                "off": toggle_off,
+            },
         }
         try:
             candidate_entry = copy.deepcopy(entry)

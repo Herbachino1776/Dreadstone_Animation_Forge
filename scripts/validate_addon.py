@@ -25,6 +25,7 @@ MODULE_NAMES = (
     "damage_readiness.py",
     "damage_authoring.py",
     "deformation_authoring.py",
+    "progressive_authoring.py",
     "parameter_schema.py",
     "trauma_field.py",
 )
@@ -34,13 +35,13 @@ ALL_MODULE_PATHS = tuple(sorted(
     if "__pycache__" not in path.parts
 ))
 
-EXPECTED_VERSION = (3, 19, 0)
+EXPECTED_VERSION = (3, 20, 0)
 EXPECTED_READINESS_BUILD = "2026-07-18.source-contract.1"
 EXPECTED_AUTHORING_BUILD = "2026-07-18.source-contract.1"
-EXPECTED_DEFORMATION_BUILD = "2026-07-28.vip-cohesive-surface-gore.6"
+EXPECTED_DEFORMATION_BUILD = "2026-07-28.progressive-damage-sites.1"
 
 REQUIRED_GUIDE_HEADINGS = (
-    "## 1. Install Dreadstone Animation Forge 3.19.0",
+    "## 1. Install Dreadstone Animation Forge 3.20.0",
     "## 2. Open the Dreadstone panel",
     "## 3. Import and prepare a source GLB",
     "## 4. Use the VIP Damage workflow",
@@ -84,6 +85,20 @@ REQUIRED_GUIDE_UI_LABELS = {
     "**REDNESS**",
     "**RANDOMIZE DAMAGE**",
     "**SAVE DAMAGE KEY + STAMP + GORE**",
+    "**PROGRESSIVE DAMAGE SITES**",
+    "**NEW DAMAGE SITE**",
+    "**ASSIGN ACTIVE DAMAGE KEY**",
+    "**PREVIEW SITE IN ISOLATION**",
+    "**REFRESH PROGRESSION PREVIEW**",
+    "**VALIDATE ALL CROSSFADE STATES**",
+    "**VALIDATE + ENABLE SITE FOR EXPORT**",
+    "**VIP ANIMATION LIBRARY**",
+    "**PLAY**",
+    "**EDIT**",
+    "**SAVE**",
+    "**DELETE**",
+    "**EXPORT SELECTED**",
+    "**IMPORT TO CHARACTER**",
     "**ADD CURRENT RECIPE**",
     "**REFRESH**",
     "**APPLY · blueprint name**",
@@ -121,6 +136,7 @@ REQUIRED_SCHEMAS = {
     "dreadstone.source_readiness.v1",
     "dreadstone.damage_authoring.v1",
     "dreadstone.damage_deformation.v1",
+    "dreadstone.progressive_damage_sites.v1",
     "dreadstone.impact_control.v1",
     "dreadstone.gore_control.v1",
     "dreadstone.surface_gore_control.v1",
@@ -230,13 +246,24 @@ REQUIRED_OPERATORS = {
     "daf.save_damage_blueprint": "ADD TO BLUEPRINT LIBRARY",
     "daf.refresh_damage_blueprints": "Refresh Damage Blueprints",
     "daf.apply_damage_blueprint": "Apply Damage Blueprint",
+    "daf.animation_library_select": "Select Saved Animation",
+    "daf.animation_library_play": "Play Saved Animation",
+    "daf.animation_library_edit": "Edit Saved Animation",
+    "daf.animation_library_finalize_draft": "Save Draft as Animation",
+    "daf.animation_library_save": "Save / Overwrite Animation",
+    "daf.animation_library_cancel_edit": "Cancel Animation Edit",
+    "daf.animation_library_delete": "Delete Saved Animation",
+    "daf.animation_library_export": "Export Selected Clip",
+    "daf.animation_library_import": "Import Animation Clip",
 }
 
 REQUIRED_UI_TEXT = {
     "Source Damage Readiness",
     "Damage Segment & Stump Authoring v3.9",
-    "Trauma Field Authoring v3.19.0",
+    "Trauma Field Authoring v3.20.0",
     "VIP DAMAGE WORKFLOW",
+    "VIP ANIMATION LIBRARY",
+    "PORTABLE ANIMATION CLIPS",
     "CREATE DAMAGE KEY FROM SELECTION",
     "RANDOMIZE DAMAGE",
     "SAVE DAMAGE KEY + STAMP + GORE",
@@ -428,7 +455,7 @@ def check_extension_manifest() -> None:
         (
             'schema_version = "1.0.0"',
             'id = "dreadstone_animation_forge"',
-            'version = "3.19.0"',
+            'version = "3.20.0"',
             'name = "Dreadstone Animation Forge"',
             'type = "add-on"',
             'blender_version_min = "4.2.0"',
@@ -518,8 +545,8 @@ def check_surface_gore_contracts(sources: dict[str, str], trees: dict[str, ast.M
             '"goreOverlayValidationStatus"', '"raisedGoreValidationStatus"', '"exportValidationStatus"',
             '"generatedGoreMeshes"', '"goreActivationContract"',
             '"dsb_gore_component"', '"dsb_gore_parent_recipe_digest"',
-            '"dsb_gore_nucleus_triangle_count"',
-            '"COHESIVE_SURFACE_MASS_LOBULATED_NUCLEUS_V4"',
+            '"dsb_gore_nucleus_triangle_count"', '"dsb_gore_nucleus_count"',
+            '"COHESIVE_SURFACE_MASS_DISTRIBUTED_NUCLEI_V5"',
             "daf.preview_surface_gore_overlay", "daf.clear_surface_gore_overlay_preview",
             "daf.rebuild_all_generated_gore",
             "daf.validate_gore_geometry",
@@ -637,8 +664,8 @@ def check_impact_parameter_contracts(sources: dict[str, str]) -> None:
         ),
         "topology-independent Damage Blueprint contract",
     )
-    require((ROOT / "docs" / "DAMAGE_PARAMETER_AUDIT_v3.19.0.json").is_file(), "damage parameter audit report is missing")
-    require((ROOT / "docs" / "IMPACT_RESPONSE_DIAGNOSTICS_v3.19.0.json").is_file(), "impact response diagnostic report is missing")
+    require((ROOT / "docs" / "DAMAGE_PARAMETER_AUDIT_v3.20.0.json").is_file(), "damage parameter audit report is missing")
+    require((ROOT / "docs" / "IMPACT_RESPONSE_DIAGNOSTICS_v3.20.0.json").is_file(), "impact response diagnostic report is missing")
 
 
 def check_world_space_and_exact_index(source: str) -> None:
@@ -895,14 +922,14 @@ def check_repository_hygiene() -> None:
 
 
 def main() -> int:
-    print("DREADSTONE ANIMATION FORGE v3.19.0 STATIC VALIDATION")
+    print("DREADSTONE ANIMATION FORGE v3.20.0 STATIC VALIDATION")
     print("Blender is not imported; runtime acceptance remains separate.")
 
     sources: dict[str, str] = {}
     trees: dict[str, ast.Module] = {}
     checks: list[tuple[str, Callable[[], None]]] = [
-        ("all six contract package modules exist", check_module_files),
-        ("Blender extension manifest exists and matches v3.19.0", check_extension_manifest),
+        ("all contract package modules exist", check_module_files),
+        ("Blender extension manifest exists and matches v3.20.0", check_extension_manifest),
         ("all Python modules parse with ast.parse", lambda: check_parse(sources)),
         ("all Python modules compile with py_compile", check_compile),
         ("add-on/deformation version and build contracts", lambda: check_versions(trees)),

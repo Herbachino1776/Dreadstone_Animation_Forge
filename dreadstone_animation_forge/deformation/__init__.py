@@ -8,6 +8,7 @@ from . import (
     gore_service,
     mesh_snapshot,
     preview_service,
+    progressive_sites,
     registry,
     serialization,
     validation_service,

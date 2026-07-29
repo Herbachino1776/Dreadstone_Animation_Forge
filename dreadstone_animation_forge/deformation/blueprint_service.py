@@ -163,6 +163,34 @@ def _digest(payload, omitted=()):
     return hashlib.sha256(encoded).hexdigest()
 
 
+def _legacy_blueprint_digest_without_surface_macros(normalized):
+    """Return the v1 digest used before cohesive surface macros were persisted."""
+
+    legacy = copy.deepcopy(dict(normalized))
+    gore = legacy.get("gore")
+    if isinstance(gore, dict):
+        gore.pop("surfaceMacros", None)
+    return _digest(legacy, omitted=("blueprintDigest",))
+
+
+def _legacy_library_digest_without_surface_macros(normalized, blueprint_ids):
+    """Recreate the canonical library digest for pre-surface-macro records."""
+
+    legacy = copy.deepcopy(dict(normalized))
+    migrated_ids = set(blueprint_ids)
+    for record in legacy.get("blueprints", ()):
+        if record.get("blueprintId") not in migrated_ids:
+            continue
+        gore = record.get("gore")
+        if isinstance(gore, dict):
+            gore.pop("surfaceMacros", None)
+        record["blueprintDigest"] = _digest(
+            record,
+            omitted=("blueprintDigest",),
+        )
+    return _digest(legacy, omitted=("libraryDigest",))
+
+
 def normalize_blueprint(payload):
     if not isinstance(payload, Mapping):
         raise ValueError("Damage Blueprint must be an object")
@@ -337,7 +365,13 @@ def normalize_blueprint(payload):
             raise ValueError(f"{label} must be from 0 to 2147483647")
     calculated = _digest(normalized, omitted=("blueprintDigest",))
     stored = str(payload.get("blueprintDigest", ""))
-    if stored and stored != calculated:
+    is_legacy_surface_record = "surfaceMacros" not in gore
+    legacy_calculated = (
+        _legacy_blueprint_digest_without_surface_macros(normalized)
+        if is_legacy_surface_record
+        else ""
+    )
+    if stored and stored not in (calculated, legacy_calculated):
         raise ValueError("Damage Blueprint digest does not match its contents")
     normalized["blueprintDigest"] = calculated
     return normalized
@@ -463,6 +497,13 @@ def normalize_library(payload=None):
     if not isinstance(records, Sequence) or isinstance(records, (str, bytes)):
         raise ValueError("Damage Blueprint library entries must be an array")
     blueprints = [normalize_blueprint(record) for record in records]
+    legacy_surface_ids = {
+        blueprint["blueprintId"]
+        for record, blueprint in zip(records, blueprints)
+        if isinstance(record, Mapping)
+        and isinstance(record.get("gore"), Mapping)
+        and "surfaceMacros" not in record["gore"]
+    }
     ids = [record["blueprintId"] for record in blueprints]
     if len(ids) != len(set(ids)):
         raise ValueError("Damage Blueprint library contains duplicate IDs")
@@ -475,7 +516,15 @@ def normalize_library(payload=None):
     }
     calculated = _digest(normalized, omitted=("libraryDigest",))
     stored = str(raw.get("libraryDigest", ""))
-    if stored and stored != calculated:
+    legacy_calculated = (
+        _legacy_library_digest_without_surface_macros(
+            normalized,
+            legacy_surface_ids,
+        )
+        if legacy_surface_ids
+        else ""
+    )
+    if stored and stored not in (calculated, legacy_calculated):
         raise ValueError("Damage Blueprint library digest does not match its contents")
     normalized["libraryDigest"] = calculated
     return normalized

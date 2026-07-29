@@ -11,7 +11,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 PACKAGE = ROOT / "dreadstone_animation_forge"
-OUTPUT = ROOT / "docs" / "DAMAGE_PARAMETER_AUDIT_v3.19.0.json"
+OUTPUT = ROOT / "docs" / "DAMAGE_PARAMETER_AUDIT_v3.20.0.json"
 
 
 def load_schema():
@@ -173,7 +173,7 @@ def main():
 
     payload = {
         "schema": "dreadstone.damage_parameter_audit.v1",
-        "forgeVersion": "3.19.0",
+        "forgeVersion": "3.20.0",
         "supportedBlenderRuntime": "5.1.2",
         "authority": "dreadstone_animation_forge/parameter_schema.py",
         "propertyCount": len(records),

@@ -1,4 +1,4 @@
-"""Dreadstone Animation Forge v3.19.0 trauma-field authoring.
+"""Dreadstone Animation Forge v3.20.0 trauma-field authoring.
 
 The workbench edits explicitly registered paired-segment or core-single regions
 on the generated protected Damage Asset. Paired morph targets remain exact-index
@@ -29,6 +29,7 @@ from .deformation import (
     gore_service,
     mesh_snapshot,
     preview_service,
+    progressive_sites,
     registry as service_registry,
     serialization,
     shape_keys,
@@ -37,8 +38,8 @@ from .deformation import (
 )
 
 DEFORMATION_SCHEMA = "dreadstone.damage_deformation.v1"
-DEFORMATION_VERSION = (3, 19, 0)
-DEFORMATION_BUILD_ID = "2026-07-28.vip-cohesive-surface-gore.6"
+DEFORMATION_VERSION = (3, 20, 0)
+DEFORMATION_BUILD_ID = "2026-07-28.progressive-damage-sites.1"
 IMPACT_CONTROL_SCHEMA = parameter_schema.IMPACT_CONTROL_SCHEMA
 ATTACHED_HEAD_NAME = "DSB_ATTACHED_HEAD"
 DETACHED_HEAD_NAME = "DSB_SEGMENT_HEAD"
@@ -281,6 +282,7 @@ def _empty_registry():
         "activeCompoundEventId": "",
         "regions": [],
         "compoundEvents": [],
+        "progressiveDamageSites": progressive_sites.normalize_sites(),
     }
 
 
@@ -321,6 +323,21 @@ def _cache_registry_summary(payload):
                 "validationStatus": str(event.get("validationStatus", "NOT VALIDATED")),
             }
             for event in payload.get("compoundEvents", [])
+        ],
+        "progressiveDamageSites": [
+            {
+                "siteId": str(site.get("siteId", "")),
+                "siteGuid": str(site.get("siteGuid", "")),
+                "displayName": str(site.get("displayName", "")),
+                "regionId": str(site.get("regionId", "")),
+                "status": str(site.get("status", "EMPTY")),
+                "enabledForExport": bool(site.get("enabledForExport", False)),
+                "assignedStageCount": sum(
+                    bool(stage.get("damageKeyId"))
+                    for stage in site.get("stages", {}).values()
+                ),
+            }
+            for site in payload.get("progressiveDamageSites", {}).get("sites", [])
         ],
     })
 
@@ -400,6 +417,12 @@ def _load_registry(migrate_legacy=True):
     payload.setdefault("regions", [])
     payload.setdefault("compoundEvents", [])
     payload.setdefault("activeCompoundEventId", "")
+    try:
+        payload["progressiveDamageSites"] = progressive_sites.normalize_sites(
+            payload.get("progressiveDamageSites")
+        )
+    except (TypeError, ValueError):
+        payload["progressiveDamageSites"] = progressive_sites.normalize_sites()
     for region in payload["regions"]:
         region.setdefault("regionMode", PAIRED_SEGMENT)
         region.setdefault("targetObject", region.get("attachedObject", ""))
@@ -598,6 +621,7 @@ def _invalidate_geodesic_cache():
     mesh_snapshot.clear_cache("authoring invalidation")
     gore_service.clear_cache("authoring invalidation")
     validation_service.clear_cache("authoring invalidation")
+    _refresh_authoring_ui_cache_safely()
 
 
 def cached_diagnostics_summary():
@@ -615,7 +639,7 @@ def _metadata(obj):
                 payload["schema"] = DEFORMATION_SCHEMA
                 payload["authoringVersion"] = _version_string()
                 payload["authoringBuildId"] = DEFORMATION_BUILD_ID
-                for entry in payload.get("keys", {}).values():
+                for key_name, entry in payload.get("keys", {}).items():
                     entry.setdefault("stamps", [])
                     entry.setdefault("previewEnabled", False)
                     entry.setdefault("activeStampId", "")
@@ -629,6 +653,17 @@ def _metadata(obj):
                                 entry["stamps"],
                                 key=lambda stamp: int(stamp.get("orderIndex", 0)),
                             )[0].get("stampId", "")
+                        )
+                    if not str(entry.get("damageKeyId", "")).strip():
+                        entry["damageKeyId"] = progressive_sites.opaque_id(
+                            "damage_key",
+                            progressive_sites.canonical_digest(
+                                [
+                                    str(payload.get("regionId", payload.get("region", ""))),
+                                    str(obj.name),
+                                    str(key_name),
+                                ]
+                            )[:32],
                         )
                 return payload
         except Exception:
@@ -661,6 +696,12 @@ def _metadata(obj):
             if _key(obj, name) is not None and other is not None and _key(other, name) is not None:
                 payload["keys"][name] = {
                     "name": name,
+                    "damageKeyId": progressive_sites.opaque_id(
+                        "damage_key",
+                        progressive_sites.canonical_digest(
+                            [region_id, str(obj.name), str(name)]
+                        )[:32],
+                    ),
                     "region": "head",
                     "regionId": "head",
                     "status": "REIMPORTED",
@@ -681,6 +722,7 @@ def _cache_metadata_summary(attached, detached, payload, region_id):
         "keys": [
             {
                 "name": str(name),
+                "damageKeyId": str(entry.get("damageKeyId", "")),
                 "status": str(entry.get("status", "")),
                 "recipeStatus": str(entry.get("recipeStatus", "")),
                 "stampCount": len(entry.get("stamps", [])),
@@ -723,6 +765,17 @@ def _refresh_authoring_ui_cache(region_id=""):
         _metadata(attached),
         selected_region_id,
     )
+
+
+def _refresh_authoring_ui_cache_safely(region_id=""):
+    """Keep lightweight panel state available after unrelated cache clears."""
+
+    try:
+        _refresh_authoring_ui_cache(region_id)
+    except Exception:
+        # Explicit validation reports invalid or missing regions. Routine cache
+        # invalidation must not break otherwise recoverable authoring actions.
+        pass
 
 
 def _store_metadata(attached, detached, payload):
@@ -1181,10 +1234,14 @@ def _store_damage_preview_state(context, state):
         return
     entries = list(state.get("entries", [])) if isinstance(state, dict) else []
     if not entries:
-        scene.pop(DAMAGE_PREVIEW_STATE_PROPERTY, None)
-        return
+        if str((state or {}).get("kind", "NONE")) != "PROGRESSIVE_SITE":
+            scene.pop(DAMAGE_PREVIEW_STATE_PROPERTY, None)
+            return
+    payload = copy.deepcopy(state) if isinstance(state, dict) else {}
+    payload["kind"] = str(payload.get("kind", "SINGLE"))
+    payload["entries"] = entries
     scene[DAMAGE_PREVIEW_STATE_PROPERTY] = json.dumps(
-        {"kind": str(state.get("kind", "SINGLE")), "entries": entries},
+        payload,
         sort_keys=True,
         separators=(",", ":"),
     )
@@ -1249,7 +1306,7 @@ def _enforce_damage_preview_weights(context, state):
 
 
 def _hide_all_generated_gore():
-    for obj in generated_gore_objects():
+    for obj in generated_gore_objects(include_preview=True):
         obj.hide_viewport = False
         obj.hide_set(True)
 
@@ -1265,11 +1322,25 @@ def _sync_generated_gore_visibility(context=None, state=None):
     }
     registry = _load_registry()
     regions = {str(region.get("regionId", "")): region for region in registry.get("regions", [])}
-    for gore_obj in generated_gore_objects():
+    progression_active = str(state.get("kind", "")) == "PROGRESSIVE_SITE"
+    progression_gore_key = (
+        str(state.get("goreKeyName", "")) if progression_active else ""
+    )
+    progression_stage_keys = {
+        str(value) for value in state.get("progressionStageKeyNames", [])
+    }
+    for gore_obj in generated_gore_objects(include_preview=True):
         region_id = str(gore_obj.get("dsb_gore_region_id", ""))
         key_name = str(gore_obj.get("dsb_gore_deformation_key", ""))
         entry = entries.get((region_id, key_name))
         show = False
+        if entry is not None and float(entry.get("weight", 0.0)) > 1e-8:
+            if (
+                progression_active
+                and key_name in progression_stage_keys
+                and key_name != progression_gore_key
+            ):
+                entry = None
         if entry is not None and float(entry.get("weight", 0.0)) > 1e-8:
             region = regions.get(region_id)
             if region is not None:
@@ -1326,6 +1397,57 @@ def _entry_preview_stamps(entry, fallback_id=""):
     ]
 
 
+def _sync_surface_stain_preview_visibility(context, state):
+    """Show a stain only for a key whose per-key Preview toggle is enabled."""
+
+    enabled_by_region = {}
+    for state_entry in state.get("entries", []):
+        if float(state_entry.get("weight", 0.0)) <= 1e-8:
+            continue
+        enabled_by_region.setdefault(
+            str(state_entry.get("regionId", "")),
+            [],
+        ).append(str(state_entry.get("keyName", "")))
+    settings = getattr(getattr(context, "scene", None), "daf_settings", None)
+    focused_key = (
+        str(getattr(settings, "deformation_active_key", ""))
+        if settings is not None
+        else ""
+    )
+    registry = _load_registry()
+    for region in registry.get("regions", []):
+        region_id = str(region.get("regionId", ""))
+        attached, detached = _resolve_region_pair(region)
+        enabled_names = sorted(set(enabled_by_region.get(region_id, ())))
+        desired_key = (
+            focused_key
+            if focused_key in enabled_names
+            else enabled_names[0]
+            if enabled_names
+            else ""
+        )
+        current_state = _gore_state(attached)
+        current_key = (
+            str(current_state.get("keyName", ""))
+            if current_state and not current_state.get("broken")
+            else ""
+        )
+        has_mask = (
+            attached.data.color_attributes.get(GORE_PREVIEW_ATTRIBUTE)
+            is not None
+        )
+        if not desired_key:
+            _clear_gore_preview_pair(attached, detached)
+            continue
+        if current_key == desired_key and has_mask:
+            continue
+        _install_existing_surface_stain_preview(
+            context,
+            region_id,
+            desired_key,
+        )
+
+
 def apply_damage_key_previews(context=None):
     """Apply every per-key Preview toggle without changing focus or recipes."""
 
@@ -1359,6 +1481,7 @@ def apply_damage_key_previews(context=None):
     _store_damage_preview_state(context, state)
     _enforce_damage_preview_weights(context, state)
     _sync_generated_gore_visibility(context, state)
+    _sync_surface_stain_preview_visibility(context, state)
     settings = getattr(getattr(context, "scene", None), "daf_settings", None)
     if settings is not None:
         settings.deformation_status = (
@@ -1436,6 +1559,32 @@ def capture_damage_preview_snapshot(context=None):
                 if record[1] and record not in stain_entries:
                     stain_entries.append(record)
     visibility_objects = {obj.name: obj for obj in (*source_objects, *generated_gore_objects())}
+    active = getattr(context.view_layer.objects, "active", None)
+    settings = getattr(context.scene, "daf_settings", None)
+    animation = {}
+    for obj in bpy.data.objects:
+        data = getattr(obj, "animation_data", None)
+        if data is None:
+            continue
+        animation[obj.name] = {
+            "action": data.action.name if data.action is not None else "",
+            "tracks": [
+                {
+                    "name": track.name,
+                    "mute": bool(track.mute),
+                    "solo": bool(track.is_solo),
+                    "strips": [
+                        {
+                            "name": strip.name,
+                            "mute": bool(strip.mute),
+                            "influence": float(strip.influence),
+                        }
+                        for strip in track.strips
+                    ],
+                }
+                for track in data.nla_tracks
+            ],
+        }
     return {
         "damagePreviewState": copy.deepcopy(_damage_preview_state(context)),
         "compoundPreview": str(context.scene.get(COMPOUND_PREVIEW_PROPERTY, "")),
@@ -1449,10 +1598,30 @@ def capture_damage_preview_snapshot(context=None):
             for name, obj in visibility_objects.items()
         },
         "stainEntries": [list(value) for value in stain_entries],
+        "activeObject": active.name if active is not None else "",
+        "selectedObjects": [obj.name for obj in context.selected_objects],
+        "mode": str(getattr(context, "mode", "OBJECT")),
+        "frame": int(context.scene.frame_current),
+        "activeDamageKey": (
+            str(settings.deformation_active_key) if settings is not None else ""
+        ),
+        "activeDamageStamp": (
+            str(settings.deformation_active_stamp_id) if settings is not None else ""
+        ),
+        "previewGeneration": int(
+            getattr(settings, "deformation_preview_generation", 0)
+        ) if settings is not None else 0,
+        "managedPreviewState": copy.deepcopy(preview_service.state()),
+        "animation": animation,
     }
 
 
 def restore_damage_preview_snapshot(context, snapshot):
+    try:
+        if getattr(context, "mode", "OBJECT") != "OBJECT":
+            bpy.ops.object.mode_set(mode="OBJECT")
+    except RuntimeError:
+        pass
     clear_surface_gore_preview(all_regions=True)
     for object_name, values in snapshot.get("shapeValues", {}).items():
         obj = _object(object_name)
@@ -1480,6 +1649,57 @@ def restore_damage_preview_snapshot(context, snapshot):
         _install_existing_surface_stain_preview(context, str(region_id), str(key_name))
     _store_damage_preview_state(context, state)
     _sync_generated_gore_visibility(context, state)
+    for object_name, record in snapshot.get("animation", {}).items():
+        obj = _object(object_name)
+        data = getattr(obj, "animation_data", None) if obj is not None else None
+        if data is None:
+            continue
+        data.action = bpy.data.actions.get(str(record.get("action", "")))
+        tracks = {track.name: track for track in data.nla_tracks}
+        for track_record in record.get("tracks", []):
+            track = tracks.get(str(track_record.get("name", "")))
+            if track is None:
+                continue
+            track.mute = bool(track_record.get("mute", False))
+            track.is_solo = bool(track_record.get("solo", False))
+            strips = {strip.name: strip for strip in track.strips}
+            for strip_record in track_record.get("strips", []):
+                strip = strips.get(str(strip_record.get("name", "")))
+                if strip is None:
+                    continue
+                strip.mute = bool(strip_record.get("mute", False))
+                strip.influence = float(strip_record.get("influence", 1.0))
+    settings = getattr(context.scene, "daf_settings", None)
+    if settings is not None:
+        with preview_service.suspend_updates():
+            settings.deformation_active_key = str(
+                snapshot.get("activeDamageKey", "")
+            )
+            settings.deformation_active_stamp_id = str(
+                snapshot.get("activeDamageStamp", "")
+            )
+            settings.deformation_preview_generation = int(
+                snapshot.get("previewGeneration", 0)
+            )
+    context.scene.frame_set(int(snapshot.get("frame", context.scene.frame_current)))
+    try:
+        bpy.ops.object.select_all(action="DESELECT")
+        for object_name in snapshot.get("selectedObjects", []):
+            obj = _object(object_name)
+            if obj is not None and obj.name in context.view_layer.objects:
+                obj.select_set(True)
+        active = _object(snapshot.get("activeObject", ""))
+        if active is not None and active.name in context.view_layer.objects:
+            context.view_layer.objects.active = active
+        prior_mode = str(snapshot.get("mode", "OBJECT"))
+        if prior_mode.startswith("EDIT") and active is not None:
+            bpy.ops.object.mode_set(mode="EDIT")
+        elif prior_mode == "SCULPT" and active is not None:
+            bpy.ops.object.mode_set(mode="SCULPT")
+        elif prior_mode == "POSE" and active is not None:
+            bpy.ops.object.mode_set(mode="POSE")
+    except RuntimeError:
+        pass
 
 
 def _set_authoring_view(attached, detached, mode='ATTACHED', context=None):
@@ -2773,8 +2993,18 @@ def _preview_stamp_stack(context, quality):
 
 
 def _execute_managed_preview(context, quality, _generation):
-    _apply_pending_region(context)
     settings = getattr(getattr(context, "scene", None), "daf_settings", None)
+    if settings is not None and bool(
+        getattr(settings, "progression_preview_requested", False)
+    ):
+        from . import progressive_authoring
+
+        return progressive_authoring.execute_progression_preview(
+            context,
+            quality,
+            _generation,
+        )
+    _apply_pending_region(context)
     if settings is None or not settings.deformation_active_key or not settings.deformation_seed_center_valid:
         clear_damage_preview(context, update_status=False)
         return {"message": "Select a region, deformation, stamp, and captured surface"}
@@ -2785,6 +3015,17 @@ def _execute_managed_preview(context, quality, _generation):
 
 
 def _clear_managed_preview(context, **_flags):
+    try:
+        from . import progressive_authoring
+
+        settings = getattr(getattr(context, "scene", None), "daf_settings", None)
+        if progressive_authoring.preview_session_active() or (
+            settings is not None
+            and bool(getattr(settings, "progression_preview_active", False))
+        ):
+            return progressive_authoring.clear_progression_preview(context)
+    except ImportError:
+        pass
     return clear_damage_preview(context)
 
 
@@ -5536,16 +5777,16 @@ def _build_gore_shell_object(
                     (record_index, first, second)
                 )
 
-        nucleus_blend = _normalized_source_blend({
+        island_blend = _normalized_source_blend({
             source_index: 1.0 / len(source_indices)
             for source_index in source_indices
         })
-        nucleus_surface = blended_surface(nucleus_blend)
-        nucleus_normal = blended_normal(nucleus_blend)
+        island_surface = blended_surface(island_blend)
+        island_normal = blended_normal(island_blend)
         tangent_candidates = []
         for source_index in source_indices:
-            tangent = world_points[source_index] - nucleus_surface
-            tangent -= nucleus_normal * tangent.dot(nucleus_normal)
+            tangent = world_points[source_index] - island_surface
+            tangent -= island_normal * tangent.dot(island_normal)
             tangent_candidates.append(tangent)
         tangent_u = max(
             tangent_candidates,
@@ -5553,17 +5794,17 @@ def _build_gore_shell_object(
             default=Vector((1.0, 0.0, 0.0)),
         )
         if tangent_u.length_squared <= 1e-16:
-            tangent_u = nucleus_normal.cross(Vector((1.0, 0.0, 0.0)))
+            tangent_u = island_normal.cross(Vector((1.0, 0.0, 0.0)))
             if tangent_u.length_squared <= 1e-16:
-                tangent_u = nucleus_normal.cross(
+                tangent_u = island_normal.cross(
                     Vector((0.0, 1.0, 0.0))
                 )
         tangent_u.normalize()
-        tangent_v = nucleus_normal.cross(tangent_u).normalized()
+        tangent_v = island_normal.cross(tangent_u).normalized()
         extent_u = max(
             (
                 abs(
-                    (world_points[index] - nucleus_surface).dot(
+                    (world_points[index] - island_surface).dot(
                         tangent_u
                     )
                 )
@@ -5574,7 +5815,7 @@ def _build_gore_shell_object(
         extent_v = max(
             (
                 abs(
-                    (world_points[index] - nucleus_surface).dot(
+                    (world_points[index] - island_surface).dot(
                         tangent_v
                     )
                 )
@@ -5582,23 +5823,22 @@ def _build_gore_shell_object(
             ),
             default=base_thickness,
         )
-        nucleus_candidates.append({
-            "blend": nucleus_blend,
-            "surface": nucleus_surface,
-            "normal": nucleus_normal,
-            "tangentU": tangent_u,
-            "tangentV": tangent_v,
-            "extentU": extent_u,
-            "extentV": extent_v,
-            "priority": sum(
-                float(face_records[index].get("priority", 0.0))
-                for index in island_record_indices
-            ),
-            "faceIndex": min(
-                int(face_records[index]["faceIndex"])
-                for index in island_record_indices
-            ),
-        })
+        for record_index in island_record_indices:
+            record = face_records[record_index]
+            data = face_data[record_index]
+            response = float(record.get("deformationResponse", 0.0))
+            priority = float(record.get("priority", response))
+            nucleus_candidates.append({
+                "blend": dict(data["centerBlend"]),
+                "surface": Vector(data["centerWorld"]),
+                "normal": Vector(data["normalWorld"]),
+                "tangentU": tangent_u.copy(),
+                "tangentV": tangent_v.copy(),
+                "extentU": extent_u,
+                "extentV": extent_v,
+                "priority": response * 0.82 + priority * 0.18,
+                "faceIndex": int(record["faceIndex"]),
+            })
 
         corner_bottom = {}
         corner_top = {}
@@ -5763,24 +6003,73 @@ def _build_gore_shell_object(
                     )
 
     nucleus_amount = float(overlay["goreNucleusAmount"])
+    nucleus_count = 0
     if nucleus_amount > 1e-8 and nucleus_candidates:
-        nucleus = max(
+        ranked_candidates = sorted(
             nucleus_candidates,
             key=lambda value: (
-                float(value["priority"]),
-                -int(value["faceIndex"]),
+                -float(value["priority"]),
+                int(value["faceIndex"]),
             ),
         )
+        deepest_count = max(
+            1,
+            int(math.ceil(len(ranked_candidates) / 3.0)),
+        )
+        deepest_candidates = ranked_candidates[:deepest_count]
+        requested_nucleus_count = min(
+            len(deepest_candidates),
+            1 + int(round(7.0 * nucleus_amount ** 0.72)),
+        )
+        selected_nuclei = [deepest_candidates[0]]
+        spread_scale = max(
+            float(overlay["gorePatchScale"]),
+            base_thickness * 1.5,
+            1e-8,
+        )
+        while len(selected_nuclei) < requested_nucleus_count:
+            remaining_candidates = [
+                candidate
+                for candidate in deepest_candidates
+                if candidate not in selected_nuclei
+            ]
+            if not remaining_candidates:
+                break
+            candidate = max(
+                remaining_candidates,
+                key=lambda value: (
+                    min(
+                        (
+                            Vector(value["surface"])
+                            - Vector(selected["surface"])
+                        ).length
+                        for selected in selected_nuclei
+                    )
+                    / spread_scale
+                    + float(value["priority"]) * 0.28
+                    + _gore_unit(
+                        master_seed,
+                        int(value["faceIndex"]),
+                        17003,
+                    )
+                    * 0.04,
+                    -int(value["faceIndex"]),
+                ),
+            )
+            selected_nuclei.append(candidate)
         current_triangles = sum(max(1, len(face) - 2) for face in faces)
         available_triangles = max(
             0,
             int(overlay["goreMaximumTriangles"]) - current_triangles,
         )
         lobes = float(overlay["goreNucleusLobes"])
-        latitude_segments = 8 + int(round(lobes * 6.0))
-        longitude_segments = 12 + int(round(lobes * 10.0))
+        latitude_segments = 7 + int(round(lobes * 4.0))
+        longitude_segments = 10 + int(round(lobes * 6.0))
         while (
-            2 * longitude_segments * (latitude_segments - 1)
+            2
+            * longitude_segments
+            * (latitude_segments - 1)
+            * len(selected_nuclei)
             > available_triangles
             and (latitude_segments > 6 or longitude_segments > 8)
         ):
@@ -5791,163 +6080,287 @@ def _build_gore_shell_object(
         expected_nucleus_triangles = (
             2 * longitude_segments * (latitude_segments - 1)
         )
+        affordable_nucleus_count = min(
+            len(selected_nuclei),
+            available_triangles // max(1, expected_nucleus_triangles),
+        )
+        selected_nuclei = selected_nuclei[:affordable_nucleus_count]
         if (
             latitude_segments >= 6
             and longitude_segments >= 8
-            and expected_nucleus_triangles <= available_triangles
+            and selected_nuclei
         ):
-            anchor = Vector(nucleus["surface"])
-            normal = Vector(nucleus["normal"])
-            tangent_u = Vector(nucleus["tangentU"])
-            tangent_v = Vector(nucleus["tangentV"])
-            blend = dict(nucleus["blend"])
             patch_scale = float(overlay["gorePatchScale"])
-            extent_u = float(nucleus["extentU"])
-            extent_v = float(nucleus["extentV"])
-            radius_u = min(
-                patch_scale * (0.78 + 0.72 * nucleus_amount),
-                max(
-                    base_thickness * 1.8,
-                    extent_u * (0.30 + 0.28 * nucleus_amount),
-                ),
-            )
-            radius_v = min(
-                patch_scale * (0.68 + 0.58 * nucleus_amount),
-                max(
-                    base_thickness * 1.6,
-                    extent_v * (0.30 + 0.24 * nucleus_amount),
-                ),
-            )
-            vertical_radius = min(
-                patch_scale * (0.34 + 0.34 * nucleus_amount),
-                max(
-                    base_thickness * (1.10 + 2.20 * nucleus_amount),
-                    min(radius_u, radius_v) * 0.42,
-                ),
-            )
-            center_height = (
-                offset
-                + vertical_radius * (0.24 + 0.18 * nucleus_amount)
-            )
-            phase = (
-                _gore_unit(
-                    master_seed,
-                    int(nucleus["faceIndex"]),
-                    17011,
-                )
-                * math.tau
-            )
-
-            def nucleus_vertex(phi, theta):
-                latitude_scale = max(0.0, math.cos(phi))
-                fold = (
-                    math.sin(theta * (4.0 + lobes * 4.0) + phase)
-                    * math.sin((phi + math.pi * 0.5) * 3.0)
-                )
-                cross_fold = math.sin(
-                    theta * 2.0
-                    - phi * (5.0 + lobes * 3.0)
-                    + phase * 0.63
-                )
-                radial = max(
-                    0.66,
-                    1.0
-                    + lobes * (0.13 * fold + 0.07 * cross_fold),
-                )
-                x = math.cos(theta) * latitude_scale * radius_u * radial
-                y = math.sin(theta) * latitude_scale * radius_v * radial
-                z = math.sin(phi) * vertical_radius * (
-                    1.0 + lobes * 0.08 * cross_fold
-                )
-                surface = anchor + tangent_u * x + tangent_v * y
-                return add_vertex(
-                    surface,
-                    normal,
-                    center_height + z,
-                    blend,
-                )
-
-            bottom = nucleus_vertex(-math.pi * 0.5, 0.0)
-            rings = []
-            for latitude in range(1, latitude_segments):
-                phi = (
-                    -math.pi * 0.5
-                    + math.pi * latitude / latitude_segments
-                )
-                rings.append([
-                    nucleus_vertex(
-                        phi,
-                        math.tau * longitude / longitude_segments,
-                    )
-                    for longitude in range(longitude_segments)
-                ])
-            top = nucleus_vertex(math.pi * 0.5, 0.0)
             nucleus_material = material_lookup[
                 "DSB_GORE_CRUSHED_TISSUE"
             ]
-            face_index = int(nucleus["faceIndex"])
-            first_ring = rings[0]
-            last_ring = rings[-1]
-            for longitude in range(longitude_segments):
-                following = (longitude + 1) % longitude_segments
-                add_face(
-                    (
-                        bottom,
-                        first_ring[following],
-                        first_ring[longitude],
+            for nucleus_index, nucleus in enumerate(selected_nuclei):
+                anchor = Vector(nucleus["surface"])
+                normal = Vector(nucleus["normal"])
+                base_tangent_u = Vector(nucleus["tangentU"])
+                base_tangent_v = Vector(nucleus["tangentV"])
+                blend = dict(nucleus["blend"])
+                face_index = int(nucleus["faceIndex"])
+                rotation = (
+                    _gore_unit(
+                        master_seed,
+                        face_index,
+                        nucleus_index,
+                        17007,
+                    )
+                    * math.tau
+                )
+                tangent_u = (
+                    base_tangent_u * math.cos(rotation)
+                    + base_tangent_v * math.sin(rotation)
+                )
+                tangent_v = normal.cross(tangent_u).normalized()
+                size_variation = (
+                    0.82
+                    + 0.38
+                    * _gore_unit(
+                        master_seed,
+                        face_index,
+                        nucleus_index,
+                        17009,
+                    )
+                )
+                u_variation = (
+                    0.80
+                    + 0.42
+                    * _gore_unit(
+                        master_seed,
+                        face_index,
+                        nucleus_index,
+                        17011,
+                    )
+                )
+                v_variation = (
+                    0.78
+                    + 0.46
+                    * _gore_unit(
+                        master_seed,
+                        face_index,
+                        nucleus_index,
+                        17013,
+                    )
+                )
+                vertical_variation = (
+                    0.82
+                    + 0.36
+                    * _gore_unit(
+                        master_seed,
+                        face_index,
+                        nucleus_index,
+                        17017,
+                    )
+                )
+                extent_u = float(nucleus["extentU"])
+                extent_v = float(nucleus["extentV"])
+                radius_u = min(
+                    extent_u * (0.46 + 0.12 * nucleus_amount),
+                    max(
+                        base_thickness
+                        * (0.65 + 0.65 * nucleus_amount),
+                        patch_scale
+                        * (1.20 + 1.35 * nucleus_amount),
                     ),
-                    nucleus_material,
-                    triangle_uv,
-                    choose_variant(face_index, 4000 + longitude),
-                    3,
-                )
-                add_face(
-                    (
-                        top,
-                        last_ring[longitude],
-                        last_ring[following],
+                ) * size_variation * u_variation
+                radius_v = min(
+                    extent_v * (0.43 + 0.12 * nucleus_amount),
+                    max(
+                        base_thickness
+                        * (0.58 + 0.60 * nucleus_amount),
+                        patch_scale
+                        * (1.08 + 1.22 * nucleus_amount),
                     ),
-                    nucleus_material,
-                    triangle_uv,
-                    choose_variant(face_index, 5000 + longitude),
-                    3,
+                ) * size_variation * v_variation
+                radius_u = max(radius_u, base_thickness * 0.38)
+                radius_v = max(radius_v, base_thickness * 0.34)
+                vertical_radius = min(
+                    max(radius_u, radius_v) * 0.92,
+                    max(
+                        base_thickness
+                        * (0.52 + 0.82 * nucleus_amount),
+                        patch_scale
+                        * (0.86 + 1.12 * nucleus_amount),
+                    ),
+                ) * vertical_variation
+                nucleus_distance_limit = (
+                    offset + base_thickness * 4.0 + 0.002
                 )
-            for ring_index in range(len(rings) - 1):
-                lower = rings[ring_index]
-                upper = rings[ring_index + 1]
-                v0 = ring_index / max(1, len(rings) - 1)
-                v1 = (ring_index + 1) / max(
-                    1, len(rings) - 1
+                vertical_radius = min(
+                    vertical_radius,
+                    max(
+                        base_thickness * 0.35,
+                        (nucleus_distance_limit - offset)
+                        / (1.18 + lobes * 0.10),
+                    ),
                 )
+                center_height = (
+                    offset
+                    + vertical_radius * 0.08
+                )
+                phase = (
+                    _gore_unit(
+                        master_seed,
+                        face_index,
+                        nucleus_index,
+                        17019,
+                    )
+                    * math.tau
+                )
+                primary_folds = (
+                    3.0
+                    + lobes * 4.0
+                    + float(nucleus_index % 3)
+                )
+                cross_folds = (
+                    2.0
+                    + lobes * 3.0
+                    + float((nucleus_index + 1) % 4) * 0.5
+                )
+
+                def nucleus_vertex(phi, theta):
+                    latitude_scale = max(0.0, math.cos(phi))
+                    fold = (
+                        math.sin(theta * primary_folds + phase)
+                        * math.sin(
+                            (phi + math.pi * 0.5)
+                            * (2.5 + float(nucleus_index % 3) * 0.5)
+                        )
+                    )
+                    cross_fold = math.sin(
+                        theta * cross_folds
+                        - phi
+                        * (
+                            4.0
+                            + lobes * 3.0
+                            + float(nucleus_index % 2)
+                        )
+                        + phase * 0.63
+                    )
+                    radial = max(
+                        0.62,
+                        1.0
+                        + lobes
+                        * (0.15 * fold + 0.08 * cross_fold),
+                    )
+                    x = (
+                        math.cos(theta)
+                        * latitude_scale
+                        * radius_u
+                        * radial
+                    )
+                    y = (
+                        math.sin(theta)
+                        * latitude_scale
+                        * radius_v
+                        * radial
+                    )
+                    z = (
+                        math.sin(phi)
+                        * vertical_radius
+                        * (1.0 + lobes * 0.10 * cross_fold)
+                    )
+                    surface = anchor + tangent_u * x + tangent_v * y
+                    return add_vertex(
+                        surface,
+                        normal,
+                        center_height + z,
+                        blend,
+                    )
+
+                bottom = nucleus_vertex(-math.pi * 0.5, 0.0)
+                rings = []
+                for latitude in range(1, latitude_segments):
+                    phi = (
+                        -math.pi * 0.5
+                        + math.pi * latitude / latitude_segments
+                    )
+                    rings.append([
+                        nucleus_vertex(
+                            phi,
+                            math.tau * longitude / longitude_segments,
+                        )
+                        for longitude in range(longitude_segments)
+                    ])
+                top = nucleus_vertex(math.pi * 0.5, 0.0)
+                first_ring = rings[0]
+                last_ring = rings[-1]
+                texture_offset = nucleus_index * 10000
                 for longitude in range(longitude_segments):
                     following = (
                         longitude + 1
                     ) % longitude_segments
-                    u0 = longitude / longitude_segments
-                    u1 = (longitude + 1) / longitude_segments
                     add_face(
                         (
-                            lower[longitude],
-                            lower[following],
-                            upper[following],
-                            upper[longitude],
+                            bottom,
+                            first_ring[following],
+                            first_ring[longitude],
                         ),
                         nucleus_material,
-                        (
-                            (u0, v0),
-                            (u1, v0),
-                            (u1, v1),
-                            (u0, v1),
-                        ),
+                        triangle_uv,
                         choose_variant(
                             face_index,
-                            6000
-                            + ring_index * longitude_segments
-                            + longitude,
+                            texture_offset + 4000 + longitude,
                         ),
                         3,
                     )
-            nucleus_triangle_count = expected_nucleus_triangles
+                    add_face(
+                        (
+                            top,
+                            last_ring[longitude],
+                            last_ring[following],
+                        ),
+                        nucleus_material,
+                        triangle_uv,
+                        choose_variant(
+                            face_index,
+                            texture_offset + 5000 + longitude,
+                        ),
+                        3,
+                    )
+                for ring_index in range(len(rings) - 1):
+                    lower = rings[ring_index]
+                    upper = rings[ring_index + 1]
+                    v0 = ring_index / max(1, len(rings) - 1)
+                    v1 = (ring_index + 1) / max(
+                        1, len(rings) - 1
+                    )
+                    for longitude in range(longitude_segments):
+                        following = (
+                            longitude + 1
+                        ) % longitude_segments
+                        u0 = longitude / longitude_segments
+                        u1 = (
+                            longitude + 1
+                        ) / longitude_segments
+                        add_face(
+                            (
+                                lower[longitude],
+                                lower[following],
+                                upper[following],
+                                upper[longitude],
+                            ),
+                            nucleus_material,
+                            (
+                                (u0, v0),
+                                (u1, v0),
+                                (u1, v1),
+                                (u0, v1),
+                            ),
+                            choose_variant(
+                                face_index,
+                                texture_offset
+                                + 6000
+                                + ring_index * longitude_segments
+                                + longitude,
+                            ),
+                            3,
+                        )
+                nucleus_count += 1
+                nucleus_triangle_count += expected_nucleus_triangles
 
     constructed_edge_counts = {}
     for face in faces:
@@ -6030,11 +6443,13 @@ def _build_gore_shell_object(
     obj["dsb_gore_nucleus_triangle_count"] = (
         nucleus_triangle_count
     )
+    obj["dsb_gore_nucleus_count"] = nucleus_count
+    obj["dsb_gore_nucleus_depth_fraction"] = 1.0 / 3.0
     obj["dsb_gore_default_visible"] = False
     obj["dsb_gore_activation_weight"] = float(overlay["goreActivationWeight"])
     obj["dsb_gore_triangle_count"] = triangle_count
     obj["dsb_gore_shell_quality"] = (
-        "COHESIVE_SURFACE_MASS_LOBULATED_NUCLEUS_V4"
+        "COHESIVE_SURFACE_MASS_DISTRIBUTED_NUCLEI_V5"
     )
     obj["dsb_gore_mesh_geometry_digest"] = _mesh_digest(obj)
     obj.hide_render = True
@@ -8647,6 +9062,11 @@ def validate_deformations(require_keys=False):
         errors.append("No managed deformation keys exist.")
     compound_validation = validate_compound_events()
     errors.extend(compound_validation.get("errors", []))
+    from . import progressive_authoring
+
+    progression_validation = progressive_authoring.export_validation()
+    errors.extend(progression_validation.get("errors", []))
+    warnings.extend(progression_validation.get("warnings", []))
     _store_registry(registry)
     return {
         "status": "PASS" if not errors else "FAIL",
@@ -8668,6 +9088,7 @@ def validate_deformations(require_keys=False):
             record.get("regionMode") == PAIRED_SEGMENT for record in region_records
         ),
         "compoundTrauma": compound_validation,
+        "progressiveDamageSites": progression_validation,
         "errors": errors,
         "warnings": warnings,
     }
@@ -8683,6 +9104,14 @@ def prepare_for_export():
     validation = validate_deformations(require_keys=False)
     if validation["status"] != "PASS":
         raise RuntimeError("Deformation validation failed: " + "; ".join(validation["errors"][:4]))
+    from . import progressive_authoring
+
+    progression = progressive_authoring.export_validation()
+    if progression["status"] != "PASS":
+        raise RuntimeError(
+            "Progressive Damage Site validation failed: "
+            + "; ".join(progression["errors"][:4])
+        )
     return validation
 
 
@@ -8706,6 +9135,7 @@ def get_deformation_manifest():
             key_validation = validation_keys.get(name, {})
             entry = {
                 "name": name,
+                "damageKeyId": str(source_entry.get("damageKeyId", "")),
                 "regionId": region.get("regionId"),
                 "regionMode": _region_mode(region),
                 "targetObject": attached.name,
@@ -8907,6 +9337,9 @@ def get_deformation_manifest():
         },
         "validationStatus": validation.get("status", "UNKNOWN"),
     }
+    from . import progressive_authoring
+
+    result.update(progressive_authoring.manifest_payload())
     legacy_head = next((region for region in manifest_regions if region.get("regionId") == "head"), None)
     if legacy_head:
         result.update({
@@ -10963,6 +11396,8 @@ def _clear_service_caches(reason="explicit"):
     gore_service.clear_cache(reason)
     validation_service.clear_cache(reason)
     serialization.clear_cache()
+    if reason == "file load":
+        _refresh_authoring_ui_cache_safely()
 
 
 def startup_self_check(context=None):

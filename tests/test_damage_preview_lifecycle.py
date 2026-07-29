@@ -38,8 +38,23 @@ class DamagePreviewLifecycleTests(unittest.TestCase):
         function = function_node(path, "_sync_generated_gore_visibility")
         source = ast.get_source_segment(path.read_text(encoding="utf-8"), function) or ""
         self.assertIn("actual_weight > 1e-8 and role_visible", source)
+        self.assertIn("include_preview=True", source)
         for role in ("ATTACHED", "DETACHED", "CORE"):
             self.assertIn(role, source)
+
+    def test_clear_hides_final_and_preview_only_gore(self):
+        path = PACKAGE / "deformation_authoring.py"
+        function = function_node(path, "_hide_all_generated_gore")
+        source = ast.get_source_segment(path.read_text(encoding="utf-8"), function) or ""
+        self.assertIn("include_preview=True", source)
+
+    def test_per_key_toggle_synchronizes_stain_visibility(self):
+        path = PACKAGE / "deformation_authoring.py"
+        function = function_node(path, "apply_damage_key_previews")
+        self.assertIn(
+            "_sync_surface_stain_preview_visibility",
+            call_names(function),
+        )
 
     def test_export_snapshot_restores_in_finally(self):
         path = PACKAGE / "damage_authoring.py"
@@ -59,8 +74,31 @@ class DamagePreviewLifecycleTests(unittest.TestCase):
         self.assertIn("VIP DAMAGE WORKFLOW", panels)
         self.assertIn("PREVIEW ON", panels)
         self.assertIn("PREVIEW OFF", panels)
+        self.assertIn("depress=region_id == active_region_id", panels)
+        self.assertIn("requested_key_name in current_key_names", panels)
         self.assertIn('bl_idname = "daf.toggle_damage_key_preview"', operators)
         self.assertIn("def apply_damage_key_previews(", authoring)
+
+    def test_authoring_cache_invalidations_restore_damage_key_cards(self):
+        path = PACKAGE / "deformation_authoring.py"
+        invalidation = function_node(path, "_invalidate_geodesic_cache")
+        file_load_clear = function_node(path, "_clear_service_caches")
+        self.assertIn(
+            "_refresh_authoring_ui_cache_safely",
+            call_names(invalidation),
+        )
+        self.assertIn(
+            "_refresh_authoring_ui_cache_safely",
+            call_names(file_load_clear),
+        )
+        file_load_source = (
+            ast.get_source_segment(
+                path.read_text(encoding="utf-8"),
+                file_load_clear,
+            )
+            or ""
+        )
+        self.assertIn('reason == "file load"', file_load_source)
 
     def test_create_damage_key_dispatches_face_or_vertex_selection(self):
         path = PACKAGE / "deformation_authoring.py"

@@ -174,6 +174,7 @@ def main():
             "regionId": REGION_ID,
             "recipeStatus": "PROCEDURAL_STACK",
             "legacy": False,
+            "previewEnabled": False,
             "stamps": [stamp],
             "surfaceGoreOverlay": overlay,
             "recipeMarker": f"keep-{key_index}",
@@ -221,12 +222,80 @@ def main():
     deformation_authoring.restore_damage_preview_snapshot(context, snapshot)
     assert_active(source, KEYS[0])
 
+    preview_source = deformation_authoring.generated_gore_objects(
+        REGION_ID,
+        KEYS[0],
+    )[0]
+    preview_mesh = preview_source.data.copy()
+    preview_object = bpy.data.objects.new(
+        "DSB_ATOMIC_PREVIEW_ONLY_GORE",
+        preview_mesh,
+    )
+    context.scene.collection.objects.link(preview_object)
+    for property_name in preview_source.keys():
+        preview_object[property_name] = preview_source[property_name]
+    preview_object["dsb_preview_only"] = True
+    preview_object.hide_set(False)
+
+    enabled = deformation_authoring.set_damage_key_preview_enabled(
+        context,
+        KEYS[0],
+        True,
+    )
+    require(enabled["enabled"], "Per-key Preview ON did not persist.")
+    require(
+        source.data.color_attributes.get(
+            deformation_authoring.GORE_PREVIEW_ATTRIBUTE
+        )
+        is not None,
+        "Per-key Preview ON did not install the surface stain.",
+    )
+    require(
+        not preview_object.hide_get(),
+        "Preview-only gore was not shown with the Damage Key.",
+    )
+    disabled = deformation_authoring.set_damage_key_preview_enabled(
+        context,
+        KEYS[0],
+        False,
+    )
+    require(not disabled["enabled"], "Per-key Preview OFF did not persist.")
+    require(
+        source.data.color_attributes.get(
+            deformation_authoring.GORE_PREVIEW_ATTRIBUTE
+        )
+        is None,
+        "Per-key Preview OFF left the surface stain visible.",
+    )
+    require(
+        not source.get(
+            deformation_authoring.GORE_PREVIEW_STATE_PROPERTY,
+            "",
+        ),
+        "Per-key Preview OFF left surface-stain state installed.",
+    )
+    require(
+        all(
+            obj.hide_get()
+            for obj in deformation_authoring.generated_gore_objects(
+                include_preview=True
+            )
+        ),
+        "Per-key Preview OFF left final or preview-only gore visible.",
+    )
+
     report = {
         "status": "PASS",
         "cycles": 50,
         "keys": list(KEYS),
         "goreObjects": sorted(object_names_before),
-        "previewState": json.loads(context.scene[deformation_authoring.DAMAGE_PREVIEW_STATE_PROPERTY]),
+        "toggleOffHidPreviewOnlyGore": preview_object.hide_get(),
+        "previewState": json.loads(
+            context.scene.get(
+                deformation_authoring.DAMAGE_PREVIEW_STATE_PROPERTY,
+                '{"kind":"NONE","entries":[]}',
+            )
+        ),
     }
     print("ATOMIC_DAMAGE_PREVIEW_ACCEPTANCE=" + json.dumps(report, sort_keys=True))
 

@@ -96,11 +96,15 @@ class StaticContractTests(unittest.TestCase):
         self.assertIn('name="DSB_Gore_Texture_Variant"', self.deformation)
         self.assertIn('name="DSB_Gore_Layer"', self.deformation)
         self.assertIn(
-            '"COHESIVE_SURFACE_MASS_LOBULATED_NUCLEUS_V4"',
+            '"COHESIVE_SURFACE_MASS_DISTRIBUTED_NUCLEI_V5"',
             self.deformation,
         )
         self.assertIn(
             'obj["dsb_gore_nucleus_triangle_count"]',
+            self.deformation,
+        )
+        self.assertIn(
+            'obj["dsb_gore_nucleus_count"]',
             self.deformation,
         )
         self.assertIn('emission.default_value = (0.0, 0.0, 0.0, 1.0)', self.deformation)
@@ -150,7 +154,7 @@ class StaticContractTests(unittest.TestCase):
         manifest = contracts.MANIFEST_PATH.read_text(encoding="utf-8")
         self.assertIn('schema_version = "1.0.0"', manifest)
         self.assertIn('id = "dreadstone_animation_forge"', manifest)
-        self.assertIn('version = "3.19.0"', manifest)
+        self.assertIn('version = "3.20.0"', manifest)
         builder = (ROOT / "scripts" / "build_release.py").read_text(encoding="utf-8")
         self.assertIn('ARCHIVE_ENTRIES = ("blender_manifest.toml", *MODULES', builder)
         self.assertNotIn('"dreadstone_animation_forge/__init__.py"', builder)
@@ -171,7 +175,7 @@ class StaticContractTests(unittest.TestCase):
         version = contracts.EXPECTED_VERSION
         self.assertEqual(
             f"Dreadstone_Animation_Forge_v{'_'.join(map(str, version))}.zip",
-            "Dreadstone_Animation_Forge_v3_19_0.zip",
+            "Dreadstone_Animation_Forge_v3_20_0.zip",
         )
 
     def test_authoritative_user_workflow_guide_contract(self) -> None:
@@ -189,8 +193,8 @@ class StaticContractTests(unittest.TestCase):
     def test_release_readme_contains_install_quick_start_and_guide_reference(self) -> None:
         readme = (ROOT / "README.md").read_text(encoding="utf-8")
         for marker in (
-            "3.19.0",
-            "Dreadstone_Animation_Forge_v3_19_0.zip",
+            "3.20.0",
+            "Dreadstone_Animation_Forge_v3_20_0.zip",
             "Install from Disk",
             "## Quick start",
             "docs/USER_WORKFLOW_GUIDE.md",
@@ -427,6 +431,52 @@ class StaticContractTests(unittest.TestCase):
         ):
             self.assertIn(marker, self.deformation)
         self.assertIn("dreadstone.damage_deformation.v1", self.literals)
+
+    def test_progressive_damage_site_source_contract(self) -> None:
+        progression = self.sources["progressive_authoring.py"]
+        schema = (
+            ROOT
+            / "dreadstone_animation_forge"
+            / "deformation"
+            / "progressive_sites.py"
+        ).read_text(encoding="utf-8")
+        operators = (
+            ROOT
+            / "dreadstone_animation_forge"
+            / "ui"
+            / "operators"
+            / "progressive.py"
+        ).read_text(encoding="utf-8")
+        panel = (
+            ROOT / "dreadstone_animation_forge" / "ui" / "panels.py"
+        ).read_text(encoding="utf-8")
+        for marker in (
+            'SITE_SCHEMA = "dreadstone.progressive_damage_sites.v1"',
+            'STAGE_ORDER = ("LIGHT", "MEDIUM", "HEAVY")',
+            "def evaluate_weights(",
+            "def detailed_gore_stage(",
+            "def cost_summary(",
+            "already drives",
+        ):
+            self.assertIn(marker, schema)
+        for marker in (
+            "def execute_progression_preview(",
+            "def clear_progression_preview(",
+            "def validate_site(",
+            "def manifest_payload(",
+            "def export_validation(",
+        ):
+            self.assertIn(marker, progression)
+        for operator in (
+            "daf.new_progressive_site",
+            "daf.assign_progressive_stage",
+            "daf.refresh_progression_preview",
+            "daf.validate_progressive_site",
+            "daf.enable_progressive_site_export",
+        ):
+            self.assertIn(operator, operators)
+        self.assertIn('text="NEW DAMAGE SITE"', panel)
+        self.assertIn('text="PREVIEW SITE IN ISOLATION"', panel)
 
     def test_core_active_region_operations_do_not_resolve_head_constants(self) -> None:
         protected_functions = {

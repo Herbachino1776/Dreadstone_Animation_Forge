@@ -1,7 +1,7 @@
 bl_info = {
     "name": "Dreadstone Animation Forge",
     "author": "Dreadstone Black",
-    "version": (3, 19, 0),
+    "version": (3, 20, 0),
     "blender": (3, 6, 0),
     "location": "3D Viewport > Sidebar > Dreadstone",
     "description": "Animation authoring, protected damage assets, and registered-region trauma-field shape-key authoring.",
@@ -13,6 +13,7 @@ from datetime import datetime, timezone
 from mathutils import Vector, Quaternion
 from bpy.props import BoolProperty, EnumProperty, FloatProperty, FloatVectorProperty, IntProperty, PointerProperty, StringProperty
 from bpy.types import Operator, Panel, PropertyGroup
+from . import animation_library
 from . import parameter_schema
 
 ALIASES = {
@@ -630,6 +631,12 @@ def approval_base_name(settings, kind):
 
 def approve_draft_action(context, kind):
     settings = context.scene.daf_settings
+    if settings.animation_library_edit_source_clip_id:
+        raise RuntimeError(
+            "A VIP animation edit is active. Use SAVE / OVERWRITE in the "
+            "VIP Animation Library, or cancel that edit before approving a "
+            "new version."
+        )
     draft_name = DRAFT_ACTION_NAMES[kind]
     action = bpy.data.actions.get(draft_name)
 
@@ -656,6 +663,12 @@ def approve_draft_action(context, kind):
         if not armature.animation_data:
             armature.animation_data_create()
         armature.animation_data.action = action
+        animation_library.mark_approved(
+            action,
+            armature,
+            settings,
+            kind,
+        )
     except Exception:
         pass
 
@@ -776,6 +789,32 @@ def _deformation_region_updated(self, context):
         except Exception:
             pass
 
+
+def _progression_authoring_module():
+    module = sys.modules.get(f"{__package__}.progressive_authoring")
+    if module is None:
+        try:
+            module = importlib.import_module(
+                ".progressive_authoring",
+                __package__,
+            )
+        except ImportError:
+            return None
+    return module
+
+
+def _progression_severity_updated(self, context):
+    module = _progression_authoring_module()
+    if module is not None:
+        module.request_progression_preview(context, "progression severity changed")
+
+
+def _progression_site_property_updated(self, context):
+    module = _progression_authoring_module()
+    if module is not None:
+        module.update_active_site_from_settings(context)
+
+
 class DAFSettings(PropertyGroup):
     # Compact interface state. These values are stored in the Blender scene.
     ui_workspace: EnumProperty(
@@ -803,6 +842,9 @@ class DAFSettings(PropertyGroup):
     ui_advanced_impact_internals_open: BoolProperty(default=False)
     ui_advanced_gore_internals_open: BoolProperty(default=False)
     ui_vip_damage_open: BoolProperty(default=True)
+    ui_progressive_sites_open: BoolProperty(default=True)
+    ui_progressive_advanced_open: BoolProperty(default=False)
+    ui_vip_animation_open: BoolProperty(default=True)
     ui_character_open: BoolProperty(default=True)
     ui_ground_open: BoolProperty(default=False)
     ui_rig_open: BoolProperty(default=False)
@@ -872,6 +914,48 @@ class DAFSettings(PropertyGroup):
         name="Last Pack Path",
         default="",
         options={'HIDDEN'}
+    )
+    animation_library_active_clip_id: StringProperty(
+        name="Selected Animation Clip ID",
+        default="",
+        options={'HIDDEN'},
+    )
+    animation_library_active_action: StringProperty(
+        name="Selected Animation",
+        default="",
+        options={'HIDDEN'},
+    )
+    animation_library_edit_source_clip_id: StringProperty(
+        name="Animation Edit Source Clip ID",
+        default="",
+        options={'HIDDEN'},
+    )
+    animation_library_edit_source: StringProperty(
+        name="Animation Edit Source",
+        default="",
+        options={'HIDDEN'},
+    )
+    animation_library_edit_draft: StringProperty(
+        name="Animation Edit Draft",
+        default="",
+        options={'HIDDEN'},
+    )
+    animation_library_status: StringProperty(
+        name="Animation Library Status",
+        default="READY",
+        options={'HIDDEN'},
+    )
+    animation_clip_directory: StringProperty(
+        name="Clip Export Folder",
+        description="Folder for portable .blend animation clips and their JSON manifests",
+        default="//animation_clips/",
+        subtype='DIR_PATH',
+    )
+    animation_clip_import_path: StringProperty(
+        name="Clip to Import",
+        description="Portable Forge animation-clip .blend file",
+        default="",
+        subtype='FILE_PATH',
     )
     facing: EnumProperty(
         name="Character Faces",
@@ -1293,7 +1377,7 @@ class DAFSettings(PropertyGroup):
     last_damage_manifest_path: StringProperty(default="", options={'HIDDEN'})
     last_damage_validation_path: StringProperty(default="", options={'HIDDEN'})
 
-    # Trauma Field Authoring v3.19.0.
+    # Trauma Field Authoring v3.20.0.
     deformation_region: EnumProperty(
         name="Active Region",
         items=_deformation_region_items,
@@ -1391,6 +1475,178 @@ class DAFSettings(PropertyGroup):
     deformation_preview_affected_vertices: IntProperty(default=0, min=0, options={'HIDDEN'})
     deformation_preview_estimated_gore_triangles: IntProperty(default=0, min=0, options={'HIDDEN'})
     deformation_preview_final_gore_triangles: IntProperty(default=0, min=0, options={'HIDDEN'})
+    progression_active_site_guid: StringProperty(
+        name="Active Progressive Site GUID",
+        default="",
+        options={'HIDDEN'},
+    )
+    progression_active_stage: EnumProperty(
+        name="Active Progression Stage",
+        items=[
+            ("LIGHT", "LIGHT", "Artist-authored Light Damage Key"),
+            ("MEDIUM", "MEDIUM", "Artist-authored Medium Damage Key"),
+            ("HEAVY", "HEAVY", "Artist-authored Heavy Damage Key"),
+        ],
+        default="LIGHT",
+    )
+    progression_site_name: StringProperty(
+        name="Site Name",
+        default="Damage Site",
+        update=_progression_site_property_updated,
+    )
+    progression_site_region: StringProperty(
+        name="Registered Region",
+        default="",
+        options={'HIDDEN'},
+    )
+    progression_structural_group: StringProperty(
+        name="Structural Group",
+        default="",
+        update=_progression_site_property_updated,
+    )
+    progression_anchor_local: FloatVectorProperty(
+        name="Local Anchor",
+        size=3,
+        subtype='XYZ',
+        default=(0.0, 0.0, 0.0),
+        update=_progression_site_property_updated,
+    )
+    progression_radius: FloatProperty(
+        name="Influence Radius",
+        default=0.10,
+        min=0.000001,
+        max=100.0,
+        precision=4,
+        unit='LENGTH',
+        update=_progression_site_property_updated,
+    )
+    progression_preferred_direction: FloatVectorProperty(
+        name="Preferred Direction",
+        size=3,
+        subtype='DIRECTION',
+        default=(1.0, 0.0, 0.0),
+        update=_progression_site_property_updated,
+    )
+    progression_light_anchor: FloatProperty(
+        name="Light Severity",
+        default=0.33,
+        min=0.01,
+        max=0.98,
+        precision=3,
+        update=_progression_site_property_updated,
+    )
+    progression_medium_anchor: FloatProperty(
+        name="Medium Severity",
+        default=0.66,
+        min=0.02,
+        max=0.99,
+        precision=3,
+        update=_progression_site_property_updated,
+    )
+    progression_heavy_anchor: FloatProperty(
+        name="Heavy Severity",
+        default=1.0,
+        min=0.03,
+        max=1.0,
+        precision=3,
+        update=_progression_site_property_updated,
+    )
+    progression_transition_mode: EnumProperty(
+        name="Transition Mode",
+        items=[
+            (
+                "ADJACENT_CROSSFADE",
+                "Adjacent Crossfade",
+                "Crossfade only Basis/Light, Light/Medium, or Medium/Heavy",
+            ),
+        ],
+        default="ADJACENT_CROSSFADE",
+        update=_progression_site_property_updated,
+    )
+    progression_transition_curve: EnumProperty(
+        name="Transition Curve",
+        items=[
+            ("SMOOTHSTEP", "Smoothstep", "Smooth cubic adjacent transition"),
+            ("LINEAR", "Linear", "Linear adjacent transition"),
+        ],
+        default="SMOOTHSTEP",
+        update=_progression_site_property_updated,
+    )
+    progression_gore_transition_mode: EnumProperty(
+        name="Detailed Gore Transition",
+        items=[
+            (
+                "MIDPOINT_REPLACE",
+                "Midpoint Replace",
+                "Show exactly one complete stage gore assembly",
+            ),
+        ],
+        default="MIDPOINT_REPLACE",
+        update=_progression_site_property_updated,
+    )
+    progression_severity: FloatProperty(
+        name="Progression Severity",
+        description="Normalized Progressive Damage Site preview severity",
+        default=0.0,
+        min=0.0,
+        max=100.0,
+        precision=1,
+        subtype='PERCENTAGE',
+        update=_progression_severity_updated,
+    )
+    progression_live_preview: BoolProperty(
+        name="Live Progression Preview",
+        default=True,
+        update=_progression_severity_updated,
+    )
+    progression_preview_with_other_damage: BoolProperty(
+        name="Preview with Other Damage",
+        default=False,
+    )
+    progression_preview_requested: BoolProperty(
+        default=False,
+        options={'HIDDEN'},
+    )
+    progression_preview_active: BoolProperty(
+        default=False,
+        options={'HIDDEN'},
+    )
+    progression_weight_basis: FloatProperty(
+        default=1.0,
+        min=0.0,
+        max=1.0,
+        options={'HIDDEN'},
+    )
+    progression_weight_light: FloatProperty(
+        default=0.0,
+        min=0.0,
+        max=1.0,
+        options={'HIDDEN'},
+    )
+    progression_weight_medium: FloatProperty(
+        default=0.0,
+        min=0.0,
+        max=1.0,
+        options={'HIDDEN'},
+    )
+    progression_weight_heavy: FloatProperty(
+        default=0.0,
+        min=0.0,
+        max=1.0,
+        options={'HIDDEN'},
+    )
+    progression_detailed_gore_stage: StringProperty(
+        default="NONE",
+        options={'HIDDEN'},
+    )
+    progression_transition_status: StringProperty(
+        default="BASIS",
+        options={'HIDDEN'},
+    )
+    progression_status: StringProperty(
+        default="NO PROGRESSIVE SITE",
+        options={'HIDDEN'},
+    )
     deformation_impact_semantic_name: StringProperty(
         name="Damage Key Name",
         description="Optional universal damage-key name; Forge creates a safe unique name when blank",
@@ -2647,6 +2903,12 @@ class DAF_OT_walk(Operator):
                 key_pose(arm, m, frame)
 
             set_bezier(action, cycles=True)
+            animation_library.mark_draft(
+                action,
+                arm,
+                s,
+                "WALK",
+            )
             context.scene.frame_set(start)
             self.report(
                 {'INFO'},
@@ -2839,6 +3101,12 @@ class DAF_OT_collapse(Operator):
             key_pose(arm, m, final_end)
 
             set_bezier(action, cycles=False)
+            animation_library.mark_draft(
+                action,
+                arm,
+                s,
+                "DEATH",
+            )
             context.scene.frame_set(start)
             self.report(
                 {'INFO'},
@@ -2972,6 +3240,12 @@ def generate_flank_hurt(context, operator, pain_side):
         key_pose(arm, m, frame)
 
     set_bezier(action, cycles=False)
+    animation_library.mark_draft(
+        action,
+        arm,
+        s,
+        "HURT_LEFT" if pain_side == "LEFT" else "HURT_RIGHT",
+    )
     context.scene.frame_set(start)
     operator.report({'INFO'}, f"Refreshed {action.name}. Approve it only when finished.")
     return {'FINISHED'}
@@ -3219,6 +3493,12 @@ def generate_mace_guard_action(context, kind):
     action["dsb_draft_kind"] = kind
     action["dsb_guard_action_id"] = action.name
     set_bezier(action, cycles=False)
+    animation_library.mark_draft(
+        action,
+        arm,
+        settings,
+        kind,
+    )
     validation = validate_mace_guard_action(context, action, arm, mapping)
     action["dsb_guard_validation_status"] = validation["status"]
     action["dsb_guard_validation_json"] = json.dumps(validation, sort_keys=True)
@@ -3441,6 +3721,12 @@ class DAF_OT_approve_active_legacy(Operator):
             action["dsb_approved"] = True
             action["dsb_draft"] = False
             action.use_fake_user = True
+            animation_library.mark_approved(
+                action,
+                armature,
+                context.scene.daf_settings,
+                infer_approved_kind(action.name),
+            )
 
             self.report(
                 {'INFO'},
@@ -4354,7 +4640,7 @@ class DAF_PT_legacy_panel(Panel):
             layout,
             s,
             "ui_deformation_authoring_open",
-            "Trauma Field Authoring v3.19.0",
+            "Trauma Field Authoring v3.20.0",
         )
         if opened:
             configure_property_box(box)

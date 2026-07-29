@@ -195,9 +195,20 @@ def main():
     preview_result = bpy.ops.daf.refresh_impact_preview()
     require(preview_result == {'FINISHED'}, "Top-deck Generate / Refresh Preview failed.")
     target = targets[deformation_authoring._active_region_id(context)]
-    first_digest = coordinate_digest(deformation_authoring._key(target, deformation_authoring.PREVIEW_KEY_NAME))
+    preview_key_name = (
+        settings.deformation_active_key
+        if deformation_authoring._metadata(target)["keys"][
+            settings.deformation_active_key
+        ].get("stampMode") == "ALTERNATIVES"
+        else deformation_authoring.PREVIEW_KEY_NAME
+    )
+    first_digest = coordinate_digest(
+        deformation_authoring._key(target, preview_key_name)
+    )
     preview_result = bpy.ops.daf.refresh_impact_preview()
-    second_digest = coordinate_digest(deformation_authoring._key(target, deformation_authoring.PREVIEW_KEY_NAME))
+    second_digest = coordinate_digest(
+        deformation_authoring._key(target, preview_key_name)
+    )
     require(first_digest == second_digest, "Same seed/macros produced a different preview.")
 
     # Commit stores additive metadata; Randomize + Revert restores the committed seed/result.

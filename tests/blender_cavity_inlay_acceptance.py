@@ -1,4 +1,4 @@
-"""Self-contained Blender 5.1.2 acceptance for Forge 3.19 cavity/inlay gore.
+"""Self-contained Blender 5.1.2 acceptance for Forge 3.20 cavity/inlay gore.
 
 Run:
 
@@ -362,9 +362,19 @@ def main():
                 macros = dict(defaults)
                 macros[macro] = level
                 current = recipe(identity, macros, 1776, 1.0)
-                records = trauma_field.cavity_inlay_face_records(
+                records = trauma_field.gore_face_records(
                     positions, faces, weights, displacements, current
                 )
+                if not records:
+                    values.append(
+                        {
+                            "level": level,
+                            "maximumDepth": 0.0,
+                            "triangles": 0,
+                        }
+                    )
+                    matrix_count += 1
+                    continue
                 generated = cavity_service.build_cavity_inlay(
                     positions, normals, records, current, material_roles
                 )
@@ -390,7 +400,7 @@ def main():
         for seed in SEEDS:
             try:
                 current = recipe(identity, defaults, seed, 1.0)
-                records = trauma_field.cavity_inlay_face_records(
+                records = trauma_field.gore_face_records(
                     positions, faces, weights, displacements, current
                 )
                 generated = cavity_service.build_cavity_inlay(
@@ -427,7 +437,7 @@ def main():
         )
         scaled_positions = [tuple(value * (scale / 1.5) for value in point) for point in positions]
         scaled_normals = normals
-        records = trauma_field.cavity_inlay_face_records(
+        records = trauma_field.gore_face_records(
             scaled_positions, faces, weights, displacements, current
         )
         generated = cavity_service.build_cavity_inlay(
@@ -456,7 +466,7 @@ def main():
         identity = IDENTITIES[(index + 1) % len(IDENTITIES)]
         defaults = parameter_schema.gore_identity_defaults(identity)["macros"]
         current = recipe(identity, defaults, 1776 + index, 1.0)
-        records = trauma_field.cavity_inlay_face_records(
+        records = trauma_field.gore_face_records(
             positions, faces, weights, displacements, current
         )
         if index == 0:
@@ -567,7 +577,7 @@ def main():
 
     report = {
         "status": "PASS",
-        "forgeVersion": "3.19.0",
+        "forgeVersion": "3.20.0",
         "blenderVersion": bpy.app.version_string,
         "identityCount": len(IDENTITIES),
         "macroMatrixGenerationCount": matrix_count,

@@ -39,7 +39,7 @@ def dashboard_state(context, settings, summary):
         "authoringBuilt": str(getattr(settings, "damage_authoring_status", "")).startswith("BUILT"),
         "activeRegion": str(region.get("regionId", metadata.get("regionId", ""))),
         "captureReady": bool(getattr(settings, "deformation_seed_center_valid", False)),
-        "activeKey": str(getattr(settings, "deformation_active_key", "")),
+        "activeKey": str(summary.get("key", {}).get("name", "")),
         "previewStatus": str(getattr(settings, "deformation_preview_status", "CLEAN")),
         "damageValidation": str(getattr(settings, "last_damage_authoring_validation", "NOT VALIDATED")),
     }

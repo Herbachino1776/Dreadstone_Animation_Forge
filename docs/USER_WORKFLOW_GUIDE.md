@@ -1,14 +1,14 @@
-# Dreadstone Animation Forge 3.19.0 — User Workflow Guide
+# Dreadstone Animation Forge 3.20.0 — User Workflow Guide
 
-- Release archive: `Dreadstone_Animation_Forge_v3_19_0.zip`
+- Release archive: `Dreadstone_Animation_Forge_v3_20_0.zip`
 - Supported release runtime: Blender 5.1.2
 - Damage authoring model: Damage Keys → child Stamp alternatives → strong macros
 - Reuse model: topology-independent Damage Blueprints
 
-## 1. Install Dreadstone Animation Forge 3.19.0
+## 1. Install Dreadstone Animation Forge 3.20.0
 
 In Blender choose **Edit > Preferences > Add-ons > Install from Disk**, select
-`Dreadstone_Animation_Forge_v3_19_0.zip` without extracting it, and enable
+`Dreadstone_Animation_Forge_v3_20_0.zip` without extracting it, and enable
 **Dreadstone Animation Forge**.
 
 ## 2. Open the Dreadstone panel
@@ -81,6 +81,47 @@ Blender's one visible shape-key result per Damage Key.
 Files authored with the older additive Stamp Stack remain readable and retain
 their recorded stack behavior until deliberately converted by new authoring.
 
+## Progressive Damage Sites
+
+**PROGRESSIVE DAMAGE SITES** appears after the Damage Key rack and immediately
+before the existing Impact/Gore controls. A site organizes three independently
+authored, complete Damage Keys:
+
+- **LIGHT**, **MEDIUM**, and **HEAVY** are full results relative to Basis.
+- Forge does not generate, scale, rename, synchronize, or judge the artistic
+  progression between stages.
+- Selecting a stage focuses its assigned key and active Stamp, then loads that
+  key into the same Impact, Gore, **RANDOMIZE DAMAGE**, and
+  **SAVE DAMAGE KEY + STAMP + GORE** workflow.
+
+Create a site with **NEW DAMAGE SITE**. Select each large stage tab and use
+**ASSIGN ACTIVE DAMAGE KEY**, or create an independent key with
+**CREATE NEW KEY FOR THIS STAGE**. **DUPLICATE ACTIVE KEY AS STARTING POINT**
+makes an independent copy; it creates no ongoing synchronization.
+
+Use **SET SITE ANCHOR FROM ACTIVE STAGE** to copy the current Stamp capture
+center into character-local site metadata. Advanced settings expose the radius,
+preferred incoming direction, structural group, and strictly ordered recommended
+severity anchors.
+
+In the **PROGRESSION CONTROL DECK**, set **Progression Severity**, choose
+**PREVIEW SITE IN ISOLATION** (the validation mode) or
+**PREVIEW WITH OTHER DAMAGE**, and keep **REFRESH PROGRESSION PREVIEW**
+available even when live preview is on. Structural morphs crossfade only across
+Basis→Light, Light→Medium, or Medium→Heavy. Detailed raised/inlay gore switches
+as a complete assembly at each transition midpoint; stage gore never stacks.
+**CLEAR PROGRESSION PREVIEW** restores the exact prior key weights, previews,
+gore visibility, active key/Stamp, selection, mode, frame, Action, and NLA
+state.
+
+Draft sites may remain incomplete in the `.blend`. They are omitted from export
+with a warning. **VALIDATE ALL CROSSFADE STATES** evaluates the required 15
+transition points and available rest/walk/hurt/collapse animation contexts.
+**VALIDATE + ENABLE SITE FOR EXPORT** succeeds only when all three stages are
+saved, current, technically valid, and safe to interpolate. An invalid
+export-enabled site blocks export. **DELETE SITE METADATA** requires
+confirmation and preserves every Damage Key, Stamp, shape key, and gore object.
+
 ## 7. Strong Impact and Gore macros
 
 Impact has six high-leverage controls:
@@ -106,9 +147,10 @@ macros fed by the detailed manual controls:
 - **SURFACE MASS** changes raised gore from separated islands toward one
   connected, irregular mass. High values suppress the little-triangle look.
 - **RELIEF** controls height, roundness, and the strength of the raised form.
-- **NUCLEUS** grows one closed solid-tissue mass on the dominant captured
-  island. Use it for a substantial organ-like or brain-like center rather than
-  loose plates.
+- **NUCLEUS** grows a cluster of closed solid-tissue masses across the deepest
+  third of the impact. Higher values add members and increase their scale. Each
+  member varies in aspect, orientation, and folds, producing a substantial
+  organ-like or brain-like wound bed rather than one small isolated form.
 - **FOLDS** changes corrugation, lobe count, edge irregularity, and peripheral
   fiber breakup.
 - **REDNESS** increases visible crimson/tissue contribution while reducing the
@@ -116,8 +158,8 @@ macros fed by the detailed manual controls:
 
 These are deterministic recipe controls, not a separately sculpted object.
 With **NUCLEUS** at zero, Surface Gore remains shell-based. With it above zero,
-the raised component contains a budgeted closed lobulated submesh that follows
-the same Stamp, source skinning, activation, and export contract.
+the raised component contains a budgeted cluster of closed lobulated submeshes
+that follows the same Stamp, source skinning, activation, and export contract.
 
 One **RANDOMIZE DAMAGE** click creates a master seed and derives stable,
 independent impact and gore seeds. It requests one managed preview instead of
@@ -194,6 +236,32 @@ rig, draft walk/collapse/hurt or mace head-guard actions, inspect them, and use
 the explicit Version/Approve controls. Generated actions do not animate bone
 scale. Approved Actions and NLA-used Actions are protected.
 
+The **VIP ANIMATION LIBRARY** sits above every draft section and keeps the
+custom sliders below fully available:
+
+1. Current unsaved Actions appear under **CURRENT DRAFTS**. Select one, use
+   **PLAY** or **EDIT**, then press **SAVE** to create its finalized Action.
+2. Finalized Actions are grouped under **LOCOMOTION**, **REACTIONS**,
+   **COMBAT**, or **OTHER**. Their names are editable directly in the list.
+3. **PLAY** assigns the selected Action, applies its exact frame range, and
+   begins playback immediately.
+4. **EDIT** creates a safe working copy, enters Pose Mode, and restores the
+   clip's saved custom slider values when that metadata exists. The ordinary
+   walk/death/hurt/guard draft controls remain usable.
+5. **SAVE** confirms before replacing the original Action with the edit draft.
+   The original name and clip identity are retained, and active/NLA users are
+   reconnected. **CANCEL** discards the working copy.
+6. **DELETE** confirms before removing the saved Action and its NLA strip
+   references from the character.
+
+For cross-character reuse, choose a folder and press **EXPORT SELECTED**. Forge
+writes a native `.blend` Action clip plus a JSON manifest. On another humanoid,
+choose that `.blend` under **Clip to Import** and press **IMPORT TO CHARACTER**.
+Every animated bone must exist and retain the same parent chain. Different rest
+orientations, proportions, or pose-bone translation channels produce warnings
+because they may need manual adjustment, but do not block an otherwise
+compatible import.
+
 ## 12. Validate and export
 
 Before export:
@@ -203,6 +271,9 @@ Before export:
 3. Validate compound events when used.
 4. Run **Validate Complete Damage Asset**.
 5. Click **Export Damage GLB + Manifest**.
+6. For each intended runtime progression, run
+   **VALIDATE ALL CROSSFADE STATES** and
+   **VALIDATE + ENABLE SITE FOR EXPORT**.
 
 Export validation requires current capture/topology/deformation/recipe
 digests, correct Stamp selection, exact-index paired morphs, mode-correct hybrid
@@ -217,12 +288,15 @@ Reimport the exported GLB into a clean Blender file. Confirm:
 - the intact character is visible;
 - each Damage Key morph is present;
 - hybrid recipes have both `_RAISED` and `_INLAY` nodes for every required role;
-- raised nodes with **NUCLEUS** above zero contain a nonzero nucleus triangle
-  count and the crushed-tissue material role;
+- raised nodes with **NUCLEUS** above zero contain a nonzero nucleus count and
+  triangle count plus the crushed-tissue material role;
 - gore nodes default inactive and map to the matching deformation key;
 - materials are non-emissive and zero-metallic;
 - the manifest lists Blueprint metadata, active Stamp, component/node IDs,
   digests, triangle counts, and activation weight.
+- `progressiveDamageSites` lists stable site/stage/Damage Key IDs, explicit
+  adjacent-crossfade and midpoint-gore contracts, validation measurements, and
+  resident/visible/transition costs for every enabled site.
 
 Use **Restore Reimported GLB Intact Preview** when inspecting a reimported
 authoring asset.
@@ -241,12 +315,18 @@ authoring asset.
   rebuild generated gore. A paired hybrid key must finish with attached and
   detached `RAISED` plus attached and detached `INLAY` components.
 - An older build reports that a macro-edited key exceeds its maximum world
-  displacement: install the current 3.19 archive and rebuild the key. Current
+  displacement: install the current 3.20 archive and rebuild the key. Current
   preview and Save paths project the generated coordinates into the recipe's
   world-space cap before strict validation.
 - A library appears empty: verify **Library File** and click **REFRESH**.
 - Source Readiness says `NOT READY`: fix or explicitly repair the source
   contract; do not treat generated cut boundaries as source defects.
+- A site says `NEEDS_STAGE_SAVE`: focus each assigned stage and save that
+  Damage Key; Randomize intentionally dirties only the selected stage.
+- Progression validation reports a stale digest: the assigned stage changed
+  after its site record was captured. Save the stage again, then revalidate.
+- An incomplete site is missing from the manifest: drafts are intentionally
+  omitted until **VALIDATE + ENABLE SITE FOR EXPORT** succeeds.
 
 ## Complete public button inventory
 
@@ -261,6 +341,17 @@ authoring asset.
   **DISTORTION**, **ASYMMETRY**, **RAISED AMOUNT**, **INLAY AMOUNT**,
   **COVERAGE**, **EDGE BREAKUP**, **FILL**, **WETNESS**,
   **RANDOMIZE DAMAGE**, **SAVE DAMAGE KEY + STAMP + GORE**.
+- Progressive Damage Sites: **PROGRESSIVE DAMAGE SITES**,
+  **NEW DAMAGE SITE**, **SELECT SITE**, **RENAME SITE**,
+  **DUPLICATE SITE METADATA**, **DELETE SITE METADATA**, **LIGHT**,
+  **MEDIUM**, **HEAVY**, **ASSIGN ACTIVE DAMAGE KEY**,
+  **CREATE NEW KEY FOR THIS STAGE**,
+  **DUPLICATE ACTIVE KEY AS STARTING POINT**, **GO TO ASSIGNED KEY**,
+  **UNASSIGN STAGE**, **SET SITE ANCHOR FROM ACTIVE STAGE**,
+  **PREVIEW SITE IN ISOLATION**, **PREVIEW WITH OTHER DAMAGE**,
+  **REFRESH PROGRESSION PREVIEW**, **CLEAR PROGRESSION PREVIEW**,
+  **VALIDATE ALL CROSSFADE STATES**, and
+  **VALIDATE + ENABLE SITE FOR EXPORT**.
 - Blueprint library: **ADD CURRENT RECIPE**, **REFRESH**,
   **APPLY · blueprint name**.
 - Advanced authoring: **Register Selected Pair**,
@@ -274,5 +365,6 @@ authoring asset.
 - Animation: **Generate / Refresh Walk Draft**,
   **Generate / Refresh Death Draft**, flank-hurt draft controls,
   **Generate Three Mace Head-Guard Drafts**, **Preview Guard_Active**,
-  **Validate Mace Head-Guard Drafts**, **Build Approved Animation Pack**,
-  **Validate Last Built Pack**.
+  **Validate Mace Head-Guard Drafts**, **VIP ANIMATION LIBRARY**, **PLAY**,
+  **EDIT**, **SAVE**, **DELETE**, **EXPORT SELECTED**, **IMPORT TO CHARACTER**,
+  **Build Approved Animation Pack**, **Validate Last Built Pack**.

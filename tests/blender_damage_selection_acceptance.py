@@ -145,6 +145,32 @@ def main():
             )
             created.append(key_name)
 
+        # Normal authoring invalidation and Blender's file-load callback must
+        # keep the lightweight Damage Key/Stamp card inventory available.
+        persisted_names = set(deformation_authoring._metadata(attached)["keys"])
+        deformation_authoring._invalidate_geodesic_cache()
+        invalidated_names = {
+            str(entry.get("name", ""))
+            for entry in deformation_authoring.cached_ui_summary(settings)
+            .get("metadata", {})
+            .get("keys", [])
+        }
+        require(
+            invalidated_names == persisted_names,
+            "Authoring cache invalidation hid persisted Damage Key cards.",
+        )
+        deformation_authoring._clear_service_caches("file load")
+        reloaded_names = {
+            str(entry.get("name", ""))
+            for entry in deformation_authoring.cached_ui_summary(settings)
+            .get("metadata", {})
+            .get("keys", [])
+        }
+        require(
+            reloaded_names == persisted_names,
+            "File-load cache clearing hid persisted Damage Key cards.",
+        )
+
         # A cancelled creation must not leave a phantom key or Stamp in the panel cache.
         before_names = set(deformation_authoring._metadata(attached)["keys"])
         select_elements(attached, mode="FACE", indices=())
@@ -216,7 +242,14 @@ def main():
                 int(obj.get("dsb_gore_nucleus_triangle_count", 0)) > 0
                 for obj in raised_objects
             ),
-            "The default cohesive surface recipe did not build a closed nucleus.",
+            "The default cohesive surface recipe did not build closed nuclei.",
+        )
+        require(
+            all(
+                int(obj.get("dsb_gore_nucleus_count", 0)) >= 2
+                for obj in raised_objects
+            ),
+            "The default cohesive surface recipe did not distribute multiple nuclei.",
         )
         require(
             all(
@@ -228,10 +261,10 @@ def main():
         require(
             all(
                 str(obj.get("dsb_gore_shell_quality", ""))
-                == "COHESIVE_SURFACE_MASS_LOBULATED_NUCLEUS_V4"
+                == "COHESIVE_SURFACE_MASS_DISTRIBUTED_NUCLEI_V5"
                 for obj in raised_objects
             ),
-            "Raised gore did not use the lobulated nucleus geometry contract.",
+            "Raised gore did not use the distributed-nuclei geometry contract.",
         )
         require(
             all(
@@ -247,6 +280,10 @@ def main():
         )
         raised_nucleus_triangles = sum(
             int(obj["dsb_gore_nucleus_triangle_count"])
+            for obj in raised_objects
+        )
+        raised_nucleus_count = sum(
+            int(obj["dsb_gore_nucleus_count"])
             for obj in raised_objects
         )
         validation = commit_result["validation"]
@@ -372,6 +409,7 @@ def main():
             "rollbackCache": "PASS",
             "pairedHybridComponents": len(final_objects),
             "raisedNucleusTriangles": raised_nucleus_triangles,
+            "raisedNucleusCount": raised_nucleus_count,
             "fastMaskedVertices": fast["goreMaskedVertexCount"],
             "balancedPreviewComponents": balanced["previewGoreObjectCount"],
             "worldDisplacementCap": clamped_maximum,

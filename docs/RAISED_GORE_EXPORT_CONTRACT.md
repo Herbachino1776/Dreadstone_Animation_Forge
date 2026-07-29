@@ -1,6 +1,6 @@
 # Gore geometry export contract
 
-Forge 3.19 exports `LEGACY_RAISED`, `CAVITY_INLAY`, and
+Forge 3.20 exports `LEGACY_RAISED`, `CAVITY_INLAY`, and
 `HYBRID_ADDITIVE` gore as ordinary glTF mesh nodes for paired, core, and
 compound-event regions. `STAIN_ONLY` exports no gore geometry. Source topology
 is never cut by gore generation.
@@ -45,16 +45,23 @@ fiber-atlas, non-emissive Principled material, and armature-copy contracts.
 Recipe v6 adds `goreSurfaceControl`, `goreSurfaceMass`,
 `goreNucleusAmount`, and `goreNucleusLobes`. Surface mass changes face
 retention and breakup so the shell can become a connected irregular form rather
-than a collection of isolated plates. A nonzero nucleus amount may add one
-closed lobulated submesh inside the same raised node, anchored to the dominant
-captured island and partially embedded in the host/inlay silhouette. It:
+than a collection of isolated plates. A nonzero nucleus amount adds a
+deterministic cluster of closed lobulated submeshes inside the same raised
+node. Candidate anchors are ranked by deformation response, limited to the
+deepest-response third of the impact, and spread within that zone. The amount
+controls both member count and scale; the members vary in aspect, orientation,
+and fold structure while remaining partially embedded in the host/inlay
+silhouette. Each cluster:
 
 - is deterministic for the recipe and seed;
-- inherits the dominant island's source-position and skinning ownership;
+- inherits each selected surface anchor's source-position and skinning
+  ownership;
 - uses layer `3` and the `DSB_GORE_CRUSHED_TISSUE` material role;
 - contributes to the same per-deformation triangle budget;
 - reports `dsb_gore_surface_mass`, `dsb_gore_nucleus_amount`,
-  `dsb_gore_nucleus_lobes`, and `dsb_gore_nucleus_triangle_count`.
+  `dsb_gore_nucleus_lobes`, `dsb_gore_nucleus_count`,
+  `dsb_gore_nucleus_depth_fraction`, and
+  `dsb_gore_nucleus_triangle_count`.
 
 Untouched v1-v5 recipes normalize with surface mass and nucleus disabled, and
 their historical digests remain unchanged.
@@ -80,7 +87,7 @@ Inlay may use:
 - `DSB_GORE_EXPOSED_BONE`
 
 Raised uses its compatible wet/clot/edge roles and may additionally use
-`DSB_GORE_CRUSHED_TISSUE` for a solid nucleus. All final materials are
+`DSB_GORE_CRUSHED_TISSUE` for solid nuclei. All final materials are
 zero-metallic and non-emissive. Wetness changes roughness/coat; redness changes
 crimson/tissue intensity and dark-clot bias. Temporary stain copies and
 `DSB_Surface_Gore_Mask` are removed before export.
@@ -103,6 +110,14 @@ At runtime:
 4. For hybrid recipes, activate both mapped components.
 
 Forge records this mapping but does not implement engine-side activation.
+
+For a Progressive Damage Site, raised and inlay remain additive inside one
+stage, but complete stage assemblies are mutually exclusive. During an adjacent
+structural transition, `MIDPOINT_REPLACE` shows only the lower stage assembly
+before the midpoint and only the higher stage assembly at or after it. At
+severity zero no stage gore is active. Resident cost still reports every
+packaged hidden assembly; visible and transition costs report the one assembly
+that can actually be shown.
 
 ## Validation and rebuild
 

@@ -143,14 +143,79 @@ class DamageBlueprintTests(unittest.TestCase):
 
     def test_legacy_blueprint_without_surface_macros_migrates_safely(self):
         record = sample_blueprint()
-        record.pop("blueprintDigest")
         record["gore"] = dict(record["gore"])
         record["gore"].pop("surfaceMacros")
+        record["blueprintDigest"] = blueprints._digest(
+            record,
+            omitted=("blueprintDigest",),
+        )
+        legacy_digest = record["blueprintDigest"]
         migrated = blueprints.normalize_blueprint(record)
         self.assertEqual(
             migrated["gore"]["surfaceMacros"],
             blueprints.SURFACE_GORE_MACRO_DEFAULTS,
         )
+        self.assertNotEqual(migrated["blueprintDigest"], legacy_digest)
+
+    def test_legacy_library_digest_migrates_with_surface_macros(self):
+        record = sample_blueprint()
+        record["gore"] = dict(record["gore"])
+        record["gore"].pop("surfaceMacros")
+        record["blueprintDigest"] = blueprints._digest(
+            record,
+            omitted=("blueprintDigest",),
+        )
+        library = {
+            "schema": blueprints.LIBRARY_SCHEMA,
+            "version": blueprints.LIBRARY_VERSION,
+            "blueprintCount": 1,
+            "blueprints": [record],
+        }
+        library["libraryDigest"] = blueprints._digest(
+            library,
+            omitted=("libraryDigest",),
+        )
+        legacy_library_digest = library["libraryDigest"]
+        migrated = blueprints.normalize_library(library)
+        self.assertEqual(
+            migrated["blueprints"][0]["gore"]["surfaceMacros"],
+            blueprints.SURFACE_GORE_MACRO_DEFAULTS,
+        )
+        self.assertNotEqual(migrated["libraryDigest"], legacy_library_digest)
+
+    def test_legacy_blueprint_still_rejects_digest_mismatch(self):
+        record = sample_blueprint()
+        record["gore"] = dict(record["gore"])
+        record["gore"].pop("surfaceMacros")
+        record["blueprintDigest"] = blueprints._digest(
+            record,
+            omitted=("blueprintDigest",),
+        )
+        record["impact"] = dict(record["impact"])
+        record["impact"]["seed"] += 1
+        with self.assertRaisesRegex(ValueError, "digest"):
+            blueprints.normalize_blueprint(record)
+
+    def test_legacy_library_still_rejects_noncanonical_count(self):
+        record = sample_blueprint()
+        record["gore"] = dict(record["gore"])
+        record["gore"].pop("surfaceMacros")
+        record["blueprintDigest"] = blueprints._digest(
+            record,
+            omitted=("blueprintDigest",),
+        )
+        library = {
+            "schema": blueprints.LIBRARY_SCHEMA,
+            "version": blueprints.LIBRARY_VERSION,
+            "blueprintCount": 2,
+            "blueprints": [record],
+        }
+        library["libraryDigest"] = blueprints._digest(
+            library,
+            omitted=("libraryDigest",),
+        )
+        with self.assertRaisesRegex(ValueError, "library digest"):
+            blueprints.normalize_library(library)
 
     def test_library_upsert_is_deterministic_and_replaces_by_id(self):
         first = sample_blueprint("A Crater")

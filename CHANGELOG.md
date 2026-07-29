@@ -1,7 +1,35 @@
 # Changelog
 
+## 3.20.0
+
+- Added first-class, versioned Progressive Damage Sites with stable site,
+  stage, and Damage Key IDs persisted in the deformation registry.
+- Added independently authored Light, Medium, and Heavy stage assignment,
+  stage-to-VIP-workflow focus, isolated Randomize/Save status tracking, safe
+  metadata duplication, and non-destructive metadata deletion.
+- Added pure adjacent crossfade evaluation with ordered severity anchors,
+  smoothstep interpolation, a maximum of two adjacent active morphs, and
+  midpoint replacement for complete detailed-gore assemblies.
+- Added managed, snapshot-restoring progression preview; technical crossfade
+  sampling across available rest/walk/hurt/collapse contexts; explicit
+  draft/export states; and resident, visible, and transition cost reporting.
+- Extended the damage manifest and clean-reimport contract with explicit
+  `progressiveDamageSites` metadata while preserving all 3.19 Damage Keys,
+  child Stamps, Blueprints, raised/inlay components, and non-progression export.
+
 ## 3.19.0
 
+- Added a compact **VIP ANIMATION LIBRARY** at the top of the Animation
+  workspace. It groups current drafts and saved Actions by locomotion,
+  reactions, combat, and other clips; Action names are editable in place.
+- Added one-click **PLAY**, **EDIT**, **SAVE**, and **DELETE** lifecycle
+  controls. Editing a saved clip creates a safe working Action, restores its
+  captured custom sliders when available, and SAVE explicitly overwrites the
+  original name/identity while reconnecting active Action and NLA users.
+- Added native portable animation clips: **EXPORT SELECTED** writes one
+  compressed `.blend` Action plus a readable JSON manifest, and **IMPORT TO
+  CHARACTER** blocks missing bones or changed parent chains while warning
+  about rest-orientation, proportion, and pose-translation differences.
 - Replaced factory-preset authoring with the collapsible **VIP DAMAGE WORKFLOW**:
   clear Damage Key cards, unmistakable **WORKING ON** focus, independent
   per-key Preview toggles, and visible child Stamp alternatives.
@@ -15,10 +43,11 @@
   MASS**, **RELIEF**, **NUCLEUS**, **FOLDS**, and **REDNESS**. These macros
   expose the existing raised-gore manual controls as a coherent high-leverage
   surface system instead of relying on scattered triangular overlay patches.
-- Added a deterministic closed, lobulated solid-tissue nucleus to each raised
-  component. It is anchored to the dominant captured island, inherits source
-  skinning, stays inside the per-key triangle budget, uses the crushed-tissue
-  material role, and composes additively with the full inlay channel.
+- Added deterministic clusters of closed, lobulated solid-tissue nuclei to
+  each raised component. They spread across the deepest-response third of the
+  impact, vary in scale, aspect, orientation, and folds, inherit source
+  skinning, stay inside the per-key triangle budget, use the crushed-tissue
+  material role, and compose additively with the full inlay channel.
 - Added one master **RANDOMIZE DAMAGE** transaction that deterministically
   derives independent impact and gore seeds and schedules one managed preview.
 - Added `HYBRID_ADDITIVE` gore with independent 0.0–1.0 raised and inlay
@@ -44,6 +73,10 @@
   the generated cavity rim. Internal clot/tissue medians are now projected
   into the measured rim-to-liner interval, so slider edits and VIP Save retain
   strict surface-to-rim-to-clot/tissue-to-liner depth order.
+- Fixed per-key **PREVIEW OFF** leaving the live stain material or temporary
+  gore geometry visible through the intact mesh. Preview toggles now govern
+  final nodes, preview-only nodes, the stain attribute, and its temporary
+  material/state as one lifecycle.
 - Made the VIP preview contract explicit and executable: debounced macro edits
   and Randomize update the unsaved look, FAST shows its live stain, BALANCED
   adds temporary raised/inlay geometry, and **UPDATE GORE PREVIEW** refreshes
@@ -56,6 +89,14 @@
 - Bumped normalized gore recipes to v6 while preserving v1-v5 digests and
   keeping new surface mass/nucleus geometry disabled on untouched legacy
   records. Damage Blueprints now round-trip all five surface macros.
+- Fixed valid v1 Damage Blueprint libraries saved before cohesive surface
+  macros being rejected as corrupt. Their original blueprint and library
+  digests are now verified in the legacy shape, then migrated to the current
+  canonical records when refreshed or saved.
+- Fixed the VIP Damage Key and Stamp cards disappearing after file loads,
+  region switches, captures, or Stamp edits. Normal runtime-cache invalidation
+  now immediately restores the lightweight active-region inventory from
+  persisted authoring metadata without doing mesh work during panel draws.
 
 ## 3.18.0
 

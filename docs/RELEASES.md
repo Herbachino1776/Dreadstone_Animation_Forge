@@ -7,7 +7,8 @@
 4. Complete the focused Blender acceptance in
    [DEVELOPMENT.md](DEVELOPMENT.md), including simultaneous Damage Key toggles,
    mode-aware vertex/face selection and rollback, Stamp alternatives, hybrid
-   1.0 + 1.0 components, cohesive Surface Gore macros, closed nucleus geometry,
+   1.0 + 1.0 components, cohesive Surface Gore macros, distributed nucleus
+   geometry, VIP animation edit/overwrite/delete, portable clip compatibility,
    adaptive Blueprint reuse, validation, export, and clean reimport.
    Follow `docs/USER_WORKFLOW_GUIDE.md` as the authoritative user procedure.
 5. Run `python scripts/build_release.py` twice and require identical SHA-256
@@ -19,7 +20,7 @@
 
 ## Documentation definition of done
 
-- [ ] Version and `Dreadstone_Animation_Forge_v3_19_0.zip` match everywhere.
+- [ ] Version and `Dreadstone_Animation_Forge_v3_20_0.zip` match everywhere.
 - [ ] The VIP Damage Key -> Stamp -> macro workflow is current.
 - [ ] No user-facing factory preset instructions remain.
 - [ ] Independent multi-key Preview toggles and one active Stamp alternative
@@ -28,6 +29,8 @@
       are documented.
 - [ ] Surface Mass/Relief/Nucleus/Folds/Redness behavior, v6 legacy migration,
       nucleus materials/metadata, and Blueprint persistence are documented.
+- [ ] VIP animation Play/Edit/Save/Delete, NLA reconnection, and compatible
+      `.blend` clip export/import are documented and runtime-tested.
 - [ ] Damage Blueprint save/apply portability and the fresh-destination-capture
       requirement are documented.
 - [ ] Source Readiness, validation, export, and clean-reimport procedures are

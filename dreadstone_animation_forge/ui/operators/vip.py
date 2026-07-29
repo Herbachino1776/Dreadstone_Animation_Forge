@@ -76,6 +76,9 @@ class DAF_OT_randomize_damage_recipe(_VipOperator):
 
         try:
             result = deformation_authoring.randomize_damage_recipe(context)
+            from ... import progressive_authoring
+
+            progressive_authoring.mark_active_stage_dirty(context)
             self.report(
                 {"INFO"},
                 (
@@ -101,6 +104,9 @@ class DAF_OT_save_vip_damage(_VipOperator):
 
         try:
             result = deformation_authoring.commit_current_tuning(context)
+            from ... import progressive_authoring
+
+            progressive_authoring.sync_active_stage_after_save(context)
             deformation_authoring.apply_damage_key_previews(context)
             self.report(
                 {"INFO"},

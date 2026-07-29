@@ -218,7 +218,348 @@ def _draw_advanced_gore_internals(layout, settings):
     )
 
 
-def _draw_vip_damage_workflow(layout, settings, summary):
+def _draw_progressive_damage_sites(layout, context, settings):
+    from .. import progressive_authoring
+
+    state = progressive_authoring.cached_ui_state(context)
+    collection = state["collection"]
+    site = state["site"]
+    stage = state["stage"]
+    stage_name = state["stageName"]
+    box = layout.box()
+    header = box.row(align=True)
+    opened = bool(settings.ui_progressive_sites_open)
+    header.scale_y = 1.28
+    header.prop(
+        settings,
+        "ui_progressive_sites_open",
+        text="PROGRESSIVE DAMAGE SITES",
+        icon="TRIA_DOWN" if opened else "TRIA_RIGHT",
+        emboss=False,
+    )
+    if not opened:
+        return
+
+    if not site:
+        box.label(
+            text="Organize three fully custom Damage Keys into one runtime site.",
+            icon="INFO",
+        )
+        create = box.column()
+        create.scale_y = 1.45
+        create.operator(
+            "daf.new_progressive_site",
+            text="NEW DAMAGE SITE",
+            icon="ADD",
+        )
+        return
+
+    completion = sum(
+        bool(value.get("damageKeyId"))
+        for value in site.get("stages", {}).values()
+    )
+    card = box.box()
+    title = card.row(align=True)
+    title.label(text=str(site["displayName"]), icon="PINNED")
+    title.label(
+        text=f"{completion} / 3 · {site['status'].replace('_', ' ')}",
+        icon=(
+            "CHECKMARK"
+            if site["status"] == "READY_FOR_EXPORT"
+            else "ERROR"
+            if site["status"] == "FAILED"
+            else "INFO"
+        ),
+    )
+    card.label(
+        text=(
+            f"Region {site['regionId']} · Group {site['structuralGroup']} · "
+            f"Export {'ON' if site['enabledForExport'] else 'OFF'}"
+        )
+    )
+
+    sites = list(collection.get("sites", []))
+    if len(sites) > 1:
+        selector = card.box()
+        selector.label(text="SELECT SITE", icon="RESTRICT_SELECT_OFF")
+        for candidate in sites:
+            op = selector.operator(
+                "daf.select_progressive_site",
+                text=str(candidate["displayName"]),
+                icon=(
+                    "RADIOBUT_ON"
+                    if candidate["siteGuid"] == site["siteGuid"]
+                    else "RADIOBUT_OFF"
+                ),
+                depress=candidate["siteGuid"] == site["siteGuid"],
+            )
+            op.site_guid = str(candidate["siteGuid"])
+    actions = card.row(align=True)
+    actions.operator(
+        "daf.new_progressive_site",
+        text="NEW DAMAGE SITE",
+        icon="ADD",
+    )
+    actions.operator(
+        "daf.duplicate_progressive_site_metadata",
+        text="DUPLICATE SITE METADATA",
+        icon="DUPLICATE",
+    )
+    name = card.row(align=True)
+    name.prop(settings, "progression_site_name", text="")
+    name.operator(
+        "daf.rename_progressive_site",
+        text="RENAME SITE",
+        icon="GREASEPENCIL",
+    )
+    remove = card.row()
+    remove.alert = True
+    remove.operator(
+        "daf.delete_progressive_site_metadata",
+        text="DELETE SITE METADATA",
+        icon="TRASH",
+    )
+
+    tabs = box.box()
+    tabs.label(text="STAGES · COMPLETE RESULTS RELATIVE TO BASIS")
+    row = tabs.row(align=True)
+    row.scale_y = 1.65
+    for name in ("LIGHT", "MEDIUM", "HEAVY"):
+        record = site["stages"][name]
+        assigned = bool(record.get("damageKeyId"))
+        invalid = str(record.get("validationStatus", "")) in {"FAIL", "FAILED"}
+        dirty = bool(record.get("dirty", False)) or (
+            assigned and not bool(record.get("saved", False))
+        )
+        icon = (
+            "ERROR"
+            if invalid
+            else "GREASEPENCIL"
+            if dirty
+            else "CHECKMARK"
+            if assigned and record.get("validationStatus") == "PASS"
+            else "LAYER_ACTIVE"
+            if assigned
+            else "RADIOBUT_OFF"
+        )
+        stage_row = row.row(align=True)
+        stage_row.alert = invalid
+        op = stage_row.operator(
+            "daf.focus_progressive_stage",
+            text=name,
+            icon=icon,
+            depress=name == stage_name,
+        )
+        op.stage = name
+    tabs.label(
+        text="Neutral / amber / caution intent uses Blender-native icons and state emphasis."
+    )
+
+    active = box.box()
+    active.label(text=f"ACTIVE STAGE · {stage_name}", icon="EDITMODE_HLT")
+    if not stage.get("damageKeyId"):
+        active.label(text="Unassigned · choose or create an independent Damage Key")
+    else:
+        active.label(
+            text=f"Damage Key · {stage.get('deformationKeyName', '')}",
+            icon="SHAPEKEY_DATA",
+        )
+        active.label(
+            text=(
+                f"Stamp · {stage.get('activeStampId', '') or '<none>'} · "
+                f"{'DIRTY' if stage.get('dirty') else 'SAVED' if stage.get('saved') else 'UNSAVED'}"
+            )
+        )
+        active.label(
+            text=(
+                f"Validation · {stage.get('validationStatus', 'EMPTY')} · "
+                f"Gore {len(stage.get('generatedNodeNames', {}))} nodes · "
+                f"{int(stage.get('triangleCount', 0)):,} tris"
+            )
+        )
+        active.label(
+            text="Ownership · "
+            + (", ".join(stage.get("ownershipRoles", [])) or "not generated")
+        )
+    action = active.column()
+    action.scale_y = 1.25
+    assign = action.operator(
+        "daf.assign_progressive_stage",
+        text="ASSIGN ACTIVE DAMAGE KEY",
+        icon="LINKED",
+    )
+    assign.stage = stage_name
+    create = action.operator(
+        "daf.create_progressive_stage_key",
+        text="CREATE NEW KEY FOR THIS STAGE",
+        icon="ADD",
+    )
+    create.stage = stage_name
+    duplicate = action.operator(
+        "daf.duplicate_progressive_stage_key",
+        text="DUPLICATE ACTIVE KEY AS STARTING POINT",
+        icon="DUPLICATE",
+    )
+    duplicate.stage = stage_name
+    if stage.get("damageKeyId"):
+        go = active.operator(
+            "daf.focus_progressive_stage",
+            text="GO TO ASSIGNED KEY",
+            icon="RESTRICT_SELECT_OFF",
+        )
+        go.stage = stage_name
+        unassign = active.row()
+        unassign.alert = True
+        op = unassign.operator(
+            "daf.unassign_progressive_stage",
+            text="UNASSIGN STAGE · PRESERVE KEY",
+            icon="UNLINKED",
+        )
+        op.stage = stage_name
+    active.operator(
+        "daf.set_progressive_site_anchor",
+        text="SET SITE ANCHOR FROM ACTIVE STAGE",
+        icon="PIVOT_CURSOR",
+    )
+    active.label(
+        text="Stage focus loads the existing Impact/Gore macros directly below.",
+        icon="INFO",
+    )
+
+    deck = box.box()
+    deck.label(text="PROGRESSION CONTROL DECK", icon="DRIVER")
+    severity = deck.column()
+    severity.scale_y = 1.35
+    severity.prop(settings, "progression_severity", slider=True)
+    deck.prop(settings, "progression_live_preview")
+    preview = deck.column()
+    preview.scale_y = 1.45
+    op = preview.operator(
+        "daf.refresh_progression_preview",
+        text="PREVIEW SITE IN ISOLATION",
+        icon="SHADING_RENDERED",
+    )
+    op.with_other_damage = False
+    refresh = deck.column()
+    refresh.scale_y = 1.40
+    op = refresh.operator(
+        "daf.refresh_progression_preview",
+        text="REFRESH PROGRESSION PREVIEW",
+        icon="FILE_REFRESH",
+    )
+    op.with_other_damage = bool(
+        settings.progression_preview_with_other_damage
+    )
+    other = deck.operator(
+        "daf.refresh_progression_preview",
+        text="PREVIEW WITH OTHER DAMAGE",
+        icon="HIDE_OFF",
+    )
+    other.with_other_damage = True
+    clear = deck.column()
+    clear.alert = bool(settings.progression_preview_active)
+    clear.scale_y = 1.20
+    clear.operator(
+        "daf.clear_progression_preview",
+        text="CLEAR PROGRESSION PREVIEW",
+        icon="X",
+    )
+    deck.label(
+        text=(
+            f"Basis {settings.progression_weight_basis:.3f} · "
+            f"Light {settings.progression_weight_light:.3f} · "
+            f"Medium {settings.progression_weight_medium:.3f} · "
+            f"Heavy {settings.progression_weight_heavy:.3f}"
+        )
+    )
+    deck.label(
+        text=(
+            f"Detailed gore · {settings.progression_detailed_gore_stage} · "
+            f"{settings.progression_transition_status}"
+        )
+    )
+    validate = deck.column()
+    validate.scale_y = 1.45
+    validate.operator(
+        "daf.validate_progressive_site",
+        text="VALIDATE ALL CROSSFADE STATES",
+        icon="CHECKMARK",
+    )
+    enable = deck.column()
+    enable.scale_y = 1.55
+    if site["enabledForExport"]:
+        enable.operator(
+            "daf.disable_progressive_site_export",
+            text="DISABLE SITE EXPORT",
+            icon="CANCEL",
+        )
+    else:
+        enable.operator(
+            "daf.enable_progressive_site_export",
+            text="VALIDATE + ENABLE SITE FOR EXPORT",
+            icon="EXPORT",
+        )
+    if settings.progression_status:
+        deck.label(text=str(settings.progression_status)[:110], icon="INFO")
+
+    advanced = box.box()
+    advanced.prop(
+        settings,
+        "ui_progressive_advanced_open",
+        text="Advanced Progressive Site Settings",
+        icon=(
+            "TRIA_DOWN"
+            if settings.ui_progressive_advanced_open
+            else "TRIA_RIGHT"
+        ),
+        emboss=False,
+    )
+    if settings.ui_progressive_advanced_open:
+        advanced.label(text=f"Site ID · {site['siteId']}")
+        advanced.label(text=f"Site GUID · {site['siteGuid']}")
+        advanced.prop(settings, "progression_site_name")
+        advanced.label(text=f"Registered Region · {site['regionId']}")
+        advanced.prop(settings, "progression_structural_group")
+        advanced.prop(settings, "progression_anchor_local")
+        advanced.prop(settings, "progression_radius")
+        advanced.prop(settings, "progression_preferred_direction")
+        advanced.prop(settings, "progression_light_anchor")
+        advanced.prop(settings, "progression_medium_anchor")
+        advanced.prop(settings, "progression_heavy_anchor")
+        advanced.prop(settings, "progression_transition_mode")
+        advanced.prop(settings, "progression_transition_curve")
+        advanced.prop(settings, "progression_gore_transition_mode")
+        advanced.label(
+            text=f"Include in Export · {'YES' if site['enabledForExport'] else 'NO'}"
+        )
+        cost = site.get("cost", {})
+        advanced.label(
+            text=(
+                f"Cost · resident {int(cost.get('residentStageGoreTriangles', 0)):,} · "
+                f"visible {int(cost.get('maximumVisibleStageGoreTriangles', 0)):,} · "
+                f"transition {int(cost.get('maximumTransitionGoreTriangles', 0)):,}"
+            )
+        )
+        for name in ("LIGHT", "MEDIUM", "HEAVY"):
+            record = site["stages"][name]
+            advanced.label(
+                text=(
+                    f"{name} · {record.get('stageId', '')} · "
+                    f"{record.get('damageKeyId', '') or '<unassigned>'}"
+                )
+            )
+            if record.get("damageKeyId"):
+                advanced.label(
+                    text=(
+                        "Digests · "
+                        f"{record.get('recipeDigest', '')[:10]} / "
+                        f"{record.get('deformationDigest', '')[:10]} / "
+                        f"{record.get('captureDigest', '')[:10]}"
+                    )
+                )
+
+
+def _draw_vip_damage_workflow(layout, context, settings, summary):
     vip = layout.box()
     header = vip.row(align=True)
     opened = bool(settings.ui_vip_damage_open)
@@ -237,6 +578,14 @@ def _draw_vip_damage_workflow(layout, settings, summary):
         text="DAMAGE KEYS + STAMPS + MACROS",
         icon="MOD_DISPLACE",
     )
+    registry_summary = summary.get("registry", {})
+    metadata_summary = summary.get("metadata", {})
+    active_region_id = str(
+        registry_summary.get(
+            "activeRegionId",
+            metadata_summary.get("regionId", ""),
+        )
+    )
     region = vip.box()
     region.label(text="1 · PLACE", icon="RESTRICT_SELECT_OFF")
     rows = (
@@ -246,7 +595,11 @@ def _draw_vip_damage_workflow(layout, settings, summary):
     for region_buttons in rows:
         row = region.row(align=True)
         for region_id, label in region_buttons:
-            op = row.operator("daf.activate_standard_region", text=label)
+            op = row.operator(
+                "daf.activate_standard_region",
+                text=label,
+                depress=region_id == active_region_id,
+            )
             op.region_id = region_id
     region.prop(settings, "deformation_seed_direction_mode", text="Direction")
     region.prop(settings, "deformation_impact_semantic_name", text="Damage Key Name")
@@ -262,8 +615,14 @@ def _draw_vip_damage_workflow(layout, settings, summary):
         icon="INFO",
     )
 
-    keys = list(summary.get("metadata", {}).get("keys", []))
-    active_key_name = str(settings.deformation_active_key)
+    keys = list(metadata_summary.get("keys", []))
+    requested_key_name = str(settings.deformation_active_key)
+    current_key_names = {str(key.get("name", "")) for key in keys}
+    active_key_name = (
+        requested_key_name
+        if requested_key_name in current_key_names
+        else ""
+    )
     enabled_count = sum(bool(key.get("previewEnabled", False)) for key in keys)
     rack = vip.box()
     rack.label(
@@ -271,7 +630,18 @@ def _draw_vip_damage_workflow(layout, settings, summary):
         icon="SHAPEKEY_DATA",
     )
     if not keys:
-        rack.label(text="No Damage Keys in this region yet.", icon="INFO")
+        region_label = next(
+            (
+                label
+                for region_id, label in properties.STANDARD_REGION_BUTTONS
+                if region_id == active_region_id
+            ),
+            active_region_id or "selected region",
+        )
+        rack.label(
+            text=f"No Damage Keys in {region_label} yet.",
+            icon="INFO",
+        )
     for key in keys:
         key_name = str(key.get("name", ""))
         focused = key_name == active_key_name
@@ -327,6 +697,8 @@ def _draw_vip_damage_workflow(layout, settings, summary):
                 icon="TRASH",
             )
 
+    _draw_progressive_damage_sites(vip, context, settings)
+
     controls = vip.box()
     controls.enabled = bool(active_key_name)
     controls.label(text="3 · SHAPE THE ACTIVE STAMP", icon="DRIVER")
@@ -380,7 +752,7 @@ def _draw_vip_damage_workflow(layout, settings, summary):
     row.scale_y = 1.24
     row.prop(settings, "deformation_gore_redness", slider=True)
     surface.label(
-        text="Mass joins the shell; Nucleus adds a solid lobulated tissue core.",
+        text="Mass joins the shell; Nucleus fills the deepest zone with varied tissue masses.",
         icon="INFO",
     )
     gore.label(
@@ -465,7 +837,7 @@ def _draw_vip_damage_workflow(layout, settings, summary):
 
 
 def _draw_damage(layout, context, settings, summary):
-    _draw_vip_damage_workflow(layout, settings, summary)
+    _draw_vip_damage_workflow(layout, context, settings, summary)
     _draw_advanced_impact_internals(layout, settings)
     _draw_advanced_gore_internals(layout, settings)
 
@@ -487,6 +859,258 @@ def _animation_foldout(layout, settings, property_name, title, icon='ACTION'):
         box.label(text=title, icon=icon)
         return box
     return None
+
+
+def _draw_vip_animation_library(layout, context, settings):
+    from .. import animation_library, find_armature
+
+    library = layout.box()
+    header = library.row(align=True)
+    header.prop(
+        settings,
+        "ui_vip_animation_open",
+        text="VIP ANIMATION LIBRARY",
+        icon=(
+            'TRIA_DOWN'
+            if settings.ui_vip_animation_open
+            else 'TRIA_RIGHT'
+        ),
+        emboss=False,
+    )
+    if not settings.ui_vip_animation_open:
+        return
+    try:
+        armature = find_armature(context)
+        actions = animation_library.character_actions(
+            armature,
+            include_drafts=True,
+        )
+    except Exception as exc:
+        library.label(
+            text="Select a mesh or armature from the character.",
+            icon='INFO',
+        )
+        library.label(text=str(exc)[:90])
+        return
+
+    title = library.row(align=True)
+    saved_count = sum(
+        not bool(action.get("dsb_draft", False))
+        for action in actions
+    )
+    draft_count = len(actions) - saved_count
+    title.label(
+        text=(
+            f"{armature.name} · {saved_count} SAVED"
+            + (f" · {draft_count} DRAFT" if draft_count else "")
+        ),
+        icon='ARMATURE_DATA',
+    )
+    title.label(text="Names are editable")
+    active_clip_id = str(settings.animation_library_active_clip_id)
+    active_name = str(settings.animation_library_active_action)
+    for category, label in (
+        ("DRAFTS", "CURRENT DRAFTS"),
+        ("LOCOMOTION", "LOCOMOTION"),
+        ("REACTIONS", "REACTIONS"),
+        ("COMBAT", "COMBAT"),
+        ("OTHER", "OTHER"),
+    ):
+        category_actions = [
+            action
+            for action in actions
+            if (
+                (
+                    category == "DRAFTS"
+                    and bool(action.get("dsb_draft", False))
+                )
+                or (
+                    category != "DRAFTS"
+                    and not bool(action.get("dsb_draft", False))
+                    and animation_library.action_category(action)
+                    == category
+                )
+            )
+        ]
+        if not category_actions:
+            continue
+        section = library.box()
+        section.label(
+            text=f"{label} · {len(category_actions)}",
+            icon='ACTION',
+        )
+        for action in category_actions:
+            clip_id = str(
+                action.get(
+                    animation_library.CLIP_ID_PROPERTY,
+                    "",
+                )
+            )
+            selected = (
+                (clip_id and clip_id == active_clip_id)
+                or (not active_clip_id and action.name == active_name)
+            )
+            row = section.row(align=True)
+            choose = row.operator(
+                "daf.animation_library_select",
+                text="",
+                icon='RADIOBUT_ON' if selected else 'RADIOBUT_OFF',
+                depress=selected,
+            )
+            choose.action_name = action.name
+            row.prop(action, "name", text="")
+            row.label(
+                text=animation_library.infer_action_kind(action)
+                .replace("_", " ")
+                .title()
+            )
+
+    selected_action = animation_library.selected_action(
+        settings,
+        armature,
+    )
+    editing = bool(settings.animation_library_edit_source_clip_id)
+    selected_is_draft = bool(
+        selected_action
+        and selected_action.get("dsb_draft", False)
+    )
+    selected_is_edit_source = bool(
+        selected_action
+        and str(
+            selected_action.get(
+                animation_library.CLIP_ID_PROPERTY,
+                "",
+            )
+        )
+        == str(settings.animation_library_edit_source_clip_id)
+    )
+    if selected_action is not None:
+        fps = (
+            context.scene.render.fps
+            / max(context.scene.render.fps_base, 0.001)
+        )
+        summary = animation_library.action_summary(
+            selected_action,
+            fps,
+        )
+        info = library.row(align=True)
+        info.label(
+            text=(
+                f"{summary['frameStart']}–{summary['frameEnd']} · "
+                f"{summary['durationSeconds']:.2f}s"
+            ),
+            icon='TIME',
+        )
+        info.label(
+            text=(
+                f"{summary['fcurveCount']} curves · "
+                f"{summary['keyframeCount']} keys"
+            )
+        )
+    elif not actions:
+        library.label(
+            text="No saved Actions yet. Generate a draft and approve it.",
+            icon='INFO',
+        )
+    else:
+        library.label(
+            text="Select an animation to play, edit, export, or delete.",
+            icon='INFO',
+        )
+
+    controls = library.row(align=True)
+    play = controls.row(align=True)
+    play.enabled = selected_action is not None
+    play.operator(
+        "daf.animation_library_play",
+        text="PLAY",
+        icon='PLAY',
+    )
+    edit = controls.row(align=True)
+    edit.enabled = (
+        selected_action is not None
+        and (selected_is_draft or not editing)
+    )
+    edit.operator(
+        "daf.animation_library_edit",
+        text="EDIT",
+        icon='GREASEPENCIL',
+    )
+    save = controls.row(align=True)
+    save.enabled = (
+        selected_is_draft
+        or (editing and selected_is_edit_source)
+    )
+    save.operator(
+        (
+            "daf.animation_library_finalize_draft"
+            if selected_is_draft
+            else "daf.animation_library_save"
+        ),
+        text="SAVE",
+        icon='FILE_TICK',
+    )
+    delete = controls.row(align=True)
+    delete.enabled = selected_action is not None
+    delete.operator(
+        "daf.animation_library_delete",
+        text="DELETE",
+        icon='TRASH',
+    )
+
+    if editing:
+        edit_row = library.row(align=True)
+        edit_row.alert = True
+        edit_row.label(
+            text=(
+                "EDIT DRAFT · "
+                + str(settings.animation_library_edit_source)
+            ),
+            icon='GREASEPENCIL',
+        )
+        edit_row.operator(
+            "daf.animation_library_cancel_edit",
+            text="CANCEL",
+            icon='LOOP_BACK',
+        )
+        library.label(
+            text="All draft sliders below remain available; SAVE overwrites the original.",
+            icon='INFO',
+        )
+    elif selected_is_draft:
+        library.label(
+            text="CURRENT DRAFT · EDIT keeps sliders live; SAVE creates the finalized animation.",
+            icon='GREASEPENCIL',
+        )
+
+    transfer = library.box()
+    transfer.label(text="PORTABLE ANIMATION CLIPS", icon='PACKAGE')
+    transfer.prop(settings, "animation_clip_directory")
+    export_row = transfer.row(align=True)
+    export_row.enabled = (
+        selected_action is not None
+        and not selected_is_draft
+    )
+    export_row.operator(
+        "daf.animation_library_export",
+        text="EXPORT SELECTED",
+        icon='EXPORT',
+    )
+    transfer.prop(settings, "animation_clip_import_path")
+    transfer.operator(
+        "daf.animation_library_import",
+        text="IMPORT TO CHARACTER",
+        icon='IMPORT',
+    )
+    transfer.label(
+        text="Missing bones/parents block import; rest/proportion differences warn.",
+        icon='INFO',
+    )
+    if settings.animation_library_status:
+        library.label(
+            text=str(settings.animation_library_status)[:100],
+            icon='INFO',
+        )
 
 
 def _draw_animation_setup(layout, context, settings):
@@ -715,6 +1339,7 @@ def _draw_animation_pack(layout, settings):
 
 
 def _draw_animation(layout, context, settings):
+    _draw_vip_animation_library(layout, context, settings)
     _draw_animation_setup(layout, context, settings)
     _draw_pose_polish(layout, settings)
     _draw_walk_animation(layout, settings)

@@ -1,6 +1,6 @@
 # Core and compound trauma export contract
 
-Forge 3.19 supports explicit single-mesh core regions and synchronized compound
+Forge 3.20 supports explicit single-mesh core regions and synchronized compound
 trauma events while preserving the paired-segment contract. glTF morph targets
 always remain owned by an individual mesh or primitive; Forge never represents
 a compound event as one literal cross-object shape key.
@@ -38,6 +38,17 @@ For a linked generated seam, Forge evaluates the same world-space field against 
 
 Forge does not weld, merge, add, or delete source/generated vertices. Source Damage Readiness rules and `NOT READY` repair behavior are unchanged.
 
+## Progressive Damage Sites
+
+`deformationAuthoring.progressiveDamageSites[]` is additive to all existing
+single-key and compound records. Each enabled site maps stable Damage Key IDs
+to explicit `LIGHT`, `MEDIUM`, and `HEAVY` stages without parsing key names.
+Every stage remains a complete mesh-local result relative to Basis. Structural
+activation is adjacent replacement crossfading, while detailed stage gore uses
+midpoint replacement. A Progressive Damage Site does not replace or reinterpret
+a compound event, and it does not add runtime hit, energy, death, detachment, or
+persistence logic. See `PROGRESSIVE_DAMAGE_SITE_CONTRACT.md`.
+
 ## Gore nodes
 
 `generatedGoreMeshes[]` is the flat runtime map. A single-mode recipe produces
@@ -46,8 +57,9 @@ one owner for each required `CORE`, `ATTACHED`, or `DETACHED` role. A
 for every required role. Each record exposes `component`,
 `parentRecipeDigest`, its component recipe/generation/geometry digests, and the
 shared activation mapping. Recipe-v6 raised components may also contain a
-closed lobulated nucleus in the same node; its surface controls, material role,
-and nucleus triangle count remain part of that component's recipe and mesh
+cluster of closed lobulated nuclei distributed across the deepest-response
+third in the same node; its surface controls, material role, nucleus count, and
+nucleus triangle count remain part of that component's recipe and mesh
 metadata. Compound participants derive deterministic,
 coordinated, non-identical seeds from event seed + region ID + mesh identity.
 Every node is ordinary exportable mesh geometry with glTF-safe Principled

@@ -17,6 +17,11 @@ the focused services under `deformation/`.
 
 Forge 3.19 adds:
 
+- `dreadstone.animation_clip.v1`, a native Action `.blend` package with a JSON
+  manifest, required-bone/hierarchy validation, non-blocking rest/proportion
+  warnings, and explicit per-character ownership on import;
+- a VIP saved-Action edit transaction that works on a draft copy and reconnects
+  active/NLA users only when the artist confirms overwrite;
 - per-key `previewEnabled` with simultaneous multi-key presentation;
 - `activeStampId` and `stampMode = ALTERNATIVES` for one previewed child Stamp
   per new Damage Key;
@@ -24,7 +29,8 @@ Forge 3.19 adds:
 - `HYBRID_ADDITIVE`, expanded to independently generated raised and inlay
   components;
 - recipe-v6 `goreSurfaceControl` plus a deterministic, closed, budget-aware
-  lobulated nucleus inside the raised component;
+  cluster of varied lobulated nuclei across the deepest-response third inside
+  the raised component;
 - one master-randomize transaction and one managed preview request;
 - a cached, disk-free panel draw path for Blueprint inventory.
 
@@ -62,7 +68,8 @@ vertices, one face, and one connected face patch. Its forced empty-selection
 failure must leave neither persisted nor cached phantom key/Stamp state. Its
 final VIP save must also retain exactly four paired hybrid nodes: attached and
 detached `RAISED` plus attached and detached `INLAY`. Both raised nodes must
-report a nonzero nucleus triangle count, retain surface-mass metadata, use the
+report multiple nuclei and a nonzero nucleus triangle count, retain
+surface-mass metadata, use the
 crushed-tissue material role, and pass closed-manifold validation. The same acceptance
 changes the Gore macros without saving and requires FAST to install the current
 stain mask, BALANCED to build four preview-only hybrid components, and the
@@ -70,6 +77,18 @@ committed meshes to remain hidden while the unsaved preview is active. It also
 lowers an existing key-level world-displacement cap below its historical Stamp
 cap and requires the rebuilt coordinates to be projected to the new limit
 before focused validation.
+
+Run the saved-animation lifecycle regression:
+
+```text
+blender --background --factory-startup --python tests/blender_animation_library_acceptance.py
+```
+
+It must finalize a current walk draft, assign the exact playback range, edit on
+a safe copy, overwrite under the original Action name/clip identity, reconnect
+an NLA strip, export and import a native clip on a proportionally different
+compatible rig, reject a missing-bone target, and delete without leaking Action
+datablocks.
 
 The Blender-free cavity suite exercises all six Gore identities, each macro at
 0/25/50/75/100, and the exact reported head-macro regression. Every generated
@@ -86,7 +105,8 @@ Use an artist-prepared source and run one bounded acceptance pass:
 4. Exercise every Impact/additive Gore/cohesive Surface Gore macro endpoint and
    confirm it produces a meaningful numeric/geometry response without
    exceeding bounds. In particular, high Surface Mass must increase connected
-   face retention and nonzero Nucleus must create one closed lobulated mass.
+   face retention and nonzero Nucleus must create multiple closed, varied
+   lobulated masses across the deepest-response third.
 5. Generate a hybrid recipe at raised 1.0 + inlay 1.0 and require both
    component nodes per role, distinct IDs/digests, valid materials, manifold
    shell/nucleus geometry, and inactive export defaults.
@@ -102,7 +122,7 @@ should be performed only when requested.
 ## Release archive
 
 `python scripts/build_release.py` validates first and writes
-`dist/Dreadstone_Animation_Forge_v3_19_0.zip`. Every package Python file is
+`dist/Dreadstone_Animation_Forge_v3_20_0.zip`. Every package Python file is
 discovered recursively, so new service/operator modules must appear in the
 archive automatically. `dist/`, bytecode, caches, Blender backups, and
 temporary extraction directories are generated artifacts and are not
