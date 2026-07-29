@@ -1,6 +1,6 @@
 # Dreadstone Animation Forge
 
-Dreadstone Animation Forge `3.20.0` is a proprietary Blender add-on for
+Dreadstone Animation Forge `3.20.1` is a proprietary Blender add-on for
 animation drafting and compatibility-preserving damage authoring. The supported
 release runtime is Blender `5.1.2`.
 
@@ -22,7 +22,7 @@ humanoid after bone/hierarchy compatibility checks.
 
 ## Install and open
 
-1. Download `Dreadstone_Animation_Forge_v3_20_0.zip`.
+1. Download `Dreadstone_Animation_Forge_v3_20_1.zip`.
 2. In Blender choose **Edit > Preferences > Add-ons > Install from Disk**.
 3. Select the ZIP without extracting it and enable the add-on.
 4. In the 3D Viewport press `N`, open **Dreadstone**, then choose

@@ -35,13 +35,13 @@ ALL_MODULE_PATHS = tuple(sorted(
     if "__pycache__" not in path.parts
 ))
 
-EXPECTED_VERSION = (3, 20, 0)
+EXPECTED_VERSION = (3, 20, 1)
 EXPECTED_READINESS_BUILD = "2026-07-18.source-contract.1"
 EXPECTED_AUTHORING_BUILD = "2026-07-18.source-contract.1"
 EXPECTED_DEFORMATION_BUILD = "2026-07-28.progressive-damage-sites.1"
 
 REQUIRED_GUIDE_HEADINGS = (
-    "## 1. Install Dreadstone Animation Forge 3.20.0",
+    "## 1. Install Dreadstone Animation Forge 3.20.1",
     "## 2. Open the Dreadstone panel",
     "## 3. Import and prepare a source GLB",
     "## 4. Use the VIP Damage workflow",
@@ -260,7 +260,7 @@ REQUIRED_OPERATORS = {
 REQUIRED_UI_TEXT = {
     "Source Damage Readiness",
     "Damage Segment & Stump Authoring v3.9",
-    "Trauma Field Authoring v3.20.0",
+    "Trauma Field Authoring v3.20.1",
     "VIP DAMAGE WORKFLOW",
     "VIP ANIMATION LIBRARY",
     "PORTABLE ANIMATION CLIPS",
@@ -455,7 +455,7 @@ def check_extension_manifest() -> None:
         (
             'schema_version = "1.0.0"',
             'id = "dreadstone_animation_forge"',
-            'version = "3.20.0"',
+            'version = "3.20.1"',
             'name = "Dreadstone Animation Forge"',
             'type = "add-on"',
             'blender_version_min = "4.2.0"',
@@ -922,14 +922,14 @@ def check_repository_hygiene() -> None:
 
 
 def main() -> int:
-    print("DREADSTONE ANIMATION FORGE v3.20.0 STATIC VALIDATION")
+    print("DREADSTONE ANIMATION FORGE v3.20.1 STATIC VALIDATION")
     print("Blender is not imported; runtime acceptance remains separate.")
 
     sources: dict[str, str] = {}
     trees: dict[str, ast.Module] = {}
     checks: list[tuple[str, Callable[[], None]]] = [
         ("all contract package modules exist", check_module_files),
-        ("Blender extension manifest exists and matches v3.20.0", check_extension_manifest),
+        ("Blender extension manifest exists and matches v3.20.1", check_extension_manifest),
         ("all Python modules parse with ast.parse", lambda: check_parse(sources)),
         ("all Python modules compile with py_compile", check_compile),
         ("add-on/deformation version and build contracts", lambda: check_versions(trees)),

@@ -577,7 +577,7 @@ def main():
 
     report = {
         "status": "PASS",
-        "forgeVersion": "3.20.0",
+        "forgeVersion": "3.20.1",
         "blenderVersion": bpy.app.version_string,
         "identityCount": len(IDENTITIES),
         "macroMatrixGenerationCount": matrix_count,

@@ -1,6 +1,6 @@
 # Changelog
 
-## 3.20.0
+## 3.20.1
 
 - Removed the Safe Resize wrapper prerequisite from Approved Animation Pack
   export. A selected native-sized armature now discovers sibling skinned meshes
@@ -13,6 +13,9 @@
 - Clarified that saved/approved Actions remain editable in the authoring
   `.blend`; force sampling bakes the delivery GLB and never requires reimporting
   that GLB before continuing gore or animation work.
+
+## 3.20.0
+
 - Added first-class, versioned Progressive Damage Sites with stable site,
   stage, and Damage Key IDs persisted in the deformation registry.
 - Added independently authored Light, Medium, and Heavy stage assignment,
