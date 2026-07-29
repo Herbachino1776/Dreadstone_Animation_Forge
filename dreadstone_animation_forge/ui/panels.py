@@ -1170,8 +1170,9 @@ def _draw_pose_polish(layout, settings):
     )
     if settings.ui_pose_left_open:
         for name in (
-            "left_upper_arm_forward", "left_upper_arm_roll", "left_forearm_twist",
-            "left_wrist_flex", "left_wrist_side", "left_wrist_roll",
+            "left_upper_arm_forward", "left_upper_arm_roll", "left_elbow_flex",
+            "left_forearm_twist", "left_wrist_flex", "left_wrist_side",
+            "left_wrist_roll",
         ):
             left.prop(settings, name, slider=True)
     right = pose.box()
@@ -1184,8 +1185,9 @@ def _draw_pose_polish(layout, settings):
     )
     if settings.ui_pose_right_open:
         for name in (
-            "right_upper_arm_forward", "right_upper_arm_roll", "right_forearm_twist",
-            "right_wrist_flex", "right_wrist_side", "right_wrist_roll",
+            "right_upper_arm_forward", "right_upper_arm_roll", "right_elbow_flex",
+            "right_forearm_twist", "right_wrist_flex", "right_wrist_side",
+            "right_wrist_roll",
         ):
             right.prop(settings, name, slider=True)
     pose.operator("daf.reset_pose_polish", text="Zero Arm & Hand Polish", icon='LOOP_BACK')
@@ -1291,9 +1293,26 @@ def _draw_mace_guard_animation(layout, settings):
     )
     if guard is None:
         return
-    guard.prop(settings, "mace_guard_raise_seconds")
-    guard.prop(settings, "mace_guard_hold_seconds")
-    guard.prop(settings, "mace_guard_recovery_seconds")
+    guard.prop(settings, "mace_guard_style")
+    timing = guard.box()
+    timing.label(text="Timing", icon='TIME')
+    timing.prop(settings, "mace_guard_raise_seconds")
+    timing.prop(settings, "mace_guard_hold_seconds")
+    timing.prop(settings, "mace_guard_recovery_seconds")
+    pose = guard.box()
+    pose.label(text="Head Coverage & Cower", icon='POSE_HLT')
+    for name in (
+        "mace_guard_arm_cover",
+        "mace_guard_elbow_flex",
+        "mace_guard_arm_wrap",
+        "mace_guard_shoulder_hunch",
+        "mace_guard_torso_curl",
+        "mace_guard_head_tuck",
+        "mace_guard_crouch",
+        "mace_guard_asymmetry",
+        "mace_guard_end_release",
+    ):
+        pose.prop(settings, name, slider=True)
     guard.operator(
         "daf.generate_mace_head_guards",
         text="Generate / Refresh Three Mace Head-Guard Drafts",
@@ -1310,7 +1329,8 @@ def _draw_mace_guard_animation(layout, settings):
     ):
         approve = guard.operator("daf.approve_draft", text=label, icon='FAKE_USER_ON')
         approve.kind = kind
-    guard.label(text="Brace_Start / Guard_Active / Brace_End markers are preserved", icon='MARKER_HLT')
+    guard.label(text="Recognition / Covering / Guard_Active / Hold markers are preserved", icon='MARKER_HLT')
+    guard.label(text="Forearm coverage is guidance, never an export blocker", icon='INFO')
     guard.label(text="Shape-key damage preview remains independent", icon='INFO')
 
 

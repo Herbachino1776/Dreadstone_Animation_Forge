@@ -1,5 +1,23 @@
 # Changelog
 
+## 4.0.0
+
+- Added independent left/right **Elbow Flex** controls inside Arm & Hand Pose
+  Polish. They remain rotation-only and overlay newly generated animation
+  drafts without resizing or reweighting the character.
+- Reworked mace head-guard generation around a longer recognition, covering,
+  protected hold, and interruptible release. New Cowering, Defensive, and
+  Zombie-Insect Attack styles preserve the useful legacy shape while exposing
+  arm cover, elbow, forearm wrap, hunch, torso curl, head tuck, crouch,
+  asymmetry, and release controls.
+- Replaced the scale-dependent forearm-height failure with world-space
+  coverage guidance. A distant forearm can warn the artist but never blocks
+  approval or Approved Animation Pack export.
+- Added explicit legacy animation-clip provenance and acceptance coverage.
+  3.20.1 v1 clips import with Action curves, keyframes, names, and their
+  original settings payload unchanged; new 4.0 controls are only used when a
+  new draft is deliberately generated.
+
 ## 3.20.1
 
 - Removed the Safe Resize wrapper prerequisite from Approved Animation Pack

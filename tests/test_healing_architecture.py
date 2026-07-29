@@ -210,11 +210,13 @@ class HealingArchitectureTests(unittest.TestCase):
         panels = (PACKAGE / "ui" / "panels.py").read_text(encoding="utf-8")
         for contract in (
             '"daf.adopt_imported_pack"',
-            '"ui_pose_open"', '"left_upper_arm_forward"', '"right_wrist_roll"',
+            '"ui_pose_open"', '"left_upper_arm_forward"', '"left_elbow_flex"',
+            '"right_elbow_flex"', '"right_wrist_roll"',
             '"ui_walk_open"', '"stride"', '"walk_asymmetry"', '"daf.walk"',
             '"ui_death_open"', '"death_curl_strength"', '"daf.collapse"',
             '"ui_hurt_open"', '"hurt_hand_reach"', '"daf.hurt_left"', '"daf.hurt_right"',
             '"ui_mace_guard_open"', '"mace_guard_raise_seconds"',
+            '"mace_guard_style"', '"mace_guard_arm_cover"',
             '"daf.generate_mace_head_guards"', '"daf.validate_mace_head_guards"',
             '"daf.approve_draft"', '"daf.approve_active_legacy"',
         ):

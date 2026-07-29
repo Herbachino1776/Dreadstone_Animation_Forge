@@ -1,14 +1,14 @@
-# Dreadstone Animation Forge 3.20.1 — User Workflow Guide
+# Dreadstone Animation Forge 4.0.0 — User Workflow Guide
 
-- Release archive: `Dreadstone_Animation_Forge_v3_20_1.zip`
+- Release archive: `Dreadstone_Animation_Forge_v4_0_0.zip`
 - Supported release runtime: Blender 5.1.2
 - Damage authoring model: Damage Keys → child Stamp alternatives → strong macros
 - Reuse model: topology-independent Damage Blueprints
 
-## 1. Install Dreadstone Animation Forge 3.20.1
+## 1. Install Dreadstone Animation Forge 4.0.0
 
 In Blender choose **Edit > Preferences > Add-ons > Install from Disk**, select
-`Dreadstone_Animation_Forge_v3_20_1.zip` without extracting it, and enable
+`Dreadstone_Animation_Forge_v4_0_0.zip` without extracting it, and enable
 **Dreadstone Animation Forge**.
 
 ## 2. Open the Dreadstone panel

@@ -13,7 +13,7 @@ import bpy
 
 
 ANIMATION_CLIP_SCHEMA = "dreadstone.animation_clip.v1"
-ANIMATION_LIBRARY_BUILD_ID = "2026-07-28.vip-animation-library.1"
+ANIMATION_LIBRARY_BUILD_ID = "2026-07-29.animation-forge-4.0.0"
 
 CLIP_ID_PROPERTY = "dsb_animation_clip_id"
 CLIP_SCHEMA_PROPERTY = "dsb_animation_clip_schema"
@@ -23,6 +23,9 @@ CLIP_REQUIRED_BONES_PROPERTY = "dsb_animation_required_bones_json"
 CLIP_RIG_PROFILE_PROPERTY = "dsb_animation_rig_profile_json"
 CLIP_SETTINGS_PROPERTY = "dsb_animation_settings_json"
 CLIP_EXPORT_NAME_PROPERTY = "dsb_animation_export_name"
+CLIP_LEGACY_PROPERTY = "dsb_imported_legacy_clip"
+CLIP_SOURCE_SCHEMA_PROPERTY = "dsb_imported_source_schema"
+CLIP_SOURCE_BUILD_PROPERTY = "dsb_imported_source_build"
 
 DRAFT_ACTION_NAMES = {
     "WALK": "DSB_DRAFT_Walk",
@@ -41,12 +44,14 @@ COMMON_SETTING_FIELDS = (
     "pose_polish_enabled",
     "left_upper_arm_forward",
     "left_upper_arm_roll",
+    "left_elbow_flex",
     "left_forearm_twist",
     "left_wrist_flex",
     "left_wrist_side",
     "left_wrist_roll",
     "right_upper_arm_forward",
     "right_upper_arm_roll",
+    "right_elbow_flex",
     "right_forearm_twist",
     "right_wrist_flex",
     "right_wrist_side",
@@ -119,16 +124,46 @@ KIND_SETTING_FIELDS = {
         "mace_guard_raise_seconds",
         "mace_guard_hold_seconds",
         "mace_guard_recovery_seconds",
+        "mace_guard_style",
+        "mace_guard_arm_cover",
+        "mace_guard_elbow_flex",
+        "mace_guard_arm_wrap",
+        "mace_guard_shoulder_hunch",
+        "mace_guard_torso_curl",
+        "mace_guard_head_tuck",
+        "mace_guard_crouch",
+        "mace_guard_asymmetry",
+        "mace_guard_end_release",
     ),
     "MACE_GUARD_LEFT_ARM": (
         "mace_guard_raise_seconds",
         "mace_guard_hold_seconds",
         "mace_guard_recovery_seconds",
+        "mace_guard_style",
+        "mace_guard_arm_cover",
+        "mace_guard_elbow_flex",
+        "mace_guard_arm_wrap",
+        "mace_guard_shoulder_hunch",
+        "mace_guard_torso_curl",
+        "mace_guard_head_tuck",
+        "mace_guard_crouch",
+        "mace_guard_asymmetry",
+        "mace_guard_end_release",
     ),
     "MACE_GUARD_RIGHT_ARM": (
         "mace_guard_raise_seconds",
         "mace_guard_hold_seconds",
         "mace_guard_recovery_seconds",
+        "mace_guard_style",
+        "mace_guard_arm_cover",
+        "mace_guard_elbow_flex",
+        "mace_guard_arm_wrap",
+        "mace_guard_shoulder_hunch",
+        "mace_guard_torso_curl",
+        "mace_guard_head_tuck",
+        "mace_guard_crouch",
+        "mace_guard_asymmetry",
+        "mace_guard_end_release",
     ),
 }
 
@@ -903,6 +938,26 @@ def import_action_clip(context, armature, filepath):
         for action in data_to.actions
         if action is not None
     ]
+    source_metadata = [
+        {
+            "schema": str(action.get(CLIP_SCHEMA_PROPERTY, "")),
+            "build": str(action.get(CLIP_BUILD_PROPERTY, "")),
+        }
+        for action in loaded
+    ]
+    unsupported_schemas = sorted({
+        record["schema"]
+        for record in source_metadata
+        if record["schema"] not in {"", ANIMATION_CLIP_SCHEMA}
+    })
+    if unsupported_schemas:
+        for action in loaded:
+            _remove_action(action, unlink_nla=True)
+        raise RuntimeError(
+            "Animation clip uses an unsupported schema: "
+            + ", ".join(unsupported_schemas)
+            + "."
+        )
     reports = [
         compatibility_report(action, armature)
         for action in loaded
@@ -917,13 +972,23 @@ def import_action_clip(context, armature, filepath):
             _remove_action(action, unlink_nla=True)
         raise RuntimeError("Animation clip is incompatible: " + "; ".join(failures))
     imported = []
-    for action, report in zip(loaded, reports):
+    legacy_count = 0
+    for action, report, source in zip(loaded, reports, source_metadata):
         desired = str(
             action.get(CLIP_EXPORT_NAME_PROPERTY, action.name)
         )
         if desired in existing_names:
             desired = _unique_action_name(desired)
         action.name = desired
+        is_legacy = (
+            source["schema"] != ANIMATION_CLIP_SCHEMA
+            or source["build"] != ANIMATION_LIBRARY_BUILD_ID
+        )
+        if is_legacy:
+            legacy_count += 1
+        action[CLIP_LEGACY_PROPERTY] = is_legacy
+        action[CLIP_SOURCE_SCHEMA_PROPERTY] = source["schema"] or "PRE_SCHEMA"
+        action[CLIP_SOURCE_BUILD_PROPERTY] = source["build"] or "PRE_BUILD"
         action[CLIP_OWNER_PROPERTY] = armature.name
         action[CLIP_SCHEMA_PROPERTY] = ANIMATION_CLIP_SCHEMA
         action[CLIP_BUILD_PROPERTY] = ANIMATION_LIBRARY_BUILD_ID
@@ -936,6 +1001,9 @@ def import_action_clip(context, armature, filepath):
         imported.append({
             "action": action,
             "compatibility": report,
+            "legacy": is_legacy,
+            "sourceSchema": source["schema"],
+            "sourceBuild": source["build"],
         })
         existing_names.add(action.name)
     first = imported[0]["action"]
@@ -949,6 +1017,7 @@ def import_action_clip(context, armature, filepath):
     )
     settings.animation_library_status = (
         f"IMPORTED — {len(imported)} clip(s)"
+        + (f" · {legacy_count} legacy clip(s) preserved" if legacy_count else "")
         + (f" · {warning_count} compatibility warning(s)" if warning_count else "")
     )
     return {
@@ -956,6 +1025,15 @@ def import_action_clip(context, armature, filepath):
         "reports": [
             record["compatibility"]
             for record in imported
+        ],
+        "legacyImports": [
+            {
+                "action": record["action"].name,
+                "sourceSchema": record["sourceSchema"],
+                "sourceBuild": record["sourceBuild"],
+            }
+            for record in imported
+            if record["legacy"]
         ],
     }
 

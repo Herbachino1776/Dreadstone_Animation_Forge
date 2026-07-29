@@ -488,7 +488,31 @@ class BlenderIntegrationSourceTests(unittest.TestCase):
         self.assertIn("context.scene.render.fps_base", self.addon)
 
     def test_guard_actions_have_required_markers(self):
-        self.assertIn('for marker_name in ("Brace_Start", "Guard_Active", "Brace_End")', self.addon)
+        for marker_name in (
+            '"Brace_Start"',
+            '"Recognition"',
+            '"Covering"',
+            '"Guard_Active"',
+            '"Guard_Hold_End"',
+            '"Brace_End"',
+        ):
+            self.assertIn(marker_name, self.addon)
+
+    def test_guard_has_long_timing_and_pose_shaping_controls(self):
+        for property_name in (
+            "mace_guard_style",
+            "mace_guard_arm_cover",
+            "mace_guard_elbow_flex",
+            "mace_guard_arm_wrap",
+            "mace_guard_shoulder_hunch",
+            "mace_guard_torso_curl",
+            "mace_guard_head_tuck",
+            "mace_guard_crouch",
+            "mace_guard_asymmetry",
+            "mace_guard_end_release",
+        ):
+            self.assertIn(property_name, self.addon)
+        self.assertIn('max=6.00', self.addon)
 
     def test_guard_keying_avoids_bone_scale_channels(self):
         key_pose = self.addon[self.addon.index("def key_pose("):self.addon.index("DRAFT_ACTION_NAMES =")]
@@ -506,8 +530,10 @@ class BlenderIntegrationSourceTests(unittest.TestCase):
         self.assertIn('backup.name = "__DSB_GUARD_BACKUP_" + draft_name', self.addon)
         self.assertIn("actions = generate_all_mace_guard_actions(context)", self.addon)
 
-    def test_guard_validation_checks_forearm_height(self):
-        self.assertIn("remains grossly below head height at Guard_Active", self.addon)
+    def test_guard_coverage_is_advisory_not_an_export_blocker(self):
+        self.assertIn("may not visually cover the head at Guard_Active", self.addon)
+        self.assertIn("warnings.append(", self.addon)
+        self.assertNotIn("remains grossly below head height at Guard_Active", self.addon)
 
     def test_guard_approval_metadata_is_exported(self):
         self.assertIn('"maceHeadGuardActions": brace_actions', self.deformation)

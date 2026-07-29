@@ -29,6 +29,24 @@ def require(condition, message):
         raise RuntimeError(message)
 
 
+def action_fingerprint(action):
+    return [
+        (
+            curve.data_path,
+            int(curve.array_index),
+            [
+                (
+                    round(float(point.co[0]), 7),
+                    round(float(point.co[1]), 7),
+                    str(point.interpolation),
+                )
+                for point in curve.keyframe_points
+            ],
+        )
+        for curve in animation_library.iter_action_fcurves(action)
+    ]
+
+
 def make_armature(name, *, include_spine=True, length_scale=1.0):
     if bpy.context.mode != "OBJECT":
         bpy.ops.object.mode_set(mode="OBJECT")
@@ -216,6 +234,77 @@ def main():
             "Imported clip was not listed for the target character.",
         )
 
+        # A 3.20.1-style animation clip uses the same v1 clip schema but lacks
+        # all 4.0 pose-shaping settings. Import must preserve its Action curves
+        # and settings payload exactly; the new defaults apply only if a user
+        # deliberately regenerates a draft.
+        legacy_action = overwritten.copy()
+        legacy_action.name = "Zombie_Attack_3_20_1"
+        legacy_action[animation_library.CLIP_EXPORT_NAME_PROPERTY] = legacy_action.name
+        legacy_action[animation_library.CLIP_SCHEMA_PROPERTY] = (
+            animation_library.ANIMATION_CLIP_SCHEMA
+        )
+        legacy_action[animation_library.CLIP_BUILD_PROPERTY] = (
+            "2026-07-28.vip-animation-library.1"
+        )
+        legacy_settings = json.dumps({
+            "facing": "POS_Y",
+            "mace_guard_hold_seconds": 0.15,
+            "mace_guard_raise_seconds": 0.34,
+            "mace_guard_recovery_seconds": 0.18,
+        }, sort_keys=True)
+        legacy_action[animation_library.CLIP_SETTINGS_PROPERTY] = legacy_settings
+        legacy_fingerprint = action_fingerprint(legacy_action)
+        legacy_path = Path(temp_directory) / "Zombie_Attack_3_20_1.blend"
+        bpy.data.libraries.write(
+            str(legacy_path),
+            {legacy_action},
+            path_remap="NONE",
+            fake_user=True,
+            compress=True,
+        )
+        bpy.data.actions.remove(legacy_action)
+        legacy_import = animation_library.import_action_clip(
+            context,
+            target_armature,
+            str(legacy_path),
+        )
+        require(
+            len(legacy_import["legacyImports"]) == 1,
+            "The 3.20.1 zombie attack was not identified as a legacy clip.",
+        )
+        imported_legacy_action = bpy.data.actions.get(
+            legacy_import["actions"][0]
+        )
+        require(
+            imported_legacy_action is not None,
+            "The legacy zombie attack Action was not imported.",
+        )
+        require(
+            action_fingerprint(imported_legacy_action) == legacy_fingerprint,
+            "Legacy import changed zombie attack keyframes or curve identity.",
+        )
+        require(
+            str(imported_legacy_action[animation_library.CLIP_SETTINGS_PROPERTY])
+            == legacy_settings,
+            "Legacy import changed the original 3.20.1 settings payload.",
+        )
+        require(
+            bool(imported_legacy_action[animation_library.CLIP_LEGACY_PROPERTY])
+            and str(
+                imported_legacy_action[
+                    animation_library.CLIP_SOURCE_BUILD_PROPERTY
+                ]
+            )
+            == "2026-07-28.vip-animation-library.1",
+            "Legacy import did not retain its 3.20.1 source-build provenance.",
+        )
+        require(
+            "mace_guard_style" not in legacy_settings
+            and "left_elbow_flex" not in legacy_settings,
+            "Legacy fixture unexpectedly contains 4.0-only settings.",
+        )
+
         incompatible_armature = make_armature(
             "VIP_Incompatible_Rig",
             include_spine=False,
@@ -249,6 +338,11 @@ def main():
             bpy.data.actions.get(deleted["action"]) is None,
             "Delete did not remove the imported animation.",
         )
+        animation_library.delete_action(
+            context,
+            target_armature,
+            imported_legacy_action,
+        )
 
     for operator_id in (
         "animation_library_select",
@@ -276,6 +370,7 @@ def main():
             len(record["warnings"])
             for record in imported["reports"]
         ),
+        "legacyZombieAttackPreserved": True,
         "missingBoneRejected": True,
         "saveResult": saved_result,
     }

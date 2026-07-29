@@ -1,7 +1,7 @@
 bl_info = {
     "name": "Dreadstone Animation Forge",
     "author": "Dreadstone Black",
-    "version": (3, 20, 1),
+    "version": (4, 0, 0),
     "blender": (3, 6, 0),
     "location": "3D Viewport > Sidebar > Dreadstone",
     "description": "Animation authoring, protected damage assets, and registered-region trauma-field shape-key authoring.",
@@ -453,6 +453,25 @@ def apply_arm_hand_pose_polish(arm, mapping, settings, side_axis):
         "upper_arm_r",
         (0.0, 1.0, 0.0),
         settings.right_upper_arm_roll
+    )
+
+    # Independent elbow flex is applied around the same character-space axis
+    # used by generated limb bends. This keeps the control useful on rigs whose
+    # local forearm axes differ while still respecting Invert Elbows.
+    elbow_sign = -1.0 if settings.invert_elbows else 1.0
+    rotate(
+        arm,
+        mapping,
+        "lower_arm_l",
+        side_axis,
+        settings.left_elbow_flex * elbow_sign
+    )
+    rotate(
+        arm,
+        mapping,
+        "lower_arm_r",
+        side_axis,
+        settings.right_elbow_flex * elbow_sign
     )
     rotate_local(
         arm,
@@ -1176,6 +1195,13 @@ class DAFSettings(PropertyGroup):
         min=-90.0,
         max=90.0
     )
+    left_elbow_flex: FloatProperty(
+        name="Left Elbow Flex",
+        description="Add or remove left elbow bend after the generated pose",
+        default=0.0,
+        min=-90.0,
+        max=140.0
+    )
     left_forearm_twist: FloatProperty(
         name="Left Forearm Twist",
         default=0.0,
@@ -1212,6 +1238,13 @@ class DAFSettings(PropertyGroup):
         default=0.0,
         min=-90.0,
         max=90.0
+    )
+    right_elbow_flex: FloatProperty(
+        name="Right Elbow Flex",
+        description="Add or remove right elbow bend after the generated pose",
+        default=0.0,
+        min=-90.0,
+        max=140.0
     )
     right_forearm_twist: FloatProperty(
         name="Right Forearm Twist",
@@ -1381,15 +1414,112 @@ class DAFSettings(PropertyGroup):
         max=1
     )
 
-    # Mace head-guard draft timing. Scene FPS determines actual frames.
+    # Mace head-guard draft timing and pose shaping. Scene FPS determines the
+    # actual frames. The wide timing ranges support a readable fear/cower hold
+    # as well as the original short, deformed zombie-attack motion.
     mace_guard_raise_seconds: FloatProperty(
-        name="Arm Raise", default=0.34, min=0.25, max=0.40, unit='TIME'
+        name="Recognition + Arm Raise",
+        description="Time spent recognizing the threat and bringing the arms over the head",
+        default=0.65,
+        min=0.15,
+        max=2.50,
+        unit='TIME'
     )
     mace_guard_hold_seconds: FloatProperty(
-        name="Guard Hold", default=0.15, min=0.10, max=0.20, unit='TIME'
+        name="Protected Hold",
+        description="How long the forearms remain around the head",
+        default=1.20,
+        min=0.10,
+        max=6.00,
+        unit='TIME'
     )
     mace_guard_recovery_seconds: FloatProperty(
-        name="Interruptible Recovery", default=0.18, min=0.05, max=0.50, unit='TIME'
+        name="Interruptible Recovery",
+        default=0.60,
+        min=0.05,
+        max=3.00,
+        unit='TIME'
+    )
+    mace_guard_style: EnumProperty(
+        name="Motion Style",
+        description="Choose a natural protective cower, a compact guard, or the original twisted attack-like pose",
+        items=[
+            (
+                'COWERING',
+                "Cowering in Fear",
+                "Longer protective arc, compressed torso, tucked head, and forearms wrapped around the crown",
+            ),
+            (
+                'DEFENSIVE',
+                "Defensive Head Guard",
+                "Balanced upright guard with readable head coverage",
+            ),
+            (
+                'ZOMBIE_ATTACK',
+                "Zombie-Insect Attack (Legacy Shape)",
+                "Preserve the original deformed, attack-like pose as a reusable generator style",
+            ),
+        ],
+        default='COWERING',
+    )
+    mace_guard_arm_cover: FloatProperty(
+        name="Arm Cover Height",
+        description="How high the upper arms lift to place the forearms around the head",
+        default=1.0,
+        min=0.35,
+        max=1.65
+    )
+    mace_guard_elbow_flex: FloatProperty(
+        name="Guard Elbow Flex",
+        description="Elbow bend used to form the protective forearm arc",
+        default=124.0,
+        min=55.0,
+        max=155.0
+    )
+    mace_guard_arm_wrap: FloatProperty(
+        name="Forearm Wrap",
+        description="How strongly the arms fold inward across the temples and crown",
+        default=1.0,
+        min=0.0,
+        max=1.80
+    )
+    mace_guard_shoulder_hunch: FloatProperty(
+        name="Shoulder Hunch",
+        default=1.0,
+        min=0.0,
+        max=2.00
+    )
+    mace_guard_torso_curl: FloatProperty(
+        name="Torso Curl",
+        default=1.0,
+        min=0.0,
+        max=2.00
+    )
+    mace_guard_head_tuck: FloatProperty(
+        name="Head Tuck",
+        default=1.0,
+        min=0.0,
+        max=2.00
+    )
+    mace_guard_crouch: FloatProperty(
+        name="Crouch / Compression",
+        default=1.0,
+        min=0.0,
+        max=2.00
+    )
+    mace_guard_asymmetry: FloatProperty(
+        name="Fear Asymmetry",
+        description="Offsets the right side for a less mirrored, more natural defensive pose",
+        default=0.10,
+        min=0.0,
+        max=0.65
+    )
+    mace_guard_end_release: FloatProperty(
+        name="Release by Final Frame",
+        description="1 returns fully toward neutral; 0 remains fully covered",
+        default=0.45,
+        min=0.0,
+        max=1.0
     )
     mace_guard_preview_variant: EnumProperty(
         name="Preview Variant",
@@ -1474,7 +1604,7 @@ class DAFSettings(PropertyGroup):
     last_damage_manifest_path: StringProperty(default="", options={'HIDDEN'})
     last_damage_validation_path: StringProperty(default="", options={'HIDDEN'})
 
-    # Trauma Field Authoring v3.20.1.
+    # Trauma Field Authoring v4.0.0.
     deformation_region: EnumProperty(
         name="Active Region",
         items=_deformation_region_items,
@@ -2619,12 +2749,14 @@ class DAF_OT_adopt_imported_pack(Operator):
 POSE_POLISH_PROPERTIES = (
     "left_upper_arm_forward",
     "left_upper_arm_roll",
+    "left_elbow_flex",
     "left_forearm_twist",
     "left_wrist_flex",
     "left_wrist_side",
     "left_wrist_roll",
     "right_upper_arm_forward",
     "right_upper_arm_roll",
+    "right_elbow_flex",
     "right_forearm_twist",
     "right_wrist_flex",
     "right_wrist_side",
@@ -3438,18 +3570,61 @@ MACE_GUARD_VARIANTS = {
     },
 }
 
+MACE_GUARD_STYLE_PROFILES = {
+    # The default 4.0 cower is informed by protective-motion reference:
+    # recognize, compress, lift the elbows, then wrap the forearms around the
+    # crown/temples for a readable hold.
+    "COWERING": {
+        "torsoCurl": 1.55,
+        "headTuck": 1.45,
+        "crouch": 1.35,
+        "shoulderHunch": 1.35,
+        "armCover": 1.18,
+        "armWrap": 1.18,
+        "elbowScale": 1.0,
+        "asymmetryScale": 1.0,
+        "releaseBias": 0.0,
+    },
+    "DEFENSIVE": {
+        "torsoCurl": 1.10,
+        "headTuck": 1.10,
+        "crouch": 0.85,
+        "shoulderHunch": 1.10,
+        "armCover": 1.08,
+        "armWrap": 1.05,
+        "elbowScale": 0.95,
+        "asymmetryScale": 0.75,
+        "releaseBias": 0.08,
+    },
+    # With untouched sliders this profile reproduces the 3.20.1 generator's
+    # twisted attack-like pose, including its 112-degree elbow and .42 end pose.
+    "ZOMBIE_ATTACK": {
+        "torsoCurl": 1.0,
+        "headTuck": 1.0,
+        "crouch": 1.0,
+        "shoulderHunch": 1.0,
+        "armCover": 1.0,
+        "armWrap": 1.0,
+        "elbowScale": 112.0 / 124.0,
+        "asymmetryScale": 0.60,
+        "releaseBias": 0.13,
+    },
+}
 
-def mace_guard_frame_schedule(fps, raise_seconds=0.34, hold_seconds=0.15, recovery_seconds=0.18):
-    """Build a scene-FPS-aware, short and interruptible brace schedule."""
+
+def mace_guard_frame_schedule(fps, raise_seconds=0.65, hold_seconds=1.20, recovery_seconds=0.60):
+    """Build a scene-FPS-aware brace with recognition, cover, hold, and release."""
     fps = max(float(fps), 0.001)
     start = 1
     guard = start + max(1, round(float(raise_seconds) * fps))
     hold_end = guard + max(1, round(float(hold_seconds) * fps))
     end = hold_end + max(1, round(float(recovery_seconds) * fps))
     recognition = start + max(1, round((guard - start) * 0.22))
+    covering = start + max(1, round((guard - start) * 0.64))
     return {
         "Brace_Start": start,
         "Recognition": recognition,
+        "Covering": covering,
         "Guard_Active": guard,
         "Guard_Hold_End": hold_end,
         "Brace_End": end,
@@ -3467,40 +3642,129 @@ def _set_action_marker(action, name, frame):
 def _apply_mace_guard_pose(arm, mapping, settings, variant, intensity):
     fwd, side, up = vectors(settings)
     elbow_sign = -1.0 if settings.invert_elbows else 1.0
+    profile = MACE_GUARD_STYLE_PROFILES.get(
+        settings.mace_guard_style,
+        MACE_GUARD_STYLE_PROFILES["COWERING"],
+    )
     left_scale = float(variant["leftScale"]) * intensity
     right_scale = float(variant["rightScale"]) * intensity
+    torso_curl = float(settings.mace_guard_torso_curl) * profile["torsoCurl"]
+    head_tuck = float(settings.mace_guard_head_tuck) * profile["headTuck"]
+    crouch = float(settings.mace_guard_crouch) * profile["crouch"]
+    shoulder_hunch = (
+        float(settings.mace_guard_shoulder_hunch) * profile["shoulderHunch"]
+    )
+    arm_cover = float(settings.mace_guard_arm_cover) * profile["armCover"]
+    arm_wrap = float(settings.mace_guard_arm_wrap) * profile["armWrap"]
+    elbow_flex = float(settings.mace_guard_elbow_flex) * profile["elbowScale"]
+    right_asymmetry = max(
+        0.25,
+        1.0
+        - float(settings.mace_guard_asymmetry) * profile["asymmetryScale"],
+    )
 
     # Instinctive compression: chin tuck, slight recoil, raised shoulders, and
     # softened knees. Only rotation/location channels are authored.
-    rotate(arm, mapping, "spine", side, -7.0 * intensity)
-    rotate(arm, mapping, "chest", side, -10.0 * intensity)
+    rotate(arm, mapping, "spine", side, -7.0 * torso_curl * intensity)
+    rotate(arm, mapping, "chest", side, -10.0 * torso_curl * intensity)
     rotate(arm, mapping, "chest", up, float(variant["torsoTurn"]) * intensity)
-    rotate(arm, mapping, "neck", side, 8.0 * intensity)
-    rotate(arm, mapping, "head", side, 17.0 * intensity)
+    rotate(arm, mapping, "neck", side, 8.0 * head_tuck * intensity)
+    rotate(arm, mapping, "head", side, 17.0 * head_tuck * intensity)
     rotate(arm, mapping, "head", up, -float(variant["torsoTurn"]) * 0.30 * intensity)
-    rotate(arm, mapping, "thigh_l", side, -5.0 * intensity)
-    rotate(arm, mapping, "thigh_r", side, -5.0 * intensity)
-    rotate(arm, mapping, "shin_l", side, 11.0 * intensity)
-    rotate(arm, mapping, "shin_r", side, 11.0 * intensity)
-    offset(arm, mapping, "hips", -up * (0.024 * intensity) - fwd * (0.012 * intensity))
+    rotate(arm, mapping, "thigh_l", side, -5.0 * crouch * intensity)
+    rotate(arm, mapping, "thigh_r", side, -5.0 * crouch * intensity)
+    rotate(arm, mapping, "shin_l", side, 11.0 * crouch * intensity)
+    rotate(arm, mapping, "shin_r", side, 11.0 * crouch * intensity)
+    offset(
+        arm,
+        mapping,
+        "hips",
+        -up * (0.024 * crouch * intensity)
+        - fwd * (0.012 * torso_curl * intensity),
+    )
 
     for suffix, scale, inward_sign, asymmetry in (
         ("l", left_scale, -1.0, 1.0),
-        ("r", right_scale, 1.0, 0.94),
+        ("r", right_scale, 1.0, right_asymmetry),
     ):
-        rotate(arm, mapping, f"shoulder_{suffix}", side, -16.0 * scale)
-        rotate(arm, mapping, f"upper_arm_{suffix}", side, -76.0 * scale * asymmetry)
-        rotate(arm, mapping, f"upper_arm_{suffix}", fwd, inward_sign * 38.0 * scale)
-        rotate(arm, mapping, f"upper_arm_{suffix}", up, -inward_sign * 8.0 * scale)
-        rotate(arm, mapping, f"lower_arm_{suffix}", side, 112.0 * scale * elbow_sign)
-        rotate(arm, mapping, f"lower_arm_{suffix}", fwd, -inward_sign * 11.0 * scale)
-        rotate_local(arm, mapping, f"lower_arm_{suffix}", (0.0, 1.0, 0.0), inward_sign * 18.0 * scale)
-        rotate_local(arm, mapping, f"hand_{suffix}", (1.0, 0.0, 0.0), -12.0 * scale)
-        rotate_local(arm, mapping, f"hand_{suffix}", (0.0, 0.0, 1.0), inward_sign * 8.0 * scale)
+        rotate(
+            arm,
+            mapping,
+            f"shoulder_{suffix}",
+            side,
+            -16.0 * shoulder_hunch * scale,
+        )
+        rotate(
+            arm,
+            mapping,
+            f"upper_arm_{suffix}",
+            side,
+            -76.0 * arm_cover * scale * asymmetry,
+        )
+        rotate(
+            arm,
+            mapping,
+            f"upper_arm_{suffix}",
+            fwd,
+            inward_sign * 38.0 * arm_wrap * scale,
+        )
+        rotate(
+            arm,
+            mapping,
+            f"upper_arm_{suffix}",
+            up,
+            -inward_sign * 8.0 * arm_wrap * scale,
+        )
+        rotate(
+            arm,
+            mapping,
+            f"lower_arm_{suffix}",
+            side,
+            elbow_flex * scale * elbow_sign,
+        )
+        rotate(
+            arm,
+            mapping,
+            f"lower_arm_{suffix}",
+            fwd,
+            -inward_sign * 11.0 * arm_wrap * scale,
+        )
+        rotate_local(
+            arm,
+            mapping,
+            f"lower_arm_{suffix}",
+            (0.0, 1.0, 0.0),
+            inward_sign * 18.0 * arm_wrap * scale,
+        )
+        rotate_local(
+            arm,
+            mapping,
+            f"hand_{suffix}",
+            (1.0, 0.0, 0.0),
+            -12.0 * arm_wrap * scale,
+        )
+        rotate_local(
+            arm,
+            mapping,
+            f"hand_{suffix}",
+            (0.0, 0.0, 1.0),
+            inward_sign * 8.0 * arm_wrap * scale,
+        )
+
+
+def _point_segment_distance(point, start, end):
+    segment = end - start
+    length_squared = segment.length_squared
+    if length_squared <= 1.0e-12:
+        return float((point - start).length)
+    factor = max(0.0, min(1.0, float((point - start).dot(segment) / length_squared)))
+    return float((point - (start + segment * factor)).length)
 
 
 def validate_mace_guard_action(context, action, arm=None, mapping=None):
     errors = []
+    warnings = []
+    coverage = []
     variant_name = str(action.get("dsb_guard_variant", ""))
     if variant_name not in {value["guardVariant"] for value in MACE_GUARD_VARIANTS.values()}:
         errors.append("Mace guard action has invalid or missing guard-variant metadata.")
@@ -3549,8 +3813,11 @@ def validate_mace_guard_action(context, action, arm=None, mapping=None):
             if head is None:
                 errors.append("Mace guard validation is missing the mapped head bone.")
             else:
-                head_height = (head.head.z + head.tail.z) * 0.5
-                minimum_height = head_height - max(float(head.length) * 2.5, 0.35)
+                world = arm.matrix_world
+                head_start = world @ head.head
+                head_end = world @ head.tail
+                head_center = (head_start + head_end) * 0.5
+                head_length = max(float((head_end - head_start).length), 1.0e-6)
                 sides = []
                 if "forearm_left" in presented:
                     sides.append("l")
@@ -3561,9 +3828,31 @@ def validate_mace_guard_action(context, action, arm=None, mapping=None):
                     if forearm is None:
                         errors.append(f"Mace guard validation is missing the mapped {suffix} forearm bone.")
                         continue
-                    forearm_height = max(float(forearm.head.z), float(forearm.tail.z))
-                    if forearm_height < minimum_height:
-                        errors.append(f"Mace guard {suffix} forearm remains grossly below head height at Guard_Active.")
+                    forearm_start = world @ forearm.head
+                    forearm_end = world @ forearm.tail
+                    forearm_length = max(
+                        float((forearm_end - forearm_start).length),
+                        1.0e-6,
+                    )
+                    distance = _point_segment_distance(
+                        head_center,
+                        forearm_start,
+                        forearm_end,
+                    )
+                    coverage_limit = max(
+                        head_length * 4.0,
+                        forearm_length * 1.75,
+                    )
+                    coverage.append({
+                        "side": suffix,
+                        "distanceToHead": distance,
+                        "coverageLimit": coverage_limit,
+                    })
+                    if distance > coverage_limit:
+                        warnings.append(
+                            f"Mace guard {suffix} forearm may not visually cover the head at Guard_Active; "
+                            "adjust Arm Cover Height, Guard Elbow Flex, or Forearm Wrap if desired."
+                        )
         finally:
             context.scene.frame_set(previous_frame)
             arm.animation_data.action = previous_action
@@ -3573,6 +3862,8 @@ def validate_mace_guard_action(context, action, arm=None, mapping=None):
         "guardVariant": variant_name,
         "guardActiveFrame": markers.get("Guard_Active"),
         "presentedRegions": presented,
+        "coverage": coverage,
+        "warnings": warnings,
         "errors": errors,
     }
 
@@ -3604,10 +3895,25 @@ def generate_mace_guard_action(context, kind):
     context.scene.frame_end = schedule["Brace_End"]
     stages = (
         (schedule["Brace_Start"], 0.0),
-        (schedule["Recognition"], 0.24),
+        (schedule["Recognition"], 0.12),
+        (schedule["Covering"], 0.68),
         (schedule["Guard_Active"], 1.0),
-        (schedule["Guard_Hold_End"], 0.96),
-        (schedule["Brace_End"], 0.42),
+        (schedule["Guard_Hold_End"], 0.98),
+        (
+            schedule["Brace_End"],
+            max(
+                0.0,
+                1.0
+                - min(
+                    1.0,
+                    float(settings.mace_guard_end_release)
+                    + MACE_GUARD_STYLE_PROFILES.get(
+                        settings.mace_guard_style,
+                        MACE_GUARD_STYLE_PROFILES["COWERING"],
+                    )["releaseBias"],
+                ),
+            ),
+        ),
     )
     side_axis = vectors(settings)[1]
     variant = MACE_GUARD_VARIANTS[kind]
@@ -3617,9 +3923,17 @@ def generate_mace_guard_action(context, kind):
         _apply_mace_guard_pose(arm, mapping, settings, variant, intensity)
         apply_arm_hand_pose_polish(arm, mapping, settings, side_axis)
         key_pose(arm, mapping, frame)
-    for marker_name in ("Brace_Start", "Guard_Active", "Brace_End"):
+    for marker_name in (
+        "Brace_Start",
+        "Recognition",
+        "Covering",
+        "Guard_Active",
+        "Guard_Hold_End",
+        "Brace_End",
+    ):
         _set_action_marker(action, marker_name, schedule[marker_name])
     action["dsb_guard_variant"] = variant["guardVariant"]
+    action["dsb_guard_style"] = settings.mace_guard_style
     action["dsb_guard_active_frame"] = int(schedule["Guard_Active"])
     action["dsb_guard_active_time_seconds"] = float(
         (schedule["Guard_Active"] - schedule["Brace_Start"]) / max(fps, 0.001)
@@ -4992,7 +5306,7 @@ class DAF_PT_legacy_panel(Panel):
             layout,
             s,
             "ui_deformation_authoring_open",
-            "Trauma Field Authoring v3.20.1",
+            "Trauma Field Authoring v4.0.0",
         )
         if opened:
             configure_property_box(box)
@@ -5018,6 +5332,7 @@ class DAF_PT_legacy_panel(Panel):
                 left = box.column(align=True)
                 left.prop(s, "left_upper_arm_forward", slider=True)
                 left.prop(s, "left_upper_arm_roll", slider=True)
+                left.prop(s, "left_elbow_flex", slider=True)
                 left.prop(s, "left_forearm_twist", slider=True)
                 left.prop(s, "left_wrist_flex", slider=True)
                 left.prop(s, "left_wrist_side", slider=True)
@@ -5032,6 +5347,7 @@ class DAF_PT_legacy_panel(Panel):
                 right = box.column(align=True)
                 right.prop(s, "right_upper_arm_forward", slider=True)
                 right.prop(s, "right_upper_arm_roll", slider=True)
+                right.prop(s, "right_elbow_flex", slider=True)
                 right.prop(s, "right_forearm_twist", slider=True)
                 right.prop(s, "right_wrist_flex", slider=True)
                 right.prop(s, "right_wrist_side", slider=True)
@@ -5204,9 +5520,26 @@ class DAF_PT_legacy_panel(Panel):
         )
         if opened:
             configure_property_box(box)
-            box.prop(s, "mace_guard_raise_seconds")
-            box.prop(s, "mace_guard_hold_seconds")
-            box.prop(s, "mace_guard_recovery_seconds")
+            box.prop(s, "mace_guard_style")
+            timing = box.box()
+            timing.label(text="Timing", icon='TIME')
+            timing.prop(s, "mace_guard_raise_seconds")
+            timing.prop(s, "mace_guard_hold_seconds")
+            timing.prop(s, "mace_guard_recovery_seconds")
+            pose = box.box()
+            pose.label(text="Head Coverage & Cower", icon='POSE_HLT')
+            for property_name in (
+                "mace_guard_arm_cover",
+                "mace_guard_elbow_flex",
+                "mace_guard_arm_wrap",
+                "mace_guard_shoulder_hunch",
+                "mace_guard_torso_curl",
+                "mace_guard_head_tuck",
+                "mace_guard_crouch",
+                "mace_guard_asymmetry",
+                "mace_guard_end_release",
+            ):
+                pose.prop(s, property_name, slider=True)
             box.operator(
                 "daf.generate_mace_head_guards",
                 text="Generate Three Mace Head-Guard Drafts",
@@ -5223,7 +5556,8 @@ class DAF_PT_legacy_panel(Panel):
             ):
                 approve = box.operator("daf.approve_draft", text=label, icon='FAKE_USER_ON')
                 approve.kind = kind
-            box.label(text="Brace markers: Brace_Start / Guard_Active / Brace_End", icon='MARKER_HLT')
+            box.label(text="Markers: Recognition / Covering / Guard_Active / Hold", icon='MARKER_HLT')
+            box.label(text="Forearm coverage is guidance, never an export blocker", icon='INFO')
             box.label(text="Shape-key damage remains a separate preview", icon='INFO')
 
         # Pack builder ------------------------------------------------------

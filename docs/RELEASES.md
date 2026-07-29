@@ -20,7 +20,7 @@
 
 ## Documentation definition of done
 
-- [ ] Version and `Dreadstone_Animation_Forge_v3_20_1.zip` match everywhere.
+- [ ] Version and `Dreadstone_Animation_Forge_v4_0_0.zip` match everywhere.
 - [ ] The VIP Damage Key -> Stamp -> macro workflow is current.
 - [ ] No user-facing factory preset instructions remain.
 - [ ] Independent multi-key Preview toggles and one active Stamp alternative

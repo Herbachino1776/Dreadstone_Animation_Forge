@@ -1,10 +1,10 @@
 # Dreadstone Animation Forge
 
-Dreadstone Animation Forge `3.20.1` is a proprietary Blender add-on for
+Dreadstone Animation Forge `4.0.0` is a proprietary Blender add-on for
 animation drafting and compatibility-preserving damage authoring. The supported
 release runtime is Blender `5.1.2`.
 
-Forge 3.20 keeps the compact VIP workflow built around
+Forge 4.0 keeps the compact VIP workflow built around
 Damage Keys, visible child Stamp alternatives, strong macros, one-click
 deterministic randomization, additive raised + inlay gore, and portable
 topology-independent Damage Blueprints. It adds first-class Progressive Damage
@@ -20,9 +20,16 @@ editing, overwriting, deleting, and renaming saved Actions. Individual clips
 can be exported as native `.blend` Action packages and imported onto another
 humanoid after bone/hierarchy compatibility checks.
 
+Animation Forge 4.0 adds independent left/right elbow-flex polish, longer
+natural head-guard and cowering timing, editable cover/wrap/hunch/tuck controls,
+and a selectable legacy Zombie-Insect Attack generator shape. Forearm-to-head
+coverage is advisory and never blocks approval or export. Portable 3.20.1
+Action clips—including previously saved zombie attacks—import with their
+keyframes and original settings payload unchanged.
+
 ## Install and open
 
-1. Download `Dreadstone_Animation_Forge_v3_20_1.zip`.
+1. Download `Dreadstone_Animation_Forge_v4_0_0.zip`.
 2. In Blender choose **Edit > Preferences > Add-ons > Install from Disk**.
 3. Select the ZIP without extracting it and enable the add-on.
 4. In the 3D Viewport press `N`, open **Dreadstone**, then choose
