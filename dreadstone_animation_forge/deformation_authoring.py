@@ -39,7 +39,7 @@ from .deformation import (
 
 DEFORMATION_SCHEMA = "dreadstone.damage_deformation.v1"
 DEFORMATION_VERSION = (4, 0, 0)
-DEFORMATION_BUILD_ID = "2026-07-28.progressive-damage-sites.1"
+DEFORMATION_BUILD_ID = "2026-07-29.portable-surface-stains.1"
 IMPACT_CONTROL_SCHEMA = parameter_schema.IMPACT_CONTROL_SCHEMA
 ATTACHED_HEAD_NAME = "DSB_ATTACHED_HEAD"
 DETACHED_HEAD_NAME = "DSB_SEGMENT_HEAD"
@@ -52,6 +52,10 @@ GORE_PREVIEW_ATTRIBUTE = "DSB_Surface_Gore_Mask"
 GORE_MATERIAL_PREFIX = "DSB_SURFACE_GORE_PREVIEW_"
 GORE_OBJECT_ROLE = "raised_gore"
 GORE_MESH_ID_PREFIX = "gore_mesh_"
+SURFACE_STAIN_BINDING_SCHEMA = "dreadstone.surface_stain_binding.v1"
+SURFACE_STAIN_OBJECT_ROLE = "surface_stain_export"
+SURFACE_STAIN_MESH_ID_PREFIX = "stain_mesh_"
+SURFACE_STAIN_COLOR_ATTRIBUTE = "DSB_Surface_Stain_RGBA"
 GORE_TEXTURE_ATLAS_PATH = (
     Path(__file__).resolve().parent / "assets" / "gore_textures" / "muscle_fibers_macro_atlas.png"
 )
@@ -1015,6 +1019,246 @@ def _ensure_key_pair(name, metadata_entry=None, preview=False):
         payload.setdefault("keys", {})[name] = {**payload.get("keys", {}).get(name, {}), **entry}
         _store_metadata(attached, detached, payload)
     return attached, detached, attached_key, detached_key
+
+
+def _rename_shape_key_data_paths(key_data_blocks, old_name, new_name):
+    """Retarget animation paths owned by the renamed shape-key datablocks."""
+
+    old_token = f'key_blocks["{_escape_data_path(old_name)}"]'
+    new_token = f'key_blocks["{_escape_data_path(new_name)}"]'
+    actions = set()
+    for key_data in tuple(value for value in key_data_blocks if value is not None):
+        animation_data = getattr(key_data, "animation_data", None)
+        if animation_data is None:
+            continue
+        if animation_data.action is not None:
+            actions.add(animation_data.action)
+        for track in animation_data.nla_tracks:
+            for strip in track.strips:
+                if strip.action is not None:
+                    actions.add(strip.action)
+        for curve in animation_data.drivers:
+            if old_token in str(curve.data_path):
+                curve.data_path = str(curve.data_path).replace(
+                    old_token,
+                    new_token,
+                )
+            driver = getattr(curve, "driver", None)
+            if driver is None:
+                continue
+            for variable in driver.variables:
+                for target in variable.targets:
+                    path = str(getattr(target, "data_path", ""))
+                    if old_token in path:
+                        target.data_path = path.replace(old_token, new_token)
+    for action in actions:
+        for curve in getattr(action, "fcurves", ()):
+            if old_token in str(curve.data_path):
+                curve.data_path = str(curve.data_path).replace(
+                    old_token,
+                    new_token,
+                )
+
+
+def rename_deformation_key(context=None, old_name=None, new_name=None):
+    """Rename one managed Damage Key without breaking its stable ownership graph."""
+
+    context = context or bpy.context
+    settings = context.scene.daf_settings
+    registry, region, attached, detached = _resolve_active_region(context)
+    old_name = str(old_name or settings.deformation_active_key).strip()
+    new_name = str(new_name or settings.deformation_key_name).strip()
+    if not old_name:
+        raise RuntimeError("Select a managed Damage Key to rename.")
+    if (
+        not new_name
+        or new_name in {"Basis", PREVIEW_KEY_NAME}
+        or len(new_name) > 63
+        or re.fullmatch(r"[A-Za-z0-9_]+", new_name) is None
+    ):
+        raise RuntimeError(
+            "Damage Key names must contain only letters, numbers, and "
+            "underscores and be at most 63 characters."
+        )
+    if old_name == new_name:
+        return {
+            "oldName": old_name,
+            "newName": new_name,
+            "changed": False,
+        }
+
+    payload = _metadata(attached)
+    entry = payload.get("keys", {}).get(old_name)
+    attached_key = _key(attached, old_name)
+    detached_key = _key(detached, old_name) if detached is not None else None
+    if not isinstance(entry, dict) or attached_key is None:
+        raise RuntimeError(
+            f"Managed Damage Key {old_name!r} is incomplete or missing."
+        )
+    if detached is not None and detached_key is None:
+        raise RuntimeError(
+            f"Detached ownership is missing Damage Key {old_name!r}."
+        )
+    if (
+        new_name in payload.get("keys", {})
+        or _key(attached, new_name) is not None
+        or (detached is not None and _key(detached, new_name) is not None)
+    ):
+        raise RuntimeError(
+            f"Damage Key {new_name!r} already exists in this region."
+        )
+
+    region_id = str(region.get("regionId", ""))
+    key_id = str(entry.get("damageKeyId", "")).strip()
+    if not key_id:
+        key_id = progressive_sites.opaque_id("damage_key")
+        entry["damageKeyId"] = key_id
+    registry_before = copy.deepcopy(registry)
+    payload_before = copy.deepcopy(payload)
+    key_data_blocks = (
+        attached.data.shape_keys,
+        detached.data.shape_keys if detached is not None else None,
+    )
+    old_gore = list(generated_gore_objects(region_id, old_name))
+    new_gore = []
+
+    clear_damage_preview(context)
+    try:
+        attached_key.name = new_name
+        if detached_key is not None:
+            detached_key.name = new_name
+        _rename_shape_key_data_paths(
+            key_data_blocks,
+            old_name,
+            new_name,
+        )
+
+        renamed_entry = payload["keys"].pop(old_name)
+        renamed_entry["name"] = new_name
+        renamed_entry["damageKeyId"] = key_id
+        if str(renamed_entry.get("mirrorPartner", "")) == old_name:
+            renamed_entry["mirrorPartner"] = new_name
+        for other_entry in payload.get("keys", {}).values():
+            if str(other_entry.get("mirrorPartner", "")) == old_name:
+                other_entry["mirrorPartner"] = new_name
+        payload["keys"][new_name] = renamed_entry
+
+        if old_gore:
+            _clear_generated_entry_fields(renamed_entry)
+            new_gore = rebuild_raised_gore_for_key(
+                region,
+                attached,
+                detached,
+                new_name,
+                renamed_entry,
+            )
+        else:
+            _clear_generated_entry_fields(renamed_entry)
+
+        from . import progressive_authoring
+
+        renamed_stage_count = 0
+        sites = registry.get("progressiveDamageSites", {}).get("sites", [])
+        for site in sites:
+            site_changed = False
+            for stage in site.get("stages", {}).values():
+                is_stable_match = (
+                    key_id
+                    and str(stage.get("damageKeyId", "")) == key_id
+                )
+                is_legacy_match = (
+                    str(stage.get("regionId", "")) == region_id
+                    and str(stage.get("deformationKeyName", "")) == old_name
+                )
+                if not (is_stable_match or is_legacy_match):
+                    continue
+                stage["damageKeyId"] = key_id
+                stage["deformationKeyName"] = new_name
+                stage["deformationDigest"] = (
+                    progressive_authoring._deformation_digest(
+                        attached,
+                        new_name,
+                    )
+                )
+                stage.update(
+                    progressive_authoring._generated_mapping(
+                        region_id,
+                        new_name,
+                    )
+                )
+                stage["validationStatus"] = "NOT_VALIDATED"
+                stage["measurements"] = {}
+                renamed_stage_count += 1
+                site_changed = True
+            if site_changed:
+                site["validationStatus"] = "NOT_VALIDATED"
+                site["validationDigest"] = ""
+                site["validationReport"] = {}
+                site["enabledForExport"] = False
+
+        renamed_compound_count = 0
+        for event in registry.get("compoundEvents", []):
+            event_changed = False
+            for participant in event.get("participants", []):
+                if (
+                    str(participant.get("regionId", "")) == region_id
+                    and str(participant.get("childKeyName", "")) == old_name
+                ):
+                    participant["childKeyName"] = new_name
+                    renamed_compound_count += 1
+                    event_changed = True
+            if event_changed:
+                event["validationStatus"] = "NOT_VALIDATED"
+                event["validationReport"] = {}
+
+        _store_registry(registry)
+        _store_metadata(attached, detached, payload)
+        if detached is not None:
+            _link_detached_value(attached, detached, new_name)
+        _remove_generated_gore_objects(region_id, old_name)
+    except Exception:
+        _remove_generated_gore_objects(region_id, new_name)
+        current_attached_key = _key(attached, new_name)
+        if current_attached_key is not None:
+            current_attached_key.name = old_name
+        current_detached_key = (
+            _key(detached, new_name) if detached is not None else None
+        )
+        if current_detached_key is not None:
+            current_detached_key.name = old_name
+        _rename_shape_key_data_paths(
+            key_data_blocks,
+            new_name,
+            old_name,
+        )
+        _store_registry(registry_before)
+        _store_metadata(attached, detached, payload_before)
+        if detached is not None:
+            _link_detached_value(attached, detached, old_name)
+        raise
+
+    with preview_service.suspend_updates():
+        settings.deformation_active_key = new_name
+        if str(settings.deformation_key_name) == old_name:
+            settings.deformation_key_name = new_name
+    settings.deformation_status = (
+        f"DAMAGE KEY RENAMED - {old_name} -> {new_name}"
+    )
+    if renamed_stage_count:
+        settings.progression_status = (
+            "DAMAGE KEY RENAMED - VALIDATE + ENABLE SITE FOR EXPORT"
+        )
+    _invalidate_geodesic_cache()
+    return {
+        "oldName": old_name,
+        "newName": new_name,
+        "damageKeyId": key_id,
+        "regionId": region_id,
+        "renamedStageCount": renamed_stage_count,
+        "renamedCompoundParticipantCount": renamed_compound_count,
+        "rebuiltGoreNodeNames": [obj.name for obj in new_gore],
+        "changed": True,
+    }
 
 
 def _remove_key(obj, name):
@@ -7700,6 +7944,406 @@ def _install_existing_surface_stain_preview(context, region_id, key_name):
     return _install_surface_stain_preview(region, attached, detached, payload, key_name, entry)
 
 
+def _surface_stain_name(region_id, key_name, pair_role):
+    raw = (
+        f"DSB_STAIN_{str(pair_role).upper()}_"
+        f"{str(region_id)}_{str(key_name)}"
+    )
+    safe = re.sub(r"[^A-Za-z0-9_]+", "_", raw).strip("_")
+    if len(safe) <= 60:
+        return safe
+    digest = hashlib.sha256(safe.encode("utf-8")).hexdigest()[:12]
+    return safe[:47].rstrip("_") + "_" + digest
+
+
+def surface_stain_export_objects(region_id=None, key_name=None, pair_role=None):
+    role = str(pair_role).upper() if pair_role else None
+    result = []
+    for obj in bpy.data.objects:
+        if obj.type != 'MESH':
+            continue
+        if str(obj.get("dsb_generated_role", "")) != SURFACE_STAIN_OBJECT_ROLE:
+            continue
+        if not bool(obj.get("dsb_stain_owned", False)):
+            continue
+        if region_id is not None and str(obj.get("dsb_stain_region_id", "")) != str(region_id):
+            continue
+        if key_name is not None and str(obj.get("dsb_stain_deformation_key", "")) != str(key_name):
+            continue
+        if role is not None and str(obj.get("dsb_stain_pair_role", "")).upper() != role:
+            continue
+        result.append(obj)
+    return sorted(result, key=lambda value: value.name)
+
+
+def remove_surface_stain_export_artifacts():
+    removed = []
+    material_names = set()
+    image_names = set()
+    for obj in list(surface_stain_export_objects()):
+        mesh = obj.data
+        removed.append(obj.name)
+        material_names.update(
+            material.name
+            for material in mesh.materials
+            if material is not None
+        )
+        image_name = str(obj.get("dsb_stain_texture_name", ""))
+        if image_name:
+            image_names.add(image_name)
+        bpy.data.objects.remove(obj, do_unlink=True)
+        if mesh is not None and mesh.users == 0:
+            bpy.data.meshes.remove(mesh)
+    for material_name in sorted(material_names):
+        material = bpy.data.materials.get(material_name)
+        if (
+            material is not None
+            and material.users == 0
+            and str(material.get("dsb_generated_role", ""))
+            == "surface_stain_export_material"
+        ):
+            bpy.data.materials.remove(material)
+    for image_name in sorted(image_names):
+        image = bpy.data.images.get(image_name)
+        if (
+            image is not None
+            and image.users == 0
+            and str(image.get("dsb_generated_role", ""))
+            == "surface_stain_export_texture"
+        ):
+            bpy.data.images.remove(image)
+    return removed
+
+
+def _create_surface_stain_material(name, overlay, overlay_digest):
+    material_name = name + "_MAT"
+    occupied = bpy.data.materials.get(material_name)
+    if occupied is not None:
+        if str(occupied.get("dsb_generated_role", "")) != "surface_stain_export_material":
+            raise RuntimeError(
+                f"Surface-stain material name {material_name!r} is occupied by user data."
+            )
+        if occupied.users == 0:
+            bpy.data.materials.remove(occupied)
+        else:
+            raise RuntimeError(
+                f"Stale surface-stain material {material_name!r} is still in use."
+            )
+    material = bpy.data.materials.new(name=material_name)
+    material.use_nodes = True
+    material["dsb_generated_role"] = "surface_stain_export_material"
+    material["dsb_stain_binding_schema"] = SURFACE_STAIN_BINDING_SCHEMA
+    material["dsb_stain_overlay_digest"] = overlay_digest
+    material["dsb_stain_attribute_semantic"] = "COLOR_0"
+    nodes = material.node_tree.nodes
+    nodes.clear()
+    output = nodes.new('ShaderNodeOutputMaterial')
+    output.name = "DSB glTF Stain Output"
+    shader = nodes.new('ShaderNodeBsdfPrincipled')
+    shader.name = "DSB glTF Wet Surface Stain"
+    shader.inputs["Base Color"].default_value = (1.0, 1.0, 1.0, 1.0)
+    shader.inputs["Metallic"].default_value = 0.0
+    shader.inputs["Roughness"].default_value = max(
+        0.055,
+        1.0 - float(overlay["goreWetness"]) * 0.90,
+    )
+    shader.inputs["Alpha"].default_value = 1.0
+    color_attribute = nodes.new('ShaderNodeVertexColor')
+    color_attribute.name = "DSB Standard glTF COLOR_0 Stain"
+    color_attribute.layer_name = SURFACE_STAIN_COLOR_ATTRIBUTE
+    material.node_tree.links.new(
+        color_attribute.outputs["Color"],
+        shader.inputs["Base Color"],
+    )
+    material.node_tree.links.new(
+        color_attribute.outputs["Alpha"],
+        shader.inputs["Alpha"],
+    )
+    material.node_tree.links.new(shader.outputs["BSDF"], output.inputs["Surface"])
+    if hasattr(material, "surface_render_method"):
+        material.surface_render_method = 'DITHERED'
+    elif hasattr(material, "blend_method"):
+        material.blend_method = 'BLEND'
+    if hasattr(material, "use_transparency_overlap"):
+        material.use_transparency_overlap = False
+    material.use_backface_culling = True
+    material.diffuse_color = (0.25, 0.005, 0.003, 1.0)
+    return material
+
+
+def _build_surface_stain_export_object(
+    source,
+    key_name,
+    region_id,
+    pair_role,
+    overlay,
+    mask_values,
+):
+    name = _surface_stain_name(region_id, key_name, pair_role)
+    occupied = bpy.data.objects.get(name)
+    if occupied is not None:
+        if str(occupied.get("dsb_generated_role", "")) != SURFACE_STAIN_OBJECT_ROLE:
+            raise RuntimeError(
+                f"Surface-stain node name {name!r} is occupied by user data."
+            )
+        mesh = occupied.data
+        bpy.data.objects.remove(occupied, do_unlink=True)
+        if mesh is not None and mesh.users == 0:
+            bpy.data.meshes.remove(mesh)
+    basis = _ensure_basis(source)
+    target = _key(source, key_name)
+    if target is None:
+        raise RuntimeError(
+            f"Surface-stain owner {source.name} has no deformation key {key_name!r}."
+        )
+    basis_positions = [point.co.copy() for point in basis.data]
+    target_positions = [point.co.copy() for point in target.data]
+    source_faces = [
+        tuple(int(index) for index in polygon.vertices)
+        for polygon in source.data.polygons
+    ]
+    basis_normals = _local_vertex_normals(basis_positions, source_faces)
+    target_normals = _local_vertex_normals(target_positions, source_faces)
+    selected_faces = []
+    used_source_indices = set()
+    for polygon in source.data.polygons:
+        indices = tuple(int(index) for index in polygon.vertices)
+        if max((float(mask_values[index]) for index in indices), default=0.0) <= 1.0e-5:
+            continue
+        selected_faces.append({
+            "sourcePolygonIndex": int(polygon.index),
+            "sourceIndices": indices,
+        })
+        used_source_indices.update(indices)
+    if not selected_faces:
+        raise RuntimeError(
+            f"Surface-stain key {key_name!r} produced no exportable faces."
+        )
+    source_indices = sorted(used_source_indices)
+    local_index = {
+        source_index: index
+        for index, source_index in enumerate(source_indices)
+    }
+    faces = [
+        tuple(local_index[index] for index in record["sourceIndices"])
+        for record in selected_faces
+    ]
+    offset = max(0.00005, float(overlay.get("goreSurfaceOffset", 0.00035)))
+    vertices = [
+        tuple(basis_positions[index] + basis_normals[index] * offset)
+        for index in source_indices
+    ]
+    mesh = bpy.data.meshes.new(name + "_MESH")
+    mesh.from_pydata(vertices, [], faces)
+    mesh.update(calc_edges=True)
+    obj = bpy.data.objects.new(name, mesh)
+    target_collection = (
+        source.users_collection[0]
+        if source.users_collection
+        else bpy.context.scene.collection
+    )
+    target_collection.objects.link(obj)
+    _copy_gore_skinning(
+        source,
+        obj,
+        source_indices,
+        require_deform=True,
+    )
+    obj.shape_key_add(name="Basis")
+    stage_key = obj.shape_key_add(name=key_name)
+    stage_key.value = 0.0
+    stage_key.slider_min = 0.0
+    stage_key.slider_max = max(
+        1.0,
+        float(getattr(target, "slider_max", 1.0)),
+    )
+    for local, source_index in enumerate(source_indices):
+        stage_key.data[local].co = (
+            target_positions[source_index]
+            + target_normals[source_index] * offset
+        )
+    for polygon in mesh.polygons:
+        polygon.use_smooth = True
+
+    overlay_digest = trauma_field.gore_overlay_digest(overlay)
+    color = tuple(
+        max(
+            0.0,
+            min(
+                1.0,
+                float(channel)
+                * (1.0 - 0.78 * float(overlay["goreDarkness"])),
+            ),
+        )
+        for channel in overlay["goreColorBias"]
+    )
+    color_layer = mesh.color_attributes.new(
+        name=SURFACE_STAIN_COLOR_ATTRIBUTE,
+        type='BYTE_COLOR',
+        domain='POINT',
+    )
+    for local, source_index in enumerate(source_indices):
+        color_layer.data[local].color = (
+            float(color[0]),
+            float(color[1]),
+            float(color[2]),
+            max(0.0, min(1.0, float(mask_values[source_index]))),
+        )
+    mesh.color_attributes.active_color = color_layer
+    mesh.color_attributes.render_color_index = (
+        mesh.color_attributes.find(color_layer.name)
+    )
+    material = _create_surface_stain_material(
+        name,
+        overlay,
+        overlay_digest,
+    )
+    mesh.materials.append(material)
+    mesh.calc_loop_triangles()
+    triangle_count = len(mesh.loop_triangles)
+    mesh_id = SURFACE_STAIN_MESH_ID_PREFIX + hashlib.sha256(
+        f"{region_id}|{key_name}|{str(pair_role).upper()}|{overlay_digest}".encode(
+            "utf-8"
+        )
+    ).hexdigest()[:20]
+    obj["dsb_damage_generated"] = True
+    obj["dsb_stain_owned"] = True
+    obj["dsb_generated_role"] = SURFACE_STAIN_OBJECT_ROLE
+    obj["dsb_preview_only"] = False
+    obj["dsb_stain_binding_schema"] = SURFACE_STAIN_BINDING_SCHEMA
+    obj["dsb_stain_mesh_id"] = mesh_id
+    obj["dsb_stain_region_id"] = str(region_id)
+    obj["dsb_stain_deformation_key"] = str(key_name)
+    obj["dsb_stain_pair_role"] = str(pair_role).upper()
+    obj["dsb_stain_source_object"] = source.name
+    obj["dsb_stain_source_topology_fingerprint"] = _topology_fingerprint(source)
+    obj["dsb_stain_overlay_digest"] = overlay_digest
+    obj["dsb_stain_material_name"] = material.name
+    obj["dsb_stain_attribute_name"] = SURFACE_STAIN_COLOR_ATTRIBUTE
+    obj["dsb_stain_attribute_semantic"] = "COLOR_0"
+    obj["dsb_stain_morph_target"] = str(key_name)
+    obj["dsb_stain_default_visible"] = False
+    obj["dsb_stain_activation_weight"] = float(
+        overlay.get("goreActivationWeight", 0.01)
+    )
+    obj["dsb_stain_triangle_count"] = triangle_count
+    obj["dsb_stain_alpha_mode"] = "BLEND"
+    obj["dsb_stain_portable_representation"] = "VERTEX_COLOR_RGBA"
+    obj["dsb_stain_portable_artifact_included"] = True
+    obj.hide_render = True
+    obj.hide_set(True)
+    return obj
+
+
+def build_surface_stain_export_artifacts():
+    """Build ordinary glTF mesh/material/texture stains for every enabled key."""
+
+    remove_surface_stain_export_artifacts()
+    registry = _load_registry()
+    built = []
+    try:
+        for region in registry.get("regions", []):
+            attached, detached = _resolve_region_pair(region)
+            payload = _metadata(attached)
+            for key_name in _managed_names(attached):
+                entry = payload.get("keys", {}).get(key_name, {})
+                raw_overlay = entry.get("surfaceGoreOverlay")
+                if not isinstance(raw_overlay, dict):
+                    continue
+                overlay = trauma_field.normalize_gore_overlay(raw_overlay)
+                if not bool(overlay.get("goreOverlayEnabled", False)):
+                    continue
+                if str(overlay.get("goreOverlayMode", "")) not in {
+                    "SURFACE_STAIN",
+                    "STAIN_AND_RAISED",
+                }:
+                    continue
+                _resolved_overlay, mask_values = _surface_gore_preview_data(
+                    region,
+                    attached,
+                    entry,
+                )
+                for source, role in _region_gore_sources(
+                    region,
+                    attached,
+                    detached,
+                ):
+                    built.append(
+                        _build_surface_stain_export_object(
+                            source,
+                            key_name,
+                            str(region.get("regionId", "")),
+                            role,
+                            overlay,
+                            mask_values,
+                        )
+                    )
+    except Exception:
+        remove_surface_stain_export_artifacts()
+        raise
+    return built
+
+
+def surface_stain_export_records(region_id=None, key_name=None):
+    records = []
+    for obj in surface_stain_export_objects(region_id, key_name):
+        material_name = str(obj.get("dsb_stain_material_name", ""))
+        records.append({
+            "schema": SURFACE_STAIN_BINDING_SCHEMA,
+            "meshId": str(obj.get("dsb_stain_mesh_id", "")),
+            "nodeName": obj.name,
+            "materialName": material_name,
+            "textureName": "",
+            "attributeName": str(
+                obj.get(
+                    "dsb_stain_attribute_name",
+                    SURFACE_STAIN_COLOR_ATTRIBUTE,
+                )
+            ),
+            "attributeSemantic": str(
+                obj.get("dsb_stain_attribute_semantic", "COLOR_0")
+            ),
+            "maskEncoding": "COLOR_0_RGBA_ALPHA",
+            "regionId": str(obj.get("dsb_stain_region_id", "")),
+            "deformationKey": str(obj.get("dsb_stain_deformation_key", "")),
+            "ownershipRole": str(obj.get("dsb_stain_pair_role", "")),
+            "sourceObject": str(obj.get("dsb_stain_source_object", "")),
+            "sourceTopologyFingerprint": str(
+                obj.get("dsb_stain_source_topology_fingerprint", "")
+            ),
+            "morphTarget": str(obj.get("dsb_stain_morph_target", "")),
+            "morphWeightSource": "MATCHING_DEFORMATION_KEY_WEIGHT",
+            "defaultVisible": bool(obj.get("dsb_stain_default_visible", False)),
+            "activationWeight": float(
+                obj.get("dsb_stain_activation_weight", 0.01)
+            ),
+            "triangleCount": int(obj.get("dsb_stain_triangle_count", 0)),
+            "alphaMode": str(obj.get("dsb_stain_alpha_mode", "BLEND")),
+            "portableRepresentation": str(
+                obj.get(
+                    "dsb_stain_portable_representation",
+                    "VERTEX_COLOR_RGBA",
+                )
+            ),
+            "depthBehavior": "NORMAL_OFFSET_NO_DEPTH_WRITE_OVERRIDE",
+            "portableArtifactIncluded": bool(
+                obj.get("dsb_stain_portable_artifact_included", False)
+            ),
+            "runtimeImplementationIncluded": False,
+            "rendererRequirements": {
+                "glTFVersion": "2.0",
+                "materialModel": "PBR_METALLIC_ROUGHNESS",
+                "alphaMode": "BLEND",
+                "embeddedTexture": False,
+                "vertexColorSemantic": "COLOR_0",
+                "requiresNodeVisibilityToggle": True,
+                "requiresMorphWeightBinding": True,
+                "threeJsLoader": "GLTFLoader",
+            },
+        })
+    return records
+
+
 def _build_preview_gore_for_entry(
     region, attached, detached, key_name, entry, *, quality
 ):
@@ -9124,6 +9768,7 @@ def get_deformation_manifest():
     manifest_regions = []
     flat_keys = []
     flat_gore_meshes = []
+    flat_stain_meshes = []
     for region in registry.get("regions", []):
         attached, detached = _resolve_region_pair(region)
         payload = _metadata(attached)
@@ -9198,6 +9843,27 @@ def get_deformation_manifest():
                     "retainThroughDeathAndCorpsePersistence": True,
                     "runtimeImplementationIncluded": False,
                 }
+                stain_bindings = surface_stain_export_records(
+                    str(region.get("regionId", "")),
+                    name,
+                )
+                entry["surfaceStainBindingSchema"] = (
+                    SURFACE_STAIN_BINDING_SCHEMA
+                )
+                entry["surfaceStainBindings"] = stain_bindings
+                entry["surfaceStainActivationContract"] = {
+                    "defaultVisible": False,
+                    "activateWithDeformationKey": name,
+                    "activationWeight": float(
+                        overlay.get("goreActivationWeight", 0.01)
+                    ),
+                    "morphWeightSource": (
+                        "MATCHING_DEFORMATION_KEY_WEIGHT"
+                    ),
+                    "portableArtifactIncluded": bool(stain_bindings),
+                    "runtimeImplementationIncluded": False,
+                }
+                flat_stain_meshes.extend(copy.deepcopy(stain_bindings))
                 for gore_obj in generated_gore_objects(str(region.get("regionId", "")), name):
                     mesh_record = {
                         "meshId": str(gore_obj.get("dsb_gore_mesh_id", "")),
@@ -9322,6 +9988,8 @@ def get_deformation_manifest():
         "registeredRegions": manifest_regions,
         "keys": flat_keys,
         "generatedGoreMeshes": flat_gore_meshes,
+        "surfaceStainBindingSchema": SURFACE_STAIN_BINDING_SCHEMA,
+        "surfaceStainMeshes": flat_stain_meshes,
         "compoundTraumaEvents": compound_events,
         "compoundActivationContract": {
             "undamagedState": "ALL_CHILD_MORPHS_ZERO_AND_GORE_INACTIVE",
@@ -9340,6 +10008,59 @@ def get_deformation_manifest():
     from . import progressive_authoring
 
     result.update(progressive_authoring.manifest_payload())
+    stain_bindings_by_key = {}
+    for binding in flat_stain_meshes:
+        key = (
+            str(binding.get("regionId", "")),
+            str(binding.get("deformationKey", "")),
+        )
+        stain_bindings_by_key.setdefault(key, []).append(binding)
+    for site in result.get("progressiveDamageSites", []):
+        site_has_portable_stains = True
+        transition_mode = str(
+            site.get("goreTransitionMode", "MIDPOINT_REPLACE")
+        )
+        for stage in site.get("stages", []):
+            key = (
+                str(stage.get("regionId", "")),
+                str(stage.get("deformationKeyName", "")),
+            )
+            bindings = copy.deepcopy(stain_bindings_by_key.get(key, []))
+            stage["surfaceStainBindingSchema"] = (
+                SURFACE_STAIN_BINDING_SCHEMA
+            )
+            stage["surfaceStainBindings"] = bindings
+            stage["surfaceStainActivation"] = {
+                "defaultVisible": False,
+                "activationThreshold": float(
+                    bindings[0].get("activationWeight", 0.01)
+                )
+                if bindings
+                else 0.01,
+                "deformationKey": stage.get("deformationKeyName", ""),
+                "attachedDetachedOwnership": [
+                    str(binding.get("ownershipRole", ""))
+                    for binding in bindings
+                ],
+                "transitionBehavior": transition_mode,
+                "structuralMorphWeightSource": (
+                    "MATCHING_DEFORMATION_KEY_WEIGHT"
+                ),
+                "portableArtifactIncluded": bool(bindings),
+                "runtimeImplementationIncluded": False,
+            }
+            site_has_portable_stains = (
+                site_has_portable_stains and bool(bindings)
+            )
+        site["surfaceStainContract"] = {
+            "schema": SURFACE_STAIN_BINDING_SCHEMA,
+            "stageOwned": True,
+            "stageMappingSource": "EXPLICIT_PROGRESSIVE_STAGE_ASSIGNMENT",
+            "transitionBehavior": transition_mode,
+            "basisVisible": False,
+            "portableArtifactsIncluded": site_has_portable_stains,
+            "runtimeImplementationIncluded": False,
+        }
     legacy_head = next((region for region in manifest_regions if region.get("regionId") == "head"), None)
     if legacy_head:
         result.update({

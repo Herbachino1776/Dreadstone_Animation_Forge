@@ -18,6 +18,7 @@ from mathutils.kdtree import KDTree
 from bpy.types import Operator
 
 from . import damage_readiness, trauma_field
+from .deformation import gltf_validation
 
 AUTHORING_SCHEMA = "dreadstone.damage_authoring.v1"
 AUTHORING_VERSION = (3, 9, 1)
@@ -1706,7 +1707,13 @@ def _exporter_property_names():
     return {prop.identifier for prop in rna.properties if prop.identifier != 'rna_type'}
 
 
-def _manifest(state, validation, glb_filename):
+def _manifest(
+    state,
+    validation,
+    glb_filename,
+    *,
+    deformation_manifest=None,
+):
     segments = []
     for seam_id, spec in SEAM_SPECS.items():
         seam = state["seams"][seam_id]
@@ -1785,7 +1792,14 @@ def _manifest(state, validation, glb_filename):
         "interiorMaterial": INTERIOR_MATERIAL_NAME,
         "sockets": [{"id": "abdomen_viscera", "object": ABDOMEN_SOCKET_NAME}],
         "segments": segments,
-        "deformations": __import__(f"{__package__}.deformation_authoring", fromlist=["get_deformation_manifest"]).get_deformation_manifest(),
+        "deformations": (
+            deformation_manifest
+            if deformation_manifest is not None
+            else __import__(
+                f"{__package__}.deformation_authoring",
+                fromlist=["get_deformation_manifest"],
+            ).get_deformation_manifest()
+        ),
         "validation": validation,
     }
 
@@ -1794,6 +1808,7 @@ def _export_asset_inactive(context, settings, state):
     if getattr(context, "mode", "OBJECT") != 'OBJECT':
         raise RuntimeError("Switch Blender to Object Mode before exporting the Damage GLB.")
     from . import deformation_authoring
+    stain_objects = []
     try:
         _validate_current_source(state)
         deformation_authoring.prepare_for_export()
@@ -1811,61 +1826,146 @@ def _export_asset_inactive(context, settings, state):
     manifest_path = os.path.join(output_dir, base + ".json")
     validation_path = os.path.join(output_dir, base + "_validation.json")
 
-    selected_before = list(context.selected_objects)
-    active_before = context.view_layer.objects.active
-    export_objects = [obj for obj in _all_generated_objects(state) if obj.name != state.get("protected_source_mesh")]
-    visibility = {}
     try:
-        bpy.ops.object.select_all(action='DESELECT')
-        for obj in export_objects:
-            visibility[obj.name] = (obj.hide_viewport, obj.hide_render, obj.hide_get())
-            _set_hidden(obj, False)
-            obj.select_set(True)
-        context.view_layer.objects.active = bpy.data.objects.get(state.get("authoring_rig", "")) or export_objects[0]
-        supported = _exporter_property_names()
-        kwargs = {"filepath": glb_path}
-        selection_property = (
-            "use_selection" if "use_selection" in supported
-            else "export_selected" if "export_selected" in supported
-            else None
+        stain_objects = (
+            deformation_authoring.build_surface_stain_export_artifacts()
         )
-        if selection_property is None:
-            raise RuntimeError("The installed glTF exporter exposes no selected-object export option.")
-        kwargs[selection_property] = True
-        for key, value in {
-            "export_format": "GLB",
-            "export_animations": True,
-            "export_force_sampling": True,
-            "export_extras": True,
-            "export_apply": False,
-            "export_morph": True,
-            "export_morph_normal": True,
-            "export_morph_tangent": False,
-        }.items():
-            if key in supported:
-                kwargs[key] = value
-        result = bpy.ops.export_scene.gltf(**kwargs)
-        if 'FINISHED' not in result:
-            raise RuntimeError("Blender did not finish exporting the Damage GLB.")
-    finally:
-        for obj in export_objects:
-            if obj.name in visibility:
-                viewport, render, hidden = visibility[obj.name]
-                obj.hide_viewport, obj.hide_render = viewport, render
-                try:
-                    obj.hide_set(hidden)
-                except RuntimeError:
-                    pass
-        bpy.ops.object.select_all(action='DESELECT')
-        for obj in selected_before:
-            if obj and obj.name in context.view_layer.objects:
+        selected_before = list(context.selected_objects)
+        active_before = context.view_layer.objects.active
+        export_objects = [
+            obj
+            for obj in _all_generated_objects(state)
+            if obj.name != state.get("protected_source_mesh")
+        ]
+        export_objects.extend(stain_objects)
+        export_objects = list(dict.fromkeys(export_objects))
+        visibility = {}
+        try:
+            bpy.ops.object.select_all(action='DESELECT')
+            for obj in export_objects:
+                visibility[obj.name] = (
+                    obj.hide_viewport,
+                    obj.hide_render,
+                    obj.hide_get(),
+                )
+                _set_hidden(obj, False)
                 obj.select_set(True)
-        if active_before and active_before.name in context.view_layer.objects:
-            context.view_layer.objects.active = active_before
+            context.view_layer.objects.active = (
+                bpy.data.objects.get(state.get("authoring_rig", ""))
+                or export_objects[0]
+            )
+            supported = _exporter_property_names()
+            kwargs = {"filepath": glb_path}
+            selection_property = (
+                "use_selection"
+                if "use_selection" in supported
+                else "export_selected"
+                if "export_selected" in supported
+                else None
+            )
+            if selection_property is None:
+                raise RuntimeError(
+                    "The installed glTF exporter exposes no selected-object "
+                    "export option."
+                )
+            kwargs[selection_property] = True
+            for key, value in {
+                "export_format": "GLB",
+                "export_animations": True,
+                "export_force_sampling": True,
+                "export_extras": True,
+                "export_apply": False,
+                "export_morph": True,
+                "export_morph_normal": True,
+                "export_morph_tangent": False,
+            }.items():
+                if key in supported:
+                    kwargs[key] = value
+            result = bpy.ops.export_scene.gltf(**kwargs)
+            if 'FINISHED' not in result:
+                raise RuntimeError(
+                    "Blender did not finish exporting the Damage GLB."
+                )
+        finally:
+            for obj in export_objects:
+                if obj.name in visibility:
+                    viewport, render, hidden = visibility[obj.name]
+                    obj.hide_viewport, obj.hide_render = viewport, render
+                    try:
+                        obj.hide_set(hidden)
+                    except RuntimeError:
+                        pass
+            bpy.ops.object.select_all(action='DESELECT')
+            for obj in selected_before:
+                if obj and obj.name in context.view_layer.objects:
+                    obj.select_set(True)
+            if (
+                active_before
+                and active_before.name in context.view_layer.objects
+            ):
+                context.view_layer.objects.active = active_before
 
-    _json_write(manifest_path, _manifest(state, validation, os.path.basename(glb_path)))
-    _json_write(validation_path, validation)
-    return glb_path, manifest_path, validation_path
+        deformation_manifest = (
+            deformation_authoring.get_deformation_manifest()
+        )
+        manifest = _manifest(
+            state,
+            validation,
+            os.path.basename(glb_path),
+            deformation_manifest=deformation_manifest,
+        )
+        try:
+            final_glb_validation = (
+                gltf_validation.validate_exported_damage_glb(
+                    glb_path,
+                    manifest,
+                )
+            )
+        except Exception as exc:
+            final_glb_validation = {
+                "status": "FAIL",
+                "schema": "dreadstone.final_glb_validation.v1",
+                "surfaceStains": {
+                    "status": "FAIL",
+                    "errors": [
+                        "Completed GLB could not be inspected: " + str(exc)
+                    ],
+                },
+                "baseMaterials": {
+                    "status": "UNKNOWN",
+                    "errors": [],
+                },
+                "raisedGoreGeometry": {
+                    "status": "UNKNOWN",
+                    "errors": [],
+                },
+                "errors": [
+                    "Completed GLB could not be inspected: " + str(exc)
+                ],
+            }
+        validation["finalGlb"] = final_glb_validation
+        validation["surfaceStains"] = final_glb_validation[
+            "surfaceStains"
+        ]
+        validation["raisedGoreGeometry"] = final_glb_validation[
+            "raisedGoreGeometry"
+        ]
+        if final_glb_validation["status"] != "PASS":
+            validation["status"] = "FAIL"
+            validation["errors"].extend(
+                final_glb_validation.get("errors", [])
+            )
+        manifest["validation"] = validation
+        _json_write(manifest_path, manifest)
+        _json_write(validation_path, validation)
+        if final_glb_validation["status"] != "PASS":
+            raise RuntimeError(
+                "Final GLB validation failed: "
+                + "; ".join(final_glb_validation["errors"][:4])
+            )
+        return glb_path, manifest_path, validation_path
+    finally:
+        deformation_authoring.remove_surface_stain_export_artifacts()
 
 
 def _export_asset(context, settings, state):

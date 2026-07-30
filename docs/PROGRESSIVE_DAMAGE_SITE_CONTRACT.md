@@ -14,9 +14,12 @@ direction, deformation family, manual settings, final geometry, and generated
 raised/inlay components.
 
 Forge never derives one stage from another, scales a stage into another,
-requires related seeds, enforces monotonic visual severity, renames keys, or
-merges the stages into one additive Stamp stack. The artist alone decides what
-Light, Medium, and Heavy look like.
+requires related seeds, enforces monotonic visual severity, automatically
+renames keys, or merges the stages into one additive Stamp stack. The artist
+alone decides what Light, Medium, and Heavy look like. An explicit managed-key
+rename preserves the stable Damage Key ID and retargets its existing stage;
+the rename invalidates validation and disables export until approval is run
+again.
 
 Forge owns site organization, stage assignment/focus, safe preview, technical
 validation, stable metadata, export, and clean-reimport verification. The
@@ -49,8 +52,13 @@ artist-owned `deformationKeyName`, `activeStampId`, region/target ownership,
 recipe/deformation/capture digests, generated component IDs and node names by
 role, attached/detached/core ownership, saved/dirty state, validation
 measurements, and triangle counts. Damage Key IDs are additive metadata; names
-remain unchanged. A key may drive only one site/stage unless the artist creates
-a true independent duplicate.
+remain artist-controlled. A key may drive only one site/stage unless the artist
+creates a true independent duplicate.
+
+When a stage uses `SURFACE_STAIN` or `STAIN_AND_RAISED`, its record additionally
+owns the exact `dreadstone.surface_stain_binding.v1` bindings generated for
+that assigned Damage Key. Bindings are resolved by explicit region and stable
+stage assignment, never by stage words or Blender object-name ordering.
 
 ## Authoring workflow
 
@@ -167,6 +175,10 @@ EXPORT** is explicit. An invalid enabled site blocks export. A non-enabled draft
 is omitted with a warning; ordinary non-progression Damage Keys remain
 exportable exactly as before.
 
+Creating, editing, saving, assigning, renaming, or validating a stage turns
+the export latch off. This prevents a previously approved site from remaining
+enabled after its authored state changes.
+
 Deleting a site deletes metadata only and requires confirmation. It preserves
 assigned Damage Keys, Stamps, shape keys, captures, and gore.
 
@@ -185,6 +197,10 @@ sites. Each record exports:
   adjacent smoothstep crossfading, at most two simultaneous stage morphs,
   midpoint detailed-gore replacement, inactive defaults, runtime-owned gameplay
   thresholds/energy, and `runtimeImplementationIncluded: false`.
+- exact per-stage `surfaceStainBindings`, plus a site-level
+  `surfaceStainContract` declaring explicit stage ownership, hidden Basis,
+  transition behavior, portable-artifact presence, and truthful
+  `runtimeImplementationIncluded: false`.
 
 All pre-3.20 key, Stamp, Blueprint, gore, compound-event, and guard-Action
 manifest records remain intact.

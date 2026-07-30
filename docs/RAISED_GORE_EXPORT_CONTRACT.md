@@ -89,8 +89,16 @@ Inlay may use:
 Raised uses its compatible wet/clot/edge roles and may additionally use
 `DSB_GORE_CRUSHED_TISSUE` for solid nuclei. All final materials are
 zero-metallic and non-emissive. Wetness changes roughness/coat; redness changes
-crimson/tissue intensity and dark-clot bias. Temporary stain copies and
-`DSB_Surface_Gore_Mask` are removed before export.
+crimson/tissue intensity and dark-clot bias.
+
+The Blender-only preview material and `DSB_Surface_Gore_Mask` attribute are
+still removed before export. Forge converts their authored result into a
+portable, lightweight overlay mesh per Damage Key and ownership role. Each
+overlay uses standard glTF `COLOR_0` RGBA vertex color, alpha blending, copied
+skinning, the matching deformation morph, and a small authored normal offset.
+RGB carries the authored wet/dark red response and alpha carries the exact
+per-vertex smooth mask already evaluated by Forge.
+The original character material and normal map remain on the host mesh.
 
 ## Manifest mapping and activation
 
@@ -100,6 +108,16 @@ digest. Geometric keys also contain component-aware node names, mesh IDs,
 geometry/generation digests, total/nucleus triangle counts, materials, and
 activation contract. Hybrid dictionary keys use `<ROLE>:<COMPONENT>`, for
 example `ATTACHED:RAISED`.
+
+Keys that include a surface stain also contain `surfaceStainBindings[]` using
+`dreadstone.surface_stain_binding.v1`. Every binding names the exported stain
+node, PBR material, matching morph target, source host,
+attached/detached/core ownership, `COLOR_0` attribute semantic, activation
+weight, hidden-at-Basis contract, depth behavior, and renderer requirements.
+`portableArtifactIncluded` reports
+whether the GLB contains the actual visual. `runtimeImplementationIncluded`
+remains false because Forge does not ship the game-side visibility/morph
+controller.
 
 At runtime:
 
@@ -126,6 +144,13 @@ stale topology/capture/deformation/component/parent digests, altered or
 non-manifold shell/nucleus geometry, invalid layer ordering, bad skinning, material
 violations, excessive depth/proudness, incorrect inactive/preview flags, or
 triangle-budget excess.
+
+After writing the GLB, Forge parses its completed JSON chunk and separately
+validates surface stains, base host materials, and INLAY/RAISED geometry.
+`STAIN_ONLY` or `STAIN_AND_RAISED` cannot pass merely because a Blender preview
+material existed: every required node, material, RGBA `COLOR_0` accessor, morph
+target, ownership role, and explicit progressive-stage binding must resolve in
+the finished GLB.
 
 **Rebuild All Generated Gore** recreates only Forge-owned final nodes from the
 saved recipe, current capture, and current deformation. It does not alter source

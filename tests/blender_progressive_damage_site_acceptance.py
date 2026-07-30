@@ -24,6 +24,7 @@ sys.path.insert(0, str(ROOT))
 import dreadstone_animation_forge as addon
 from dreadstone_animation_forge import deformation_authoring
 from dreadstone_animation_forge import progressive_authoring
+from dreadstone_animation_forge.deformation import gltf_validation
 from dreadstone_animation_forge.deformation import preview_service
 from dreadstone_animation_forge.deformation import progressive_sites
 
@@ -54,6 +55,9 @@ def grid_mesh(name, size=7):
     mesh.update()
     obj = bpy.data.objects.new(name, mesh)
     bpy.context.scene.collection.objects.link(obj)
+    material = bpy.data.materials.new(name + "_BASE_MATERIAL")
+    material.diffuse_color = (0.32, 0.28, 0.24, 1.0)
+    mesh.materials.append(material)
     return obj
 
 
@@ -144,20 +148,34 @@ def action(name):
     return value
 
 
-def export_and_reimport(target, armature, gore, manifest, stage_names):
+def export_and_reimport(
+    target,
+    armature,
+    gore,
+    stains,
+    deformation_manifest,
+    stage_names,
+):
     output = Path(tempfile.mkdtemp(prefix="daf_progression_"))
     glb_path = output / "progressive_site.glb"
     manifest_path = output / "progressive_site.json"
+    manifest = {
+        "schema": "dreadstone.damage_authoring.v1",
+        "glb": glb_path.name,
+        "deformations": deformation_manifest,
+    }
     manifest_path.write_text(
         json.dumps(manifest, indent=2, sort_keys=True),
         encoding="utf-8",
     )
     target_name = target.name
     gore_names = {obj.name for obj in gore}
+    stain_names = {obj.name for obj in stains}
     bpy.ops.object.mode_set(mode="OBJECT") if bpy.context.mode != "OBJECT" else None
     bpy.ops.object.select_all(action="DESELECT")
-    for obj in (target, armature, *gore):
+    for obj in (target, armature, *gore, *stains):
         obj.hide_viewport = False
+        obj.hide_render = False
         obj.hide_set(False)
         obj.select_set(True)
     bpy.context.view_layer.objects.active = target
@@ -170,6 +188,35 @@ def export_and_reimport(target, armature, gore, manifest, stage_names):
         export_animations=True,
     )
     require("FINISHED" in result, "Progressive mechanical GLB export failed.")
+    final_glb = gltf_validation.validate_exported_damage_glb(
+        glb_path,
+        manifest,
+    )
+    require(
+        final_glb["status"] == "PASS",
+        "Completed synthetic GLB validation failed: "
+        + "; ".join(final_glb["errors"]),
+    )
+    require(
+        final_glb["surfaceStains"]["bindingCount"] == 3,
+        "Synthetic GLB does not contain three core-owned stage stains.",
+    )
+    damaged_json = gltf_validation.load_glb_json(glb_path)
+    removed_stain = sorted(stain_names)[0]
+    damaged_json["nodes"] = [
+        node
+        for node in damaged_json.get("nodes", [])
+        if str(node.get("name", "")) != removed_stain
+    ]
+    missing_stain_report = gltf_validation.validate_damage_gltf(
+        damaged_json,
+        manifest,
+    )
+    require(
+        missing_stain_report["status"] == "FAIL"
+        and missing_stain_report["surfaceStains"]["status"] == "FAIL",
+        "Completed-GLB validation accepted a deliberately removed stain node.",
+    )
     digest = hashlib.sha256(glb_path.read_bytes()).hexdigest()
     bpy.ops.wm.read_factory_settings(use_empty=True)
     imported = bpy.ops.import_scene.gltf(filepath=str(glb_path))
@@ -190,10 +237,59 @@ def export_and_reimport(target, armature, gore, manifest, stage_names):
         gore_names <= imported_nodes,
         "Clean reimport is missing detailed-gore stage nodes.",
     )
+    require(
+        stain_names <= imported_nodes,
+        "Clean reimport is missing portable surface-stain stage nodes.",
+    )
+    imported_stains = {
+        name: bpy.data.objects[name]
+        for name in stain_names
+    }
+    for obj in imported_stains.values():
+        obj.hide_set(True)
+    require(
+        not any(not obj.hide_get() for obj in imported_stains.values()),
+        "Basis/rest unexpectedly shows a surface stain.",
+    )
+    site = deformation_manifest["progressiveDamageSites"][0]
+    activation_checks = {}
+    for stage in site["stages"]:
+        for obj in imported_stains.values():
+            obj.hide_set(True)
+        active_names = {
+            binding["nodeName"]
+            for binding in stage["surfaceStainBindings"]
+        }
+        for name in active_names:
+            obj = imported_stains[name]
+            obj.hide_set(False)
+            if obj.data.shape_keys:
+                target_key = obj.data.shape_keys.key_blocks.get(
+                    stage["deformationKeyName"]
+                )
+                require(
+                    target_key is not None,
+                    f"{name} lost its stage morph target.",
+                )
+                target_key.value = 1.0
+        visible = {
+            name
+            for name, obj in imported_stains.items()
+            if not obj.hide_get()
+        }
+        require(
+            visible == active_names,
+            f"{stage['stage']} activated the wrong surface stain.",
+        )
+        activation_checks[stage["stage"]] = sorted(visible)
     return {
         "glb": str(glb_path),
         "manifest": str(manifest_path),
         "sha256": digest,
+        "finalGlbValidation": final_glb,
+        "missingStainRejected": True,
+        "basisHidden": True,
+        "stageActivation": activation_checks,
     }
 
 
@@ -264,6 +360,45 @@ def main():
             "key": key_name,
             "stamp": str(settings.deformation_active_stamp_id),
         }
+
+    original_light_name = authored["LIGHT"]["key"]
+    original_light_id = (
+        progressive_authoring._active_site(context=context)[1]["stages"][
+            "LIGHT"
+        ]["damageKeyId"]
+    )
+    deformation_authoring._select_key(settings, original_light_name)
+    rename_result = deformation_authoring.rename_deformation_key(
+        context,
+        original_light_name,
+        "RenamedScratch_v003",
+    )
+    authored["LIGHT"]["key"] = rename_result["newName"]
+    renamed_site = progressive_authoring._active_site(context=context)[1]
+    require(
+        rename_result["damageKeyId"] == original_light_id
+        and renamed_site["stages"]["LIGHT"]["damageKeyId"]
+        == original_light_id,
+        "Damage Key rename changed the stage's stable identity.",
+    )
+    require(
+        renamed_site["stages"]["LIGHT"]["deformationKeyName"]
+        == authored["LIGHT"]["key"],
+        "Damage Key rename did not retarget the explicit Light assignment.",
+    )
+    require(
+        deformation_authoring._key(target, original_light_name) is None
+        and deformation_authoring._key(
+            target,
+            authored["LIGHT"]["key"],
+        )
+        is not None,
+        "Damage Key rename did not move the actual shape key.",
+    )
+    require(
+        not renamed_site["enabledForExport"],
+        "Damage Key rename did not invalidate the export safety latch.",
+    )
 
     collection, site = progressive_authoring._active_site(context=context)
     require(
@@ -554,11 +689,32 @@ def main():
         )
     progressive_authoring.select_site(context, original_site_guid)
 
+    stains = deformation_authoring.build_surface_stain_export_artifacts()
     final_manifest = deformation_authoring.get_deformation_manifest()
+    final_site = final_manifest["progressiveDamageSites"][0]
+    require(
+        [
+            stage["deformationKeyName"]
+            for stage in final_site["stages"]
+        ]
+        == [
+            authored[stage]["key"]
+            for stage in progressive_sites.STAGE_ORDER
+        ],
+        "Portable stain mapping inferred stage order instead of preserving assignments.",
+    )
+    require(
+        all(
+            stage["surfaceStainBindings"]
+            for stage in final_site["stages"]
+        ),
+        "A progressive stage has no stage-owned surface-stain binding.",
+    )
     export = export_and_reimport(
         target,
         armature,
         gore,
+        stains,
         final_manifest,
         [value["key"] for value in authored.values()],
     )

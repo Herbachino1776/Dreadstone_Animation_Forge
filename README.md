@@ -13,7 +13,9 @@ and Heavy Damage Keys, previews adjacent replacement crossfades, validates
 actual evaluated geometry, and exports an explicit runtime contract. Forge
 never invents or scales one stage from another. A dedicated cohesive surface deck can
 form irregular connected relief or a closed lobulated tissue nucleus instead
-of limiting raised gore to scattered face patches.
+of limiting raised gore to scattered face patches. Broad smooth stains now
+export as stage-owned standard glTF PBR overlay meshes with RGBA `COLOR_0`
+masks instead of depending on Blender-only preview attributes.
 
 The Animation workspace also includes a compact VIP library for playing,
 editing, overwriting, deleting, and renaming saved Actions. Individual clips

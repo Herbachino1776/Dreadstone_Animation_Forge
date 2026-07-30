@@ -289,8 +289,11 @@ Before export:
 Export validation requires current capture/topology/deformation/recipe
 digests, correct Stamp selection, exact-index paired morphs, mode-correct hybrid
 components, glTF-safe materials, skinning, layer ordering, inactive defaults,
-and triangle budgets. Preview-only objects and temporary stain materials are
-removed before export.
+and triangle budgets. Blender-only preview materials are removed; their broad
+surface stain is converted into a stage-owned glTF overlay mesh with an
+RGBA `COLOR_0` mask, PBR material, matching deformation morph, and explicit
+attached/detached/core binding. Forge parses the completed GLB and fails export
+if the portable stain, base material, or required raised/inlay node is missing.
 
 ## 13. Clean reimport and verification
 
@@ -302,6 +305,8 @@ Reimport the exported GLB into a clean Blender file. Confirm:
 - raised nodes with **NUCLEUS** above zero contain a nonzero nucleus count and
   triangle count plus the crushed-tissue material role;
 - gore nodes default inactive and map to the matching deformation key;
+- each surface-stain stage has its own hidden-at-Basis overlay node, RGBA
+  `COLOR_0` mask, matching deformation morph, and correct ownership role;
 - materials are non-emissive and zero-metallic;
 - the manifest lists Blueprint metadata, active Stamp, component/node IDs,
   digests, triangle counts, and activation weight.

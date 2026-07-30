@@ -2,6 +2,14 @@
 
 ## 4.0.0
 
+- Fixed broad smooth damage stains disappearing from exported GLBs. Forge now
+  packages one portable PBR overlay per Damage Key/ownership role, writes exact
+  progressive-stage bindings, and validates the completed GLB separately from
+  raised/inlay geometry.
+- Added identity-preserving managed Damage Key renames. Existing stable IDs and
+  progressive assignments follow the new artist name, generated gore is safely
+  rebuilt, and the export latch is invalidated until validation is approved
+  again.
 - Added independent left/right **Elbow Flex** controls inside Arm & Hand Pose
   Polish. They remain rotation-only and overlay newly generated animation
   drafts without resizing or reweighting the character.

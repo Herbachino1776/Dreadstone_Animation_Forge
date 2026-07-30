@@ -1,0 +1,11 @@
+{
+  "name": "dreadstone-surface-stain-runtime-tests",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "test:surface-stains": "node surface_stain_three_runtime.mjs"
+  },
+  "devDependencies": {
+    "three": "0.185.1"
+  }
+}

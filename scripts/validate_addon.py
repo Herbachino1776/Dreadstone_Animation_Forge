@@ -38,7 +38,7 @@ ALL_MODULE_PATHS = tuple(sorted(
 EXPECTED_VERSION = (4, 0, 0)
 EXPECTED_READINESS_BUILD = "2026-07-18.source-contract.1"
 EXPECTED_AUTHORING_BUILD = "2026-07-18.source-contract.1"
-EXPECTED_DEFORMATION_BUILD = "2026-07-28.progressive-damage-sites.1"
+EXPECTED_DEFORMATION_BUILD = "2026-07-29.portable-surface-stains.1"
 
 REQUIRED_GUIDE_HEADINGS = (
     "## 1. Install Dreadstone Animation Forge 4.0.0",
@@ -140,6 +140,7 @@ REQUIRED_SCHEMAS = {
     "dreadstone.impact_control.v1",
     "dreadstone.gore_control.v1",
     "dreadstone.surface_gore_control.v1",
+    "dreadstone.surface_stain_binding.v1",
     "dreadstone.trauma_stamp_library.v1",
     "dreadstone.compound_trauma_event.v1",
 }
@@ -539,11 +540,16 @@ def check_surface_gore_contracts(sources: dict[str, str], trees: dict[str, ast.M
             'GORE_PREVIEW_ATTRIBUTE = "DSB_Surface_Gore_Mask"',
             "def preview_surface_gore(", "def clear_surface_gore_preview(",
             "def rebuild_raised_gore_for_key(", "def generated_gore_objects(",
+            "def build_surface_stain_export_artifacts(",
+            "def surface_stain_export_records(",
+            "def rename_deformation_key(",
             "def _raised_gore_errors(",
             "material = source.copy()", "clear_surface_gore_preview(all_regions=True)",
             '"surfaceGoreOverlay"', '"goreOverlayDigest"',
             '"goreOverlayValidationStatus"', '"raisedGoreValidationStatus"', '"exportValidationStatus"',
             '"generatedGoreMeshes"', '"goreActivationContract"',
+            '"surfaceStainMeshes"', '"surfaceStainActivationContract"',
+            '"portableArtifactIncluded"', '"runtimeImplementationIncluded"',
             '"dsb_gore_component"', '"dsb_gore_parent_recipe_digest"',
             '"dsb_gore_nucleus_triangle_count"', '"dsb_gore_nucleus_count"',
             '"COHESIVE_SURFACE_MASS_DISTRIBUTED_NUCLEI_V5"',

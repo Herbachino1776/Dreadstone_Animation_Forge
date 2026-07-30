@@ -15,7 +15,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 PACKAGE = ROOT / "dreadstone_animation_forge"
 DIST = ROOT / "dist"
-DEFORMATION_BUILD = "2026-07-28.progressive-damage-sites.1"
+DEFORMATION_BUILD = "2026-07-29.portable-surface-stains.1"
 MODULES = tuple(sorted(
     path.relative_to(PACKAGE).as_posix()
     for path in PACKAGE.rglob("*.py")
