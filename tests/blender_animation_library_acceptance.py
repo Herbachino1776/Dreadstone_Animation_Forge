@@ -247,6 +247,12 @@ def main():
         legacy_action[animation_library.CLIP_BUILD_PROPERTY] = (
             "2026-07-28.vip-animation-library.1"
         )
+        for anatomy_key in (
+            animation_library.CLIP_ANATOMY_PROFILE_PROPERTY,
+            animation_library.CLIP_ANATOMY_LEGACY_PROPERTY,
+        ):
+            if anatomy_key in legacy_action:
+                del legacy_action[anatomy_key]
         legacy_settings = json.dumps({
             "facing": "POS_Y",
             "mace_guard_hold_seconds": 0.15,
@@ -291,6 +297,7 @@ def main():
         )
         require(
             bool(imported_legacy_action[animation_library.CLIP_LEGACY_PROPERTY])
+            and bool(imported_legacy_action[animation_library.CLIP_ANATOMY_LEGACY_PROPERTY])
             and str(
                 imported_legacy_action[
                     animation_library.CLIP_SOURCE_BUILD_PROPERTY

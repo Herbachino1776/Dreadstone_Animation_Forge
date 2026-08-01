@@ -35,13 +35,13 @@ ALL_MODULE_PATHS = tuple(sorted(
     if "__pycache__" not in path.parts
 ))
 
-EXPECTED_VERSION = (4, 0, 0)
+EXPECTED_VERSION = (4, 1, 0)
 EXPECTED_READINESS_BUILD = "2026-07-18.source-contract.1"
 EXPECTED_AUTHORING_BUILD = "2026-07-18.source-contract.1"
 EXPECTED_DEFORMATION_BUILD = "2026-07-29.portable-surface-stains.1"
 
 REQUIRED_GUIDE_HEADINGS = (
-    "## 1. Install Dreadstone Animation Forge 4.0.0",
+    "## 1. Install Dreadstone Animation Forge 4.1.0",
     "## 2. Open the Dreadstone panel",
     "## 3. Import and prepare a source GLB",
     "## 4. Use the VIP Damage workflow",
@@ -92,6 +92,9 @@ REQUIRED_GUIDE_UI_LABELS = {
     "**REFRESH PROGRESSION PREVIEW**",
     "**VALIDATE ALL CROSSFADE STATES**",
     "**VALIDATE + ENABLE SITE FOR EXPORT**",
+    "**ANALYZE CREATURE ANATOMY**",
+    "**SHOW ROLE MAPPING**",
+    "**CLEAR PROFILE OVERRIDE**",
     "**VIP ANIMATION LIBRARY**",
     "**PLAY**",
     "**EDIT**",
@@ -143,6 +146,9 @@ REQUIRED_SCHEMAS = {
     "dreadstone.surface_stain_binding.v1",
     "dreadstone.trauma_stamp_library.v1",
     "dreadstone.compound_trauma_event.v1",
+    "dreadstone.animation_clip.v1",
+    "dreadstone.creature_anatomy_profile.v1",
+    "dreadstone.creature_anatomy_analysis.v1",
 }
 
 REQUIRED_OBJECT_NAMES = {
@@ -256,14 +262,21 @@ REQUIRED_OPERATORS = {
     "daf.animation_library_delete": "Delete Saved Animation",
     "daf.animation_library_export": "Export Selected Clip",
     "daf.animation_library_import": "Import Animation Clip",
+    "daf.analyze_creature_anatomy": "Analyze Creature Anatomy",
+    "daf.show_anatomy_role_mapping": "Show Role Mapping",
+    "daf.clear_anatomy_profile_override": "Clear Profile Override",
 }
 
 REQUIRED_UI_TEXT = {
     "Source Damage Readiness",
     "Damage Segment & Stump Authoring v3.9",
-    "Trauma Field Authoring v4.0.0",
+    "Trauma Field Authoring v4.1.0",
     "VIP DAMAGE WORKFLOW",
     "VIP ANIMATION LIBRARY",
+    "ANALYZE CREATURE ANATOMY",
+    "Advanced Anatomy Mapping",
+    "SHOW ROLE MAPPING",
+    "CLEAR PROFILE OVERRIDE",
     "PORTABLE ANIMATION CLIPS",
     "CREATE DAMAGE KEY FROM SELECTION",
     "RANDOMIZE DAMAGE",
@@ -456,7 +469,7 @@ def check_extension_manifest() -> None:
         (
             'schema_version = "1.0.0"',
             'id = "dreadstone_animation_forge"',
-            'version = "4.0.0"',
+            'version = "4.1.0"',
             'name = "Dreadstone Animation Forge"',
             'type = "add-on"',
             'blender_version_min = "4.2.0"',
@@ -562,7 +575,7 @@ def check_surface_gore_contracts(sources: dict[str, str], trees: dict[str, ast.M
 
 
 def check_schemas_names_keys_seams(trees: dict[str, ast.Module]) -> None:
-    literals = string_literals(trees.values())
+    literals = string_literals(package_trees())
     missing_schemas = sorted(REQUIRED_SCHEMAS - literals)
     missing_names = sorted(REQUIRED_OBJECT_NAMES - literals)
     missing_keys = sorted(REQUIRED_DEFORMATION_KEYS - literals)
@@ -571,6 +584,34 @@ def check_schemas_names_keys_seams(trees: dict[str, ast.Module]) -> None:
     require(not missing_names, f"missing generated names: {', '.join(missing_names)}")
     require(not missing_keys, f"missing standard deformation keys: {', '.join(missing_keys)}")
     require(not missing_seams, f"missing required seams: {', '.join(missing_seams)}")
+
+
+def check_anatomy_profile_contracts() -> None:
+    anatomy = PACKAGE / "anatomy"
+    required = {
+        "__init__.py", "schema.py", "model.py", "profiles.py", "resolver.py",
+        "detection.py", "orientation.py", "validation.py", "persistence.py",
+        "ui_state.py", "blender_adapter.py",
+    }
+    actual = {path.name for path in anatomy.glob("*.py")}
+    require(required <= actual, "missing anatomy modules: " + ", ".join(sorted(required - actual)))
+    pure_names = required - {"blender_adapter.py", "__init__.py"}
+    for name in sorted(pure_names):
+        source = (anatomy / name).read_text(encoding="utf-8")
+        require("import bpy" not in source and "from bpy" not in source, f"{name} imports Blender")
+    profile_source = (anatomy / "profiles.py").read_text(encoding="utf-8")
+    for marker in (
+        "DSB_HUMANOID_V1", "DSB_QUADRUPED_MAMMAL_DIGITIGRADE_V1",
+        "front_l_paw", "front_r_paw", "hind_l_paw", "hind_r_paw",
+    ):
+        require(marker in profile_source, f"anatomy profiles missing {marker}")
+    for relative in (
+        "docs/CREATURE_ANATOMY_PROFILE_CONTRACT.md",
+        "docs/QUADRUPED_CANONICAL_FIXTURE_REQUIREMENTS.md",
+        "docs/research/ANYTOP_FEASIBILITY_AUDIT.md",
+        "docs/research/QUADRUPED_MOTION_REFERENCE_PLAN.md",
+    ):
+        require((ROOT / relative).is_file(), f"{relative} is missing")
 
 
 def check_operators_and_ui(trees: dict[str, ast.Module]) -> None:
@@ -928,20 +969,21 @@ def check_repository_hygiene() -> None:
 
 
 def main() -> int:
-    print("DREADSTONE ANIMATION FORGE v4.0.0 STATIC VALIDATION")
+    print("DREADSTONE ANIMATION FORGE v4.1.0 STATIC VALIDATION")
     print("Blender is not imported; runtime acceptance remains separate.")
 
     sources: dict[str, str] = {}
     trees: dict[str, ast.Module] = {}
     checks: list[tuple[str, Callable[[], None]]] = [
         ("all contract package modules exist", check_module_files),
-        ("Blender extension manifest exists and matches v4.0.0", check_extension_manifest),
+        ("Blender extension manifest exists and matches v4.1.0", check_extension_manifest),
         ("all Python modules parse with ast.parse", lambda: check_parse(sources)),
         ("all Python modules compile with py_compile", check_compile),
         ("add-on/deformation version and build contracts", lambda: check_versions(trees)),
         ("expected package-relative module imports", lambda: check_package_imports(sources)),
         ("additive gore, preview management, persistence, validation, and export contracts", lambda: check_surface_gore_contracts(sources, trees)),
         ("manifest schemas, DSB names, seams, and standard keys", lambda: check_schemas_names_keys_seams(trees)),
+        ("Creature Anatomy Profile modules, schemas, built-ins, and research contracts", check_anatomy_profile_contracts),
         ("required operators and UI labels", lambda: check_operators_and_ui(trees)),
         ("Impact Pedal parameter authority, transactions, UI, and reports", lambda: check_impact_parameter_contracts(sources)),
         ("world-space exact-index deformation synchronization", lambda: check_world_space_and_exact_index(sources["deformation_authoring.py"])),

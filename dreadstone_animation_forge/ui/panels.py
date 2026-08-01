@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import json
+
 from . import properties, workflow_state
 
 
@@ -23,7 +25,12 @@ def _draw_start(layout, context, settings, summary):
     box.label(text="Character Processing", icon='OUTLINER_OB_ARMATURE')
     active = context.active_object
     _status_row(box, "Source selected", active is not None, active.name if active else "")
-    _status_row(box, "Rig analyzed", bool(settings.manual_hips or settings.manual_spine))
+    _status_row(
+        box,
+        "Creature anatomy analyzed",
+        settings.anatomy_readiness_status in {"HUMANOID_READY", "QUADRUPED_READY"},
+        settings.anatomy_readiness_status,
+    )
     _status_row(box, "Scale ready", bool(settings.target_height), f"Target {settings.target_height:.2f} m")
     _status_row(
         box,
@@ -1113,12 +1120,66 @@ def _draw_vip_animation_library(layout, context, settings):
         )
 
 
+def _draw_anatomy_card(layout, settings):
+    card = layout.box()
+    status = str(settings.anatomy_readiness_status)
+    card.alert = status not in {
+        "NOT_ANALYZED", "HUMANOID_READY", "QUADRUPED_READY",
+    }
+    card.label(text="Creature Anatomy", icon='ARMATURE_DATA')
+    card.label(text=f"Creature Class · {settings.anatomy_detected_creature_class}")
+    card.label(text=f"Profile · {settings.anatomy_selected_profile}")
+    row = card.row(align=True)
+    row.label(text=f"Confidence · {settings.anatomy_detection_confidence:.0%}")
+    row.label(text=f"Roles · {settings.anatomy_mapped_role_count}")
+    card.label(text=f"Orientation · {settings.anatomy_orientation_summary}")
+    card.label(
+        text=f"Readiness · {status}",
+        icon='CHECKMARK' if status in {"HUMANOID_READY", "QUADRUPED_READY"} else 'ERROR' if card.alert else 'INFO',
+    )
+    if settings.anatomy_worst_blocker:
+        blocker = card.box()
+        blocker.alert = True
+        blocker.label(text=str(settings.anatomy_worst_blocker)[:100], icon='ERROR')
+    action = card.row()
+    action.scale_y = 1.25
+    action.operator(
+        "daf.analyze_creature_anatomy",
+        text="ANALYZE CREATURE ANATOMY",
+        icon='VIEWZOOM',
+    )
+    card.prop(settings, "anatomy_profile_override")
+    row = card.row(align=True)
+    row.operator("daf.show_anatomy_role_mapping", text="SHOW ROLE MAPPING", icon='TEXT')
+    row.operator("daf.clear_anatomy_profile_override", text="CLEAR PROFILE OVERRIDE", icon='LOOP_BACK')
+
+    card.prop(
+        settings,
+        "ui_anatomy_advanced_open",
+        text="Advanced Anatomy Mapping",
+        icon='TRIA_DOWN' if settings.ui_anatomy_advanced_open else 'TRIA_RIGHT',
+        emboss=False,
+    )
+    if settings.ui_anatomy_advanced_open:
+        advanced = card.box()
+        try:
+            mapping = json.loads(str(settings.anatomy_role_mapping_json or "{}"))
+        except (TypeError, ValueError, json.JSONDecodeError):
+            mapping = {}
+        if not mapping:
+            advanced.label(text="No persisted role mapping. Run analysis.", icon='INFO')
+        else:
+            for role, value in sorted(mapping.items()):
+                display = " > ".join(value) if isinstance(value, list) else str(value)
+                advanced.label(text=f"{role} · {display}"[:110], icon='BONE_DATA')
+        advanced.label(text="Detailed diagnostics are stored in DSB_Creature_Anatomy_Mapping.json", icon='TEXT')
+
+
 def _draw_animation_setup(layout, context, settings):
     setup = layout.box()
     setup.label(text="Animation Setup", icon='ARMATURE_DATA')
-    row = setup.row(align=True)
-    row.operator("daf.analyze", text="Analyze Rig")
-    row.operator("daf.safe_resize", text="Safe Resize")
+    _draw_anatomy_card(setup, settings)
+    setup.operator("daf.safe_resize", text="Safe Resize")
     setup.operator("daf.adopt_imported_pack", text="Adopt Imported Animation Pack")
     setup.label(text="Select any mesh or armature belonging to the target character", icon='INFO')
     setup.label(text="Animation tools remain available throughout damage authoring", icon='LINKED')
@@ -1363,6 +1424,21 @@ def _draw_animation_pack(layout, settings):
 def _draw_animation(layout, context, settings):
     _draw_vip_animation_library(layout, context, settings)
     _draw_animation_setup(layout, context, settings)
+    if settings.anatomy_selected_profile == "DSB_QUADRUPED_MAMMAL_DIGITIGRADE_V1":
+        notice = layout.box()
+        notice.label(text="Quadruped generation is not production-ready in this milestone", icon='INFO')
+        notice.label(text="Use analysis, role diagnostics, imported references, and validation only")
+        _draw_animation_pack(layout, settings)
+        return
+    if settings.anatomy_readiness_status in {
+        "PROFILE_AMBIGUOUS", "PROFILE_INCOMPLETE", "ORIENTATION_AMBIGUOUS",
+        "MISSING_LIMB_CHAIN", "MISSING_CONTACT_ROLE", "UNSUPPORTED_ANATOMY",
+    }:
+        warning = layout.box()
+        warning.alert = True
+        warning.label(text="Resolve the anatomy blocker before generating humanoid motion", icon='ERROR')
+        _draw_animation_pack(layout, settings)
+        return
     _draw_pose_polish(layout, settings)
     _draw_walk_animation(layout, settings)
     _draw_death_animation(layout, settings)

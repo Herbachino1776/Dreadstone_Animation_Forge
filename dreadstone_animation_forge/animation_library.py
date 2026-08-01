@@ -11,9 +11,11 @@ from pathlib import Path
 
 import bpy
 
+from .anatomy import persistence as anatomy_persistence
+
 
 ANIMATION_CLIP_SCHEMA = "dreadstone.animation_clip.v1"
-ANIMATION_LIBRARY_BUILD_ID = "2026-07-29.animation-forge-4.0.0"
+ANIMATION_LIBRARY_BUILD_ID = "2026-07-31.creature-anatomy-profile-4.1.0"
 
 CLIP_ID_PROPERTY = "dsb_animation_clip_id"
 CLIP_SCHEMA_PROPERTY = "dsb_animation_clip_schema"
@@ -21,6 +23,8 @@ CLIP_BUILD_PROPERTY = "dsb_animation_library_build"
 CLIP_OWNER_PROPERTY = "dsb_animation_owner_rig"
 CLIP_REQUIRED_BONES_PROPERTY = "dsb_animation_required_bones_json"
 CLIP_RIG_PROFILE_PROPERTY = "dsb_animation_rig_profile_json"
+CLIP_ANATOMY_PROFILE_PROPERTY = "dsb_animation_anatomy_json"
+CLIP_ANATOMY_LEGACY_PROPERTY = "dsb_animation_anatomy_legacy"
 CLIP_SETTINGS_PROPERTY = "dsb_animation_settings_json"
 CLIP_EXPORT_NAME_PROPERTY = "dsb_animation_export_name"
 CLIP_LEGACY_PROPERTY = "dsb_imported_legacy_clip"
@@ -370,6 +374,13 @@ def stamp_action_metadata(
         sort_keys=True,
         separators=(",", ":"),
     )
+    anatomy = anatomy_persistence.export_metadata(armature, infer_legacy=True)
+    action[CLIP_ANATOMY_PROFILE_PROPERTY] = json.dumps(
+        anatomy,
+        sort_keys=True,
+        separators=(",", ":"),
+    )
+    action[CLIP_ANATOMY_LEGACY_PROPERTY] = bool(anatomy.get("legacy", False))
     action[CLIP_SETTINGS_PROPERTY] = json.dumps(
         _settings_snapshot(settings, kind),
         sort_keys=True,
@@ -432,6 +443,35 @@ def compatibility_report(action, armature):
         "Missing required bones: " + ", ".join(missing)
     ] if missing else []
     warnings = []
+    source_anatomy = None
+    raw_anatomy = str(action.get(CLIP_ANATOMY_PROFILE_PROPERTY, ""))
+    if raw_anatomy:
+        try:
+            source_anatomy = anatomy_persistence.migrate_metadata(
+                json.loads(raw_anatomy)
+            )
+        except (TypeError, ValueError, json.JSONDecodeError):
+            warnings.append(
+                "The source anatomy metadata is unreadable; legacy rig checks remain authoritative."
+            )
+    else:
+        warnings.append(
+            "The clip has no anatomy metadata and is treated as legacy humanoid-compatible."
+        )
+        source_anatomy = anatomy_persistence.legacy_humanoid_metadata()
+    target_anatomy = anatomy_persistence.load_metadata(armature)
+    if source_anatomy is not None and target_anatomy is not None:
+        source_profile_id = str(source_anatomy.get("profileId", ""))
+        target_profile_id = str(target_anatomy.get("profileId", ""))
+        if (
+            source_profile_id
+            and target_profile_id
+            and source_profile_id != target_profile_id
+        ):
+            errors.append(
+                "Creature Anatomy Profile differs "
+                f"({source_profile_id} -> {target_profile_id})."
+            )
     source_profile = {}
     raw_profile = str(action.get(CLIP_RIG_PROFILE_PROPERTY, ""))
     if raw_profile:
@@ -496,6 +536,12 @@ def compatibility_report(action, armature):
         "errors": errors,
         "warnings": list(dict.fromkeys(warnings)),
         "requiredBones": required,
+        "anatomyLegacy": (
+            source_anatomy is None or bool(source_anatomy.get("legacy", False))
+        ),
+        "sourceAnatomyProfileId": (
+            str(source_anatomy.get("profileId", "")) if source_anatomy else ""
+        ),
     }
 
 
@@ -891,6 +937,10 @@ def export_action_clip(context, armature, action, directory):
         ),
         "requiredBones": report["requiredBones"],
         "sourceArmature": armature.name,
+        "anatomy": anatomy_persistence.export_metadata(
+            armature,
+            infer_legacy=True,
+        ),
         "blendFile": blend_path.name,
     }
     manifest_path.write_text(
@@ -942,6 +992,7 @@ def import_action_clip(context, armature, filepath):
         {
             "schema": str(action.get(CLIP_SCHEMA_PROPERTY, "")),
             "build": str(action.get(CLIP_BUILD_PROPERTY, "")),
+            "anatomy": str(action.get(CLIP_ANATOMY_PROFILE_PROPERTY, "")),
         }
         for action in loaded
     ]
@@ -992,6 +1043,14 @@ def import_action_clip(context, armature, filepath):
         action[CLIP_OWNER_PROPERTY] = armature.name
         action[CLIP_SCHEMA_PROPERTY] = ANIMATION_CLIP_SCHEMA
         action[CLIP_BUILD_PROPERTY] = ANIMATION_LIBRARY_BUILD_ID
+        anatomy_legacy = not bool(source.get("anatomy"))
+        if anatomy_legacy:
+            action[CLIP_ANATOMY_PROFILE_PROPERTY] = json.dumps(
+                anatomy_persistence.legacy_humanoid_metadata(),
+                sort_keys=True,
+                separators=(",", ":"),
+            )
+        action[CLIP_ANATOMY_LEGACY_PROPERTY] = anatomy_legacy
         action["dsb_approved"] = True
         action["dsb_draft"] = False
         action.use_fake_user = True
@@ -1059,6 +1118,8 @@ def action_summary(action, fps):
 __all__ = (
     "ANIMATION_CLIP_SCHEMA",
     "ANIMATION_LIBRARY_BUILD_ID",
+    "CLIP_ANATOMY_LEGACY_PROPERTY",
+    "CLIP_ANATOMY_PROFILE_PROPERTY",
     "DRAFT_ACTION_NAMES",
     "action_category",
     "action_frame_bounds",

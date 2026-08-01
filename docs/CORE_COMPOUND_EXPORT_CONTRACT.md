@@ -69,6 +69,17 @@ materials and is inactive by default.
 
 Approved brace Actions appear in `maceHeadGuardActions[]` and the Approved Animation Pack manifest. Metadata includes action name, guard variant, `Guard_Active` frame/time, presented regions, interruptibility, in-place root-motion policy, and validation state. The Action contains mapped pose-bone rotation/location keys and no bone-scale or shape-key animation. Animation GLB export remains the Approved Animation Pack workflow; the damage manifest carries the cross-domain semantic reference.
 
+## Creature anatomy metadata
+
+Forge 4.1 additively writes top-level `anatomy` from the owned source armature.
+It contains the versioned profile ID, creature/locomotion classes, stable role
+mapping digest, authoritative orientation, contacts, capabilities, readiness,
+and analyzer version. Existing manifest fields and runtime activation rules are
+unchanged. A legacy asset without anatomy follows the current humanoid path and
+is labeled `legacy`; missing anatomy alone does not invalidate prior damage or
+Action packages. Quadruped region templates are diagnostics only in this
+milestone and do not create geometry or weaken Source Readiness.
+
 ## Reimport verification
 
 A clean reimport must contain every declared mesh-local morph, every non-empty generated gore node and its material roles, and the expected inactive/default object state. The separately imported Approved Animation Pack must contain each approved guard Action. Compare imported inventory with both manifests; do not infer success from export completion alone.

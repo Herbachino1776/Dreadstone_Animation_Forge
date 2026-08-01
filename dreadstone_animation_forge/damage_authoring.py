@@ -18,6 +18,7 @@ from mathutils.kdtree import KDTree
 from bpy.types import Operator
 
 from . import damage_readiness, trauma_field
+from .anatomy import persistence as anatomy_persistence
 from .deformation import gltf_validation
 
 AUTHORING_SCHEMA = "dreadstone.damage_authoring.v1"
@@ -1306,6 +1307,10 @@ def _build_authoring_asset_impl(context, report_path, report, seams, source_mesh
         "source_object_name": source_mesh.name,
         "source_mesh_datablock_name": source_mesh.data.name,
         "source_armature_name": source_armature.name,
+        "anatomy": anatomy_persistence.export_metadata(
+            source_armature,
+            infer_legacy=True,
+        ),
         "source_object_matrix_world": [list(row) for row in source_mesh.matrix_world],
         "source_object_scale": [float(value) for value in source_mesh.matrix_world.to_scale()],
         "source_fingerprints": source_analysis.get("fingerprints", {}),
@@ -1781,6 +1786,9 @@ def _manifest(
             "objectMatrixWorld": state.get("source_object_matrix_world"),
             "exportScale": state.get("source_object_scale"),
         },
+        "anatomy": state.get("anatomy") or anatomy_persistence.export_metadata(
+            anatomy_persistence.legacy_humanoid_metadata()
+        ),
         "intact": {
             "bodyCore": BODY_CORE_NAME,
             "attachedSegments": [

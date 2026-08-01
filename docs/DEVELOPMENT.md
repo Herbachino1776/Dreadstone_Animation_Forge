@@ -15,7 +15,7 @@ documents and validators in the same change.
 Blender-free algorithms live in `trauma_field.py`, `parameter_schema.py`, and
 the focused services under `deformation/`.
 
-Forge 3.19 adds:
+Forge 4.1 includes:
 
 - `dreadstone.animation_clip.v1`, a native Action `.blend` package with a JSON
   manifest, required-bone/hierarchy validation, non-blocking rest/proportion
@@ -56,6 +56,18 @@ Static checks do not prove Blender registration, mesh construction, viewport
 presentation, GLB export, or reimport.
 
 ## Focused Blender 5.1.2 acceptance
+
+Run the Creature Anatomy Profile acceptance first:
+
+```text
+blender --background --factory-startup --python tests/blender_creature_anatomy_acceptance.py
+```
+
+It must preserve the exact Animate Anything humanoid mapping, keep analysis
+non-mutating, resolve the four architectural quadruped limbs and contacts,
+reject missing/duplicate/reversed/ambiguous cases, persist through save/reopen,
+round-trip additive Action-package anatomy metadata, and unregister cleanly.
+The generated rig is explicitly non-production.
 
 Run the mode-aware creation/rollback regression first:
 
@@ -122,7 +134,7 @@ should be performed only when requested.
 ## Release archive
 
 `python scripts/build_release.py` validates first and writes
-`dist/Dreadstone_Animation_Forge_v4_0_0.zip`. Every package Python file is
+`dist/Dreadstone_Animation_Forge_v4_1_0.zip`. Every package Python file is
 discovered recursively, so new service/operator modules must appear in the
 archive automatically. `dist/`, bytecode, caches, Blender backups, and
 temporary extraction directories are generated artifacts and are not

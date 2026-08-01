@@ -1,7 +1,7 @@
 bl_info = {
     "name": "Dreadstone Animation Forge",
     "author": "Dreadstone Black",
-    "version": (4, 0, 0),
+    "version": (4, 1, 0),
     "blender": (3, 6, 0),
     "location": "3D Viewport > Sidebar > Dreadstone",
     "description": "Animation authoring, protected damage assets, and registered-region trauma-field shape-key authoring.",
@@ -15,85 +15,14 @@ from bpy.props import BoolProperty, EnumProperty, FloatProperty, FloatVectorProp
 from bpy.types import Operator, Panel, PropertyGroup
 from . import animation_library
 from . import parameter_schema
+from .anatomy import blender_adapter as anatomy_blender
+from .anatomy import persistence as anatomy_persistence
+from .anatomy.profiles import ANIMATE_ANYTHING_PROFILE, HUMANOID_ALIASES
+from .anatomy.schema import axis_vector as anatomy_axis_vector
 
-ALIASES = {
-    "hips": [
-        "hips","pelvis","hip","waist","cog","center","rootpelvis",
-        "basehip","ccbasehip","bip001pelvis","bip01pelvis","jpelvis"
-    ],
-    "spine": [
-        "spine","spine0","spine1","spine01","lowerback","abdomen",
-        "torso","spinebase","ccbasewaist","ccbasespine01"
-    ],
-    "chest": [
-        "chest","upperchest","thorax","ribcage","spine2","spine02",
-        "spine3","spine03","ccbasespine02","ccbasespine03"
-    ],
-    "neck": ["neck","neck1","neck01","ccbasenecktwist01"],
-    "head": ["head","ccbasehead"],
-    "thigh_l": [
-        "leftupleg","leftupperleg","leftthigh","thighl","upperlegl",
-        "lthigh","thigh_l","upper_leg_l"
-    ],
-    "shin_l": [
-        "leftleg","leftlowerleg","leftshin","shinl","lowerlegl",
-        "calfl","lcalf","shin_l","lower_leg_l"
-    ],
-    "foot_l": ["leftfoot","footl","lfoot","foot_l"],
-    "thigh_r": [
-        "rightupleg","rightupperleg","rightthigh","thighr","upperlegr",
-        "rthigh","thigh_r","upper_leg_r"
-    ],
-    "shin_r": [
-        "rightleg","rightlowerleg","rightshin","shinr","lowerlegr",
-        "calfr","rcalf","shin_r","lower_leg_r"
-    ],
-    "foot_r": ["rightfoot","footr","rfoot","foot_r"],
-    "upper_arm_l": [
-        "leftarm","leftupperarm","upperarml","lupperarm",
-        "upper_arm_l","arm_l"
-    ],
-    "lower_arm_l": [
-        "leftforearm","leftlowerarm","forearml","lowerarml",
-        "lforearm","lower_arm_l","forearm_l"
-    ],
-    "shoulder_l": ["leftshoulder", "shoulderl", "lshoulder", "shoulder_l", "clavicle_l"],
-    "hand_l": ["lefthand", "handl", "lhand", "hand_l", "wrist_l"],
-    "upper_arm_r": [
-        "rightarm","rightupperarm","upperarmr","rupperarm",
-        "upper_arm_r","arm_r"
-    ],
-    "lower_arm_r": [
-        "rightforearm","rightlowerarm","forearmr","lowerarmr",
-        "rforearm","lower_arm_r","forearm_r"
-    ],
-    "shoulder_r": ["rightshoulder", "shoulderr", "rshoulder", "shoulder_r", "clavicle_r"],
-    "hand_r": ["righthand", "handr", "rhand", "hand_r", "wrist_r"],
-}
-
-ANIMATE_ANYTHING_PROFILE = {
-    "root": "root",
-    "hips": "body",
-    "spine": "body_top0",
-    "spine_mid": "body_top1",
-    "chest": "body_top2",
-    "neck": "neck",
-    "head": "head",
-    "shoulder_l": "shoulder_left",
-    "upper_arm_l": "arm_left_top",
-    "lower_arm_l": "arm_left_bot",
-    "hand_l": "arm_left_hand",
-    "shoulder_r": "shoulder_right",
-    "upper_arm_r": "arm_right_top",
-    "lower_arm_r": "arm_right_bot",
-    "hand_r": "arm_right_hand",
-    "thigh_l": "leg_left_top",
-    "shin_l": "leg_left_bot",
-    "foot_l": "leg_left_foot",
-    "thigh_r": "leg_right_top",
-    "shin_r": "leg_right_bot",
-    "foot_r": "leg_right_foot",
-}
+# Public compatibility aliases. Their authority moved into DSB_HUMANOID_V1;
+# existing scripts importing these names continue to receive the same values.
+ALIASES = {role: list(aliases) for role, aliases in HUMANOID_ALIASES.items()}
 
 def detect_animate_anything_profile(arm):
     required = {
@@ -365,15 +294,11 @@ def unique_action(base):
         i += 1
     return f"{base}_v{i:03d}"
 
-def vectors(settings):
-    lookup = {
-        "NEG_Y": Vector((0,-1,0)),
-        "POS_Y": Vector((0,1,0)),
-        "POS_X": Vector((1,0,0)),
-        "NEG_X": Vector((-1,0,0)),
-    }
-    fwd = lookup[settings.facing]
-    up = Vector((0,0,1))
+def vectors(settings, armature=None):
+    """Compatibility accessor backed by the authoritative orientation service."""
+    forward_axis = anatomy_blender.authoritative_forward_axis(armature, settings)
+    fwd = Vector(anatomy_axis_vector(forward_axis))
+    up = Vector(anatomy_axis_vector("+Z"))
     side = up.cross(fwd).normalized()
     return fwd, side, up
 
@@ -887,6 +812,23 @@ def _gore_identity_property_updated(self, context):
         module.apply_gore_identity_transaction(context)
 
 
+def _anatomy_facing_updated(self, context):
+    """Keep analyzed humanoid orientation synchronized with the legacy control."""
+
+    try:
+        armature = find_armature(context)
+    except RuntimeError:
+        return
+    metadata = anatomy_persistence.load_metadata(armature)
+    if metadata is None or metadata.get("profileId") != "DSB_HUMANOID_V1":
+        return
+    anatomy_blender.analyze_armature(
+        armature,
+        self,
+        legacy_humanoid_mapper=map_bones,
+    )
+
+
 def _deformation_region_items(self, context):
     module = sys.modules.get(f"{__package__}.deformation_authoring")
     if module is None:
@@ -1073,6 +1015,34 @@ class DAFSettings(PropertyGroup):
         default="",
         subtype='FILE_PATH',
     )
+    ui_anatomy_advanced_open: BoolProperty(default=False)
+    anatomy_profile_override: EnumProperty(
+        name="Profile Override",
+        description="Select a validator explicitly; required topology validation still applies",
+        items=[
+            ("AUTO", "Auto Detect", "Select only when profile confidence is decisive"),
+            ("HUMANOID", "Humanoid", "Validate with the built-in humanoid anatomy profile"),
+            (
+                "QUADRUPED_DIGITIGRADE",
+                "Quadruped Digitigrade",
+                "Validate wolf-, dog-, hyena-, big-cat-, or demon-hound-like anatomy",
+            ),
+            (
+                "CUSTOM_UNRESOLVED",
+                "Custom / Unresolved",
+                "Do not claim support until a matching profile exists",
+            ),
+        ],
+        default="AUTO",
+    )
+    anatomy_detected_creature_class: StringProperty(default="NOT ANALYZED", options={'HIDDEN'})
+    anatomy_selected_profile: StringProperty(default="AUTO / UNRESOLVED", options={'HIDDEN'})
+    anatomy_detection_confidence: FloatProperty(default=0.0, min=0.0, max=1.0, options={'HIDDEN'})
+    anatomy_orientation_summary: StringProperty(default="? forward / ? up", options={'HIDDEN'})
+    anatomy_mapped_role_count: IntProperty(default=0, min=0, options={'HIDDEN'})
+    anatomy_readiness_status: StringProperty(default="NOT_ANALYZED", options={'HIDDEN'})
+    anatomy_worst_blocker: StringProperty(default="", options={'HIDDEN'})
+    anatomy_role_mapping_json: StringProperty(default="", options={'HIDDEN'})
     facing: EnumProperty(
         name="Character Faces",
         items=[
@@ -1081,7 +1051,8 @@ class DAFSettings(PropertyGroup):
             ("POS_X", "+X", ""),
             ("NEG_X", "-X", ""),
         ],
-        default="NEG_Y"
+        default="NEG_Y",
+        update=_anatomy_facing_updated,
     )
 
     # The inspected Animate Anything rig needs the knee hinge inverted but not
@@ -1604,7 +1575,7 @@ class DAFSettings(PropertyGroup):
     last_damage_manifest_path: StringProperty(default="", options={'HIDDEN'})
     last_damage_validation_path: StringProperty(default="", options={'HIDDEN'})
 
-    # Trauma Field Authoring v4.0.0.
+    # Trauma Field Authoring v4.1.0.
     deformation_region: EnumProperty(
         name="Active Region",
         items=_deformation_region_items,
@@ -2895,23 +2866,106 @@ class DAF_OT_resize(Operator):
             self.report({'ERROR'}, f"Safe Resize failed: {e}")
             return {'CANCELLED'}
 
-class DAF_OT_analyze(Operator):
-    bl_idname="daf.analyze"
-    bl_label="Analyze Humanoid Rig"
-    bl_options={'REGISTER'}
-    def execute(self,context):
+def analyze_creature_anatomy(context):
+    armature = find_armature(context)
+    settings = context.scene.daf_settings
+    analysis = anatomy_blender.analyze_armature(
+        armature,
+        settings,
+        legacy_humanoid_mapper=map_bones,
+    )
+    if analysis.get("profileId") == "DSB_HUMANOID_V1":
+        write_rig_mapping_report(armature, analysis.get("roleMapping", {}))
+    anatomy_blender.write_mapping_text(armature, analysis, bpy.data.texts)
+    return armature, analysis
+
+
+class DAF_OT_analyze_creature_anatomy(Operator):
+    bl_idname = "daf.analyze_creature_anatomy"
+    bl_label = "Analyze Creature Anatomy"
+    bl_description = "Detect, resolve, validate, and persist the selected Creature Anatomy Profile"
+    bl_options = {'REGISTER'}
+
+    def execute(self, context):
         try:
-            arm=find_armature(context); mapping=map_bones(arm, context.scene.daf_settings)
-            profile = write_rig_mapping_report(arm, mapping)
-            needed=["hips","thigh_l","shin_l","foot_l","thigh_r","shin_r","foot_r","upper_arm_l","upper_arm_r"]
-            missing=[r for r in needed if r not in mapping]
-            if missing:
-                self.report({'WARNING'},"Missing: "+", ".join(missing))
+            _armature, analysis = analyze_creature_anatomy(context)
+            status = str(analysis.get("readinessStatus", "PROFILE_INCOMPLETE"))
+            message = (
+                f"{status}: {analysis.get('profileId') or 'unresolved'}; "
+                f"mapped {analysis.get('mappedRoleCount', 0)} roles at "
+                f"{float(analysis.get('detectionConfidence', 0.0)):.0%} confidence."
+            )
+            if analysis.get("ready"):
+                self.report({'INFO'}, message)
             else:
-                self.report({'INFO'},f"Exact rig profile detected; mapped {len(mapping)} roles. Ready to animate." if detect_animate_anything_profile(arm) else f"Mapped {len(mapping)} humanoid roles. Ready to animate.")
+                blocker = str(analysis.get("worstBlocker", ""))
+                self.report({'WARNING'}, message + (" " + blocker if blocker else ""))
             return {'FINISHED'}
-        except Exception as e:
-            self.report({'ERROR'},str(e)); return {'CANCELLED'}
+        except Exception as exc:
+            self.report({'ERROR'}, str(exc))
+            return {'CANCELLED'}
+
+
+class DAF_OT_analyze(Operator):
+    """Compatibility operator retained for saved workspaces and external tests."""
+
+    bl_idname = "daf.analyze"
+    bl_label = "Analyze Creature Anatomy"
+    bl_options = {'REGISTER'}
+
+    def execute(self, context):
+        try:
+            _armature, analysis = analyze_creature_anatomy(context)
+            if analysis.get("ready"):
+                self.report(
+                    {'INFO'},
+                    f"{analysis['readinessStatus']}; mapped {analysis['mappedRoleCount']} roles.",
+                )
+            else:
+                self.report({'WARNING'}, str(analysis.get("worstBlocker", analysis.get("readinessStatus"))))
+            return {'FINISHED'}
+        except Exception as exc:
+            self.report({'ERROR'}, str(exc))
+            return {'CANCELLED'}
+
+
+class DAF_OT_show_anatomy_role_mapping(Operator):
+    bl_idname = "daf.show_anatomy_role_mapping"
+    bl_label = "Show Role Mapping"
+    bl_description = "Write the complete anatomy mapping and diagnostics to a Blender Text datablock"
+    bl_options = {'REGISTER'}
+
+    def execute(self, context):
+        try:
+            armature = find_armature(context)
+            analysis = anatomy_blender.current_analysis(armature, context.scene.daf_settings)
+            if analysis is None:
+                raise RuntimeError("Run ANALYZE CREATURE ANATOMY first.")
+            text = anatomy_blender.write_mapping_text(armature, analysis, bpy.data.texts)
+            self.report({'INFO'}, f"Role mapping written to {text.name}.")
+            return {'FINISHED'}
+        except Exception as exc:
+            self.report({'ERROR'}, str(exc))
+            return {'CANCELLED'}
+
+
+class DAF_OT_clear_anatomy_profile_override(Operator):
+    bl_idname = "daf.clear_anatomy_profile_override"
+    bl_label = "Clear Profile Override"
+    bl_description = "Return to deterministic auto detection and re-analyze the selected rig"
+    bl_options = {'REGISTER'}
+
+    def execute(self, context):
+        try:
+            armature = find_armature(context)
+            settings = context.scene.daf_settings
+            anatomy_blender.clear_profile_override(armature, settings)
+            _armature, analysis = analyze_creature_anatomy(context)
+            self.report({'INFO'}, f"Profile override cleared: {analysis['readinessStatus']}.")
+            return {'FINISHED'}
+        except Exception as exc:
+            self.report({'ERROR'}, str(exc))
+            return {'CANCELLED'}
 
 def style_walk_values(settings):
     values = {
@@ -3040,6 +3094,7 @@ class DAF_OT_walk(Operator):
         try:
             s = context.scene.daf_settings
             arm = find_armature(context)
+            anatomy_blender.require_generator_capability(arm, "walk", "Humanoid Walk generator")
             m = map_bones(arm, s)
             needed = [
                 "hips", "thigh_l", "shin_l", "foot_l",
@@ -3059,7 +3114,7 @@ class DAF_OT_walk(Operator):
             context.scene.frame_start = start
             context.scene.frame_end = end
 
-            fwd, side, up = vectors(s)
+            fwd, side, up = vectors(s, arm)
             knee_sign = -1.0 if s.invert_knees else 1.0
             elbow_sign = -1.0 if s.invert_elbows else 1.0
             values = style_walk_values(s)
@@ -3169,6 +3224,7 @@ class DAF_OT_collapse(Operator):
         try:
             s = context.scene.daf_settings
             arm = find_armature(context)
+            anatomy_blender.require_generator_capability(arm, "collapse", "Humanoid Collapse generator")
             m = map_bones(arm, s)
             needed = [
                 "hips", "spine", "head",
@@ -3208,7 +3264,7 @@ class DAF_OT_collapse(Operator):
             context.scene.frame_start = start
             context.scene.frame_end = final_end
 
-            fwd, side, up = vectors(s)
+            fwd, side, up = vectors(s, arm)
             knee_sign = -1.0 if s.invert_knees else 1.0
             elbow_sign = -1.0 if s.invert_elbows else 1.0
 
@@ -3389,6 +3445,7 @@ class DAF_OT_collapse(Operator):
 def generate_flank_hurt(context, operator, pain_side):
     s = context.scene.daf_settings
     arm = find_armature(context)
+    anatomy_blender.require_generator_capability(arm, "hurt", "Humanoid Hurt generator")
     m = map_bones(arm, s)
     needed = [
         "hips", "spine", "chest", "head",
@@ -3412,7 +3469,7 @@ def generate_flank_hurt(context, operator, pain_side):
     context.scene.frame_start = start
     context.scene.frame_end = end
 
-    fwd, side, up = vectors(s)
+    fwd, side, up = vectors(s, arm)
     knee_sign = -1.0 if s.invert_knees else 1.0
     elbow_sign = -1.0 if s.invert_elbows else 1.0
     # Facing -Y means anatomical left is -X and right is +X.
@@ -3640,7 +3697,7 @@ def _set_action_marker(action, name, frame):
 
 
 def _apply_mace_guard_pose(arm, mapping, settings, variant, intensity):
-    fwd, side, up = vectors(settings)
+    fwd, side, up = vectors(settings, arm)
     elbow_sign = -1.0 if settings.invert_elbows else 1.0
     profile = MACE_GUARD_STYLE_PROFILES.get(
         settings.mace_guard_style,
@@ -3873,6 +3930,7 @@ def generate_mace_guard_action(context, kind):
         raise RuntimeError(f"Unknown mace guard variant {kind!r}.")
     settings = context.scene.daf_settings
     arm = find_armature(context)
+    anatomy_blender.require_generator_capability(arm, "mace_head_guard", "Mace Head-Guard generator")
     mapping = map_bones(arm, settings)
     required = [
         "hips", "spine", "chest", "neck", "head",
@@ -3915,7 +3973,7 @@ def generate_mace_guard_action(context, kind):
             ),
         ),
     )
-    side_axis = vectors(settings)[1]
+    side_axis = vectors(settings, arm)[1]
     variant = MACE_GUARD_VARIANTS[kind]
     for frame, intensity in stages:
         context.scene.frame_set(frame)
@@ -4952,6 +5010,10 @@ class DAF_OT_build_approved_pack(Operator):
                 'approved_animation_count': len(actions),
                 'fps': fps,
                 'character': pack_character_metadata(context, source),
+                'anatomy': anatomy_persistence.export_metadata(
+                    armature,
+                    infer_legacy=True,
+                ),
                 'animations': metadata,
                 'mace_head_guard_validation': guard_validation,
                 'death_floor_validation': death_floor_validation,
@@ -5306,7 +5368,7 @@ class DAF_PT_legacy_panel(Panel):
             layout,
             s,
             "ui_deformation_authoring_open",
-            "Trauma Field Authoring v4.0.0",
+            "Trauma Field Authoring v4.1.0",
         )
         if opened:
             configure_property_box(box)
@@ -5676,7 +5738,10 @@ CLASSES = (
     DAF_OT_adopt_imported_pack,
     DAF_OT_reset_pose_polish,
     DAF_OT_resize,
+    DAF_OT_analyze_creature_anatomy,
     DAF_OT_analyze,
+    DAF_OT_show_anatomy_role_mapping,
+    DAF_OT_clear_anatomy_profile_override,
     DAF_OT_walk,
     DAF_OT_collapse,
     DAF_OT_hurt_left,

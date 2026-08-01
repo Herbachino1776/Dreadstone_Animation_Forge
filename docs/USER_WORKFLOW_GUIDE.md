@@ -1,14 +1,14 @@
-# Dreadstone Animation Forge 4.0.0 — User Workflow Guide
+# Dreadstone Animation Forge 4.1.0 — User Workflow Guide
 
-- Release archive: `Dreadstone_Animation_Forge_v4_0_0.zip`
+- Release archive: `Dreadstone_Animation_Forge_v4_1_0.zip`
 - Supported release runtime: Blender 5.1.2
 - Damage authoring model: Damage Keys → child Stamp alternatives → strong macros
 - Reuse model: topology-independent Damage Blueprints
 
-## 1. Install Dreadstone Animation Forge 4.0.0
+## 1. Install Dreadstone Animation Forge 4.1.0
 
 In Blender choose **Edit > Preferences > Add-ons > Install from Disk**, select
-`Dreadstone_Animation_Forge_v4_0_0.zip` without extracting it, and enable
+`Dreadstone_Animation_Forge_v4_1_0.zip` without extracting it, and enable
 **Dreadstone Animation Forge**.
 
 ## 2. Open the Dreadstone panel
@@ -236,6 +236,22 @@ rig, draft walk/collapse/hurt or mace head-guard actions, inspect them, and use
 the explicit Version/Approve controls. Generated actions do not animate bone
 scale. Approved Actions and NLA-used Actions are protected.
 
+Start with the compact anatomy card and click **ANALYZE CREATURE ANATOMY**. It
+shows creature class, selected anatomy profile, confidence, authoritative
+orientation, mapped-role count, readiness, and the worst blocker. Leave the
+selector on **Auto Detect** for clear rigs. If detection is ambiguous, select
+**Humanoid**, **Quadruped Digitigrade**, or **Custom / unresolved** explicitly;
+an override chooses the validation contract and never bypasses its requirements.
+Use **SHOW ROLE MAPPING** for the resolved diagnostic and **CLEAR PROFILE
+OVERRIDE** to return to automatic selection. Raw details stay under **Advanced
+Anatomy Mapping**.
+
+`DSB_QUADRUPED_MAMMAL_DIGITIGRADE_V1` is architectural support for digitigrade
+mammals, not a claim of plantigrade, ungulate, reptile, bird, insect, or
+arbitrary-creature support. Quadruped animation capabilities are declared but
+not production-ready in this release, so no quadruped Generate controls are
+shown. Forge reports a capability blocker instead of creating a broken Action.
+
 The **VIP ANIMATION LIBRARY** sits above every draft section and keeps the
 custom sliders below fully available:
 
@@ -272,6 +288,13 @@ Every animated bone must exist and retain the same parent chain. Different rest
 orientations, proportions, or pose-bone translation channels produce warnings
 because they may need manual adjustment, but do not block an otherwise
 compatible import.
+
+New packages add anatomy and orientation metadata. Older packages without it
+retain the same compatibility checks through an explicitly labeled legacy
+humanoid route. AnyTop and other external motion systems are not installed or
+run inside Blender; candidate BVH must be rights-cleared, imported in isolation,
+retargeted through the anatomy profile, validated, and artist-approved before it
+becomes a protected production Action.
 
 ## 12. Validate and export
 
@@ -343,6 +366,17 @@ authoring asset.
   after its site record was captured. Save the stage again, then revalidate.
 - An incomplete site is missing from the manifest: drafts are intentionally
   omitted until **VALIDATE + ENABLE SITE FOR EXPORT** succeeds.
+- Anatomy reports `PROFILE_AMBIGUOUS`: choose an explicit profile only after
+  checking **SHOW ROLE MAPPING**. The override selects a validator; it does not
+  make an incomplete rig ready.
+- Anatomy reports `ORIENTATION_AMBIGUOUS`: verify character-local forward points
+  from body toward head, the declared axes are orthogonal, and the head/tail are
+  not reversed. Do not compensate independently in a generator.
+- A quadruped generator is unavailable: this release defines capabilities and
+  validation but intentionally does not ship production quadruped motion.
+- A legacy Action package warns about missing anatomy: the existing humanoid
+  import path remains supported; save a newly analyzed/exported package to add
+  current metadata.
 
 ## Complete public button inventory
 
@@ -378,6 +412,9 @@ authoring asset.
 - Validation/export: **Validate Morph Targets**, **Validate Gore Geometry**,
   **Validate Complete Damage Asset**, **Export Damage GLB + Manifest**,
   **Restore Reimported GLB Intact Preview**.
+- Anatomy: **ANALYZE CREATURE ANATOMY**, profile override selector,
+  **SHOW ROLE MAPPING**, **CLEAR PROFILE OVERRIDE**, **Advanced Anatomy
+  Mapping**.
 - Animation: **Generate / Refresh Walk Draft**,
   **Generate / Refresh Death Draft**, flank-hurt draft controls,
   **Generate Three Mace Head-Guard Drafts**, **Preview Guard_Active**,

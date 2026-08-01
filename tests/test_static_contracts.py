@@ -154,7 +154,7 @@ class StaticContractTests(unittest.TestCase):
         manifest = contracts.MANIFEST_PATH.read_text(encoding="utf-8")
         self.assertIn('schema_version = "1.0.0"', manifest)
         self.assertIn('id = "dreadstone_animation_forge"', manifest)
-        self.assertIn('version = "4.0.0"', manifest)
+        self.assertIn('version = "4.1.0"', manifest)
         builder = (ROOT / "scripts" / "build_release.py").read_text(encoding="utf-8")
         self.assertIn('ARCHIVE_ENTRIES = ("blender_manifest.toml", *MODULES', builder)
         self.assertNotIn('"dreadstone_animation_forge/__init__.py"', builder)
@@ -172,10 +172,12 @@ class StaticContractTests(unittest.TestCase):
         self.assertEqual(release_builder.ARCHIVE_ENTRIES[-2:], ("README.txt", "VALIDATION.txt"))
         self.assertIn("deformation/preview_service.py", release_builder.ARCHIVE_ENTRIES)
         self.assertIn("ui/operators/character.py", release_builder.ARCHIVE_ENTRIES)
+        self.assertIn("anatomy/schema.py", release_builder.ARCHIVE_ENTRIES)
+        self.assertIn("anatomy/blender_adapter.py", release_builder.ARCHIVE_ENTRIES)
         version = contracts.EXPECTED_VERSION
         self.assertEqual(
             f"Dreadstone_Animation_Forge_v{'_'.join(map(str, version))}.zip",
-            "Dreadstone_Animation_Forge_v4_0_0.zip",
+            "Dreadstone_Animation_Forge_v4_1_0.zip",
         )
 
     def test_authoritative_user_workflow_guide_contract(self) -> None:
@@ -193,8 +195,8 @@ class StaticContractTests(unittest.TestCase):
     def test_release_readme_contains_install_quick_start_and_guide_reference(self) -> None:
         readme = (ROOT / "README.md").read_text(encoding="utf-8")
         for marker in (
-            "4.0.0",
-            "Dreadstone_Animation_Forge_v4_0_0.zip",
+            "4.1.0",
+            "Dreadstone_Animation_Forge_v4_1_0.zip",
             "Install from Disk",
             "## Quick start",
             "docs/USER_WORKFLOW_GUIDE.md",
@@ -205,7 +207,10 @@ class StaticContractTests(unittest.TestCase):
         self.assertIn('(ROOT / "README.md").read_text', builder)
 
     def test_manifest_schemas(self) -> None:
-        self.assertTrue(contracts.REQUIRED_SCHEMAS <= self.literals)
+        self.assertTrue(
+            contracts.REQUIRED_SCHEMAS
+            <= contracts.string_literals(contracts.package_trees())
+        )
 
     def test_generated_dsb_object_names(self) -> None:
         self.assertTrue(contracts.REQUIRED_OBJECT_NAMES <= self.literals)

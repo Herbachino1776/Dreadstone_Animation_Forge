@@ -20,7 +20,13 @@
 
 ## Documentation definition of done
 
-- [ ] Version and `Dreadstone_Animation_Forge_v4_0_0.zip` match everywhere.
+- [ ] Version and `Dreadstone_Animation_Forge_v4_1_0.zip` match everywhere.
+- [ ] Creature Anatomy Profile schema/detection/orientation/persistence tests,
+      the exact humanoid mapping comparison, malformed quadruped cases, and
+      extracted-ZIP Blender registration pass.
+- [ ] AnyTop access commit, inspected files, licenses, checkpoint/data terms,
+      external-only boundary, and multi-skeleton/multi-seed corpus plan are
+      documented without vendored code, datasets, or checkpoints.
 - [ ] The VIP Damage Key -> Stamp -> macro workflow is current.
 - [ ] No user-facing factory preset instructions remain.
 - [ ] Independent multi-key Preview toggles and one active Stamp alternative

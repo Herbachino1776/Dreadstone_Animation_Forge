@@ -1,5 +1,20 @@
 # Changelog
 
+## 4.1.0
+
+- Added centralized, versioned Creature Anatomy Profiles with deterministic
+  detection, explicit override, one orientation authority, readiness
+  validation, capability gating, persistence, and additive export metadata.
+- Migrated existing humanoid aliases and Animate Anything mapping into
+  `DSB_HUMANOID_V1` while preserving public compatibility functions and current
+  generators.
+- Added the architectural `DSB_QUADRUPED_MAMMAL_DIGITIGRADE_V1` semantic
+  contract, four distinct limb/contact families, variable spine/neck/tail/toe
+  chains, damage-region templates, synthetic Blender fixture coverage, and
+  explicit non-production generator gates.
+- Added the AnyTop access/licensing feasibility audit, production fixture
+  requirements, and an empirical multi-skeleton/multi-seed motion corpus plan.
+
 ## 4.0.0
 
 - Fixed broad smooth damage stains disappearing from exported GLBs. Forge now

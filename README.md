@@ -1,6 +1,6 @@
 # Dreadstone Animation Forge
 
-Dreadstone Animation Forge `4.0.0` is a proprietary Blender add-on for
+Dreadstone Animation Forge `4.1.0` is a proprietary Blender add-on for
 animation drafting and compatibility-preserving damage authoring. The supported
 release runtime is Blender `5.1.2`.
 
@@ -22,6 +22,14 @@ editing, overwriting, deleting, and renaming saved Actions. Individual clips
 can be exported as native `.blend` Action packages and imported onto another
 humanoid after bone/hierarchy compatibility checks.
 
+Forge 4.1 introduces centralized, versioned Creature Anatomy Profiles. The
+existing humanoid mapping remains compatible, while the first digitigrade
+quadruped profile provides semantic core, spine/neck/tail, four distinct limb,
+contact, orientation, capability, and future damage-region contracts. This is
+an architecture milestone: it does not expose production quadruped gait,
+attack, reaction, paw-IK, or damage generators, and its synthetic test rig is
+not a canonical production skeleton.
+
 Animation Forge 4.0 adds independent left/right elbow-flex polish, longer
 natural head-guard and cowering timing, editable cover/wrap/hunch/tuck controls,
 and a selectable legacy Zombie-Insect Attack generator shape. Forearm-to-head
@@ -31,7 +39,7 @@ keyframes and original settings payload unchanged.
 
 ## Install and open
 
-1. Download `Dreadstone_Animation_Forge_v4_0_0.zip`.
+1. Download `Dreadstone_Animation_Forge_v4_1_0.zip`.
 2. In Blender choose **Edit > Preferences > Add-ons > Install from Disk**.
 3. Select the ZIP without extracting it and enable the add-on.
 4. In the 3D Viewport press `N`, open **Dreadstone**, then choose
@@ -73,6 +81,9 @@ also read the [core/compound export contract](docs/CORE_COMPOUND_EXPORT_CONTRACT
 and [gore geometry export contract](docs/RAISED_GORE_EXPORT_CONTRACT.md).
 Progressive runtime consumers must also follow the
 [Progressive Damage Site contract](docs/PROGRESSIVE_DAMAGE_SITE_CONTRACT.md).
+Animation and retargeting consumers should read the
+[Creature Anatomy Profile contract](docs/CREATURE_ANATOMY_PROFILE_CONTRACT.md)
+and [native Action package contract](docs/ANIMATION_PACKAGE_CONTRACT.md).
 
 ## Persistence and compatibility
 
@@ -84,6 +95,12 @@ so the destination capture—not the source topology—controls placement.
 Older authored deformation and gore records remain migration-readable. Legacy
 factory recipe identifiers are internal compatibility data only and are not
 offered as authoring presets.
+
+Older Action packages without anatomy metadata remain importable through the
+labeled legacy humanoid path. AnyTop is an optional external research reference,
+not a Forge dependency; Forge bundles no ML runtime, checkpoint, dataset, or
+third-party motion source. See the
+[AnyTop feasibility audit](docs/research/ANYTOP_FEASIBILITY_AUDIT.md).
 
 ## License
 

@@ -19,6 +19,14 @@ Choose an output directory and click **WRITE FORGE DIAGNOSTIC REPORT**. Forge wr
 
 The report intentionally excludes vertex coordinates, faces, weights, textures, and other proprietary mesh payloads.
 
+Creature analysis is stored separately on the owned armature. Use **ANALYZE
+CREATURE ANATOMY** and **SHOW ROLE MAPPING** to inspect profile scores,
+confidence, readiness, orientation, missing roles, ambiguity, four-contact
+ownership, capabilities, and resolved damage-region templates. An explicit
+profile override is diagnostic selection, not a validation waiver. For an
+orientation failure, verify body-to-head direction and local forward/up axes
+before editing aliases or generators.
+
 ## Useful crash report bundle
 
 Provide the JSON and Markdown reports, Blender version, Forge ZIP SHA-256, source asset fingerprint when shareable, the last saved `.blend` only when authorized, and exact reproduction steps. Note whether the failure occurred during FAST preview, Final/Commit, gore generation, compound rebuild, full validation, save/reload, or export.
