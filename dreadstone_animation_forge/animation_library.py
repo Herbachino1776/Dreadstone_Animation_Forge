@@ -41,6 +41,10 @@ DRAFT_ACTION_NAMES = {
     "MACE_GUARD_RIGHT_ARM": "DSB_DRAFT_Mace_Brace_Head_RightArm",
 }
 
+_POSE_BONE_PATH = re.compile(
+    r'pose\.bones\["((?:[^"\\]|\\.)+)"\]'
+)
+
 COMMON_SETTING_FIELDS = (
     "facing",
     "invert_knees",
@@ -198,15 +202,50 @@ def iter_action_fcurves(action):
     return curves
 
 
+def _pose_bone_name(data_path):
+    match = _POSE_BONE_PATH.search(str(data_path))
+    if match is None:
+        return ""
+    return match.group(1).replace(r"\"", '"').replace(r"\\", "\\")
+
+
+def _curve_bone_usage(curves):
+    referenced = set()
+    translated = set()
+    for curve in curves:
+        data_path = str(getattr(curve, "data_path", ""))
+        name = _pose_bone_name(data_path)
+        if not name:
+            continue
+        referenced.add(name)
+        if data_path.endswith(".location"):
+            translated.add(name)
+    return sorted(referenced), sorted(translated)
+
+
+def _curve_frame_metrics(curves):
+    minimum = math.inf
+    maximum = -math.inf
+    keyframe_count = 0
+    for curve in curves:
+        points = curve.keyframe_points
+        keyframe_count += len(points)
+        for point in points:
+            frame = float(point.co[0])
+            if math.isfinite(frame):
+                minimum = min(minimum, frame)
+                maximum = max(maximum, frame)
+    if minimum == math.inf:
+        return None, None, keyframe_count
+    return minimum, maximum, keyframe_count
+
+
 def action_frame_bounds(action):
-    frames = [
-        float(point.co[0])
-        for curve in iter_action_fcurves(action)
-        for point in curve.keyframe_points
-        if math.isfinite(float(point.co[0]))
-    ]
-    if frames:
-        return min(frames), max(frames)
+    minimum, maximum, _keyframe_count = _curve_frame_metrics(
+        iter_action_fcurves(action)
+    )
+    if minimum is not None:
+        return minimum, maximum
     try:
         return float(action.frame_range[0]), float(action.frame_range[1])
     except Exception:
@@ -214,15 +253,8 @@ def action_frame_bounds(action):
 
 
 def referenced_bones(action):
-    names = set()
-    for curve in iter_action_fcurves(action):
-        match = re.search(
-            r'pose\.bones\["((?:[^"\\]|\\.)+)"\]',
-            str(getattr(curve, "data_path", "")),
-        )
-        if match:
-            names.add(match.group(1).replace(r"\"", '"').replace(r"\\", "\\"))
-    return sorted(names)
+    names, _translated = _curve_bone_usage(iter_action_fcurves(action))
+    return names
 
 
 def infer_action_kind(action):
@@ -302,6 +334,9 @@ def restore_action_settings(settings, action):
         if not hasattr(settings, identifier):
             continue
         try:
+            if getattr(settings, identifier) == value:
+                restored += 1
+                continue
             setattr(settings, identifier, value)
             restored += 1
         except (AttributeError, TypeError, ValueError):
@@ -429,15 +464,28 @@ def mark_approved(action, armature, settings, kind=None):
     return action
 
 
-def compatibility_report(action, armature):
-    required = referenced_bones(action)
+def _armature_compatibility_context(armature):
+    return {
+        "availableBones": set(armature.data.bones.keys()),
+        "targetAnatomy": anatomy_persistence.load_metadata(armature),
+    }
+
+
+def compatibility_report(action, armature, *, armature_context=None):
+    curves = iter_action_fcurves(action)
+    required, location_bones = _curve_bone_usage(curves)
     raw_required = str(action.get(CLIP_REQUIRED_BONES_PROPERTY, ""))
     if raw_required:
         try:
             required = sorted(set(json.loads(raw_required)))
         except (TypeError, ValueError, json.JSONDecodeError):
             pass
-    available = set(armature.data.bones.keys())
+    context = (
+        armature_context
+        if armature_context is not None
+        else _armature_compatibility_context(armature)
+    )
+    available = context["availableBones"]
     missing = sorted(set(required) - available)
     errors = [
         "Missing required bones: " + ", ".join(missing)
@@ -459,7 +507,7 @@ def compatibility_report(action, armature):
             "The clip has no anatomy metadata and is treated as legacy humanoid-compatible."
         )
         source_anatomy = anatomy_persistence.legacy_humanoid_metadata()
-    target_anatomy = anatomy_persistence.load_metadata(armature)
+    target_anatomy = context["targetAnatomy"]
     if source_anatomy is not None and target_anatomy is not None:
         source_profile_id = str(source_anatomy.get("profileId", ""))
         target_profile_id = str(target_anatomy.get("profileId", ""))
@@ -516,13 +564,6 @@ def compatibility_report(action, armature):
                 warnings.append(
                     f"Bone {name!r} length differs by {abs(1.0 - ratio) * 100.0:.0f}%."
                 )
-    location_bones = sorted({
-        name
-        for curve in iter_action_fcurves(action)
-        if str(getattr(curve, "data_path", "")).endswith(".location")
-        for name in referenced_bones(action)
-        if f'pose.bones["{name}"]' in str(getattr(curve, "data_path", ""))
-    })
     if location_bones:
         warnings.append(
             "Clip contains pose-bone translation; proportion changes may need adjustment."
@@ -562,6 +603,7 @@ def _explicit_armature_actions(armature):
 def character_actions(armature, *, include_drafts=False):
     explicit = _explicit_armature_actions(armature)
     result = []
+    armature_context = None
     for action in bpy.data.actions:
         draft = bool(action.get("dsb_draft", False))
         if draft and not (
@@ -574,7 +616,13 @@ def character_actions(armature, *, include_drafts=False):
         owner = str(action.get(CLIP_OWNER_PROPERTY, ""))
         if action not in explicit and owner and owner != armature.name:
             continue
-        report = compatibility_report(action, armature)
+        if armature_context is None:
+            armature_context = _armature_compatibility_context(armature)
+        report = compatibility_report(
+            action,
+            armature,
+            armature_context=armature_context,
+        )
         if report["errors"]:
             continue
         result.append(action)
@@ -600,7 +648,13 @@ def find_action_by_clip_id(clip_id):
     )
 
 
-def selected_action(settings, armature=None, *, include_drafts=True):
+def selected_action(
+    settings,
+    armature=None,
+    *,
+    include_drafts=True,
+    available_actions=None,
+):
     action = find_action_by_clip_id(
         str(getattr(settings, "animation_library_active_clip_id", ""))
     )
@@ -610,15 +664,17 @@ def selected_action(settings, armature=None, *, include_drafts=True):
         )
     if action is None:
         return None
-    if (
-        armature is not None
-        and action
-        not in character_actions(
-            armature,
-            include_drafts=include_drafts,
+    if armature is not None:
+        candidates = (
+            available_actions
+            if available_actions is not None
+            else character_actions(
+                armature,
+                include_drafts=include_drafts,
+            )
         )
-    ):
-        return None
+        if action not in candidates:
+            return None
     return action
 
 
@@ -1098,9 +1154,15 @@ def import_action_clip(context, armature, filepath):
 
 
 def action_summary(action, fps):
-    start, end = action_frame_bounds(action)
-    duration = max(0.0, end - start) / max(float(fps), 1e-8)
     curves = iter_action_fcurves(action)
+    start, end, keyframe_count = _curve_frame_metrics(curves)
+    if start is None:
+        try:
+            start = float(action.frame_range[0])
+            end = float(action.frame_range[1])
+        except Exception:
+            start, end = 1.0, 1.0
+    duration = max(0.0, end - start) / max(float(fps), 1e-8)
     return {
         "kind": infer_action_kind(action),
         "category": action_category(action),
@@ -1108,10 +1170,7 @@ def action_summary(action, fps):
         "frameEnd": int(math.ceil(end)),
         "durationSeconds": duration,
         "fcurveCount": len(curves),
-        "keyframeCount": sum(
-            len(curve.keyframe_points)
-            for curve in curves
-        ),
+        "keyframeCount": keyframe_count,
     }
 
 

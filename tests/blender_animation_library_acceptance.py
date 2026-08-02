@@ -133,6 +133,28 @@ def main():
         saved in animation_library.character_actions(source_armature),
         "Approved walk was not listed for its character.",
     )
+    available_actions = animation_library.character_actions(
+        source_armature,
+        include_drafts=True,
+    )
+    require(
+        animation_library.selected_action(
+            settings,
+            source_armature,
+            available_actions=available_actions,
+        )
+        == saved,
+        "Selected-action lookup did not reuse the compatible inventory.",
+    )
+    require(
+        animation_library.selected_action(
+            settings,
+            source_armature,
+            available_actions=[],
+        )
+        is None,
+        "Selected-action lookup escaped an explicitly empty inventory.",
+    )
     nla_track = source_armature.animation_data.nla_tracks.new()
     nla_track.name = "VIP Saved Clips"
     nla_strip = nla_track.strips.new(saved.name, 1, saved)

@@ -975,6 +975,7 @@ def _draw_vip_animation_library(layout, context, settings):
     selected_action = animation_library.selected_action(
         settings,
         armature,
+        available_actions=actions,
     )
     editing = bool(settings.animation_library_edit_source_clip_id)
     selected_is_draft = bool(

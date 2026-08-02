@@ -98,6 +98,36 @@ class AnimationLibraryContractTests(unittest.TestCase):
         self.assertEqual(calls[0], "_draw_vip_animation_library")
         self.assertIn("_draw_walk_animation", calls)
 
+    def test_vip_panel_reuses_one_compatibility_inventory(self):
+        self.assertIn("available_actions=actions", self.panels)
+        tree = ast.parse(self.service)
+        functions = {
+            node.name: node
+            for node in tree.body
+            if isinstance(node, ast.FunctionDef)
+        }
+        compatibility = functions["compatibility_report"]
+        compatibility_calls = [
+            node.func.id
+            for node in ast.walk(compatibility)
+            if isinstance(node, ast.Call)
+            and isinstance(node.func, ast.Name)
+        ]
+        self.assertEqual(
+            compatibility_calls.count("iter_action_fcurves"),
+            1,
+        )
+        self.assertNotIn("referenced_bones", compatibility_calls)
+
+        summary_calls = [
+            node.func.id
+            for node in ast.walk(functions["action_summary"])
+            if isinstance(node, ast.Call)
+            and isinstance(node.func, ast.Name)
+        ]
+        self.assertEqual(summary_calls.count("iter_action_fcurves"), 1)
+        self.assertNotIn("action_frame_bounds", summary_calls)
+
     def test_scene_state_and_operator_registration_are_present(self):
         for marker in (
             "ui_vip_animation_open",

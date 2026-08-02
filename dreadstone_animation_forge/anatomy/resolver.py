@@ -17,11 +17,12 @@ def normalize_name(name: str) -> str:
     return re.sub(r"[^a-z0-9]", "", value)
 
 
-def _alias_score(bone_name: str, aliases: tuple[str, ...]) -> int:
-    normalized = normalize_name(bone_name)
+def _normalized_alias_score(
+    normalized: str,
+    normalized_aliases: tuple[str, ...],
+) -> int:
     best = 0
-    for alias in aliases:
-        candidate = normalize_name(alias)
+    for candidate in normalized_aliases:
         if not candidate:
             continue
         if normalized == candidate:
@@ -33,8 +34,7 @@ def _alias_score(bone_name: str, aliases: tuple[str, ...]) -> int:
     return best
 
 
-def _side_adjustment(role: str, bone_name: str) -> int:
-    normalized = normalize_name(bone_name)
+def _normalized_side_adjustment(role: str, normalized: str) -> int:
     left_role = role.endswith("_l") or "_l_" in role or role.startswith("left_")
     right_role = role.endswith("_r") or "_r_" in role or role.startswith("right_")
     left_name = "left" in normalized or normalized.endswith("l")
@@ -92,6 +92,17 @@ def resolve_roles(
     mapping: dict[str, object] = {}
     ambiguities: list[dict[str, object]] = []
     owned: set[str] = set()
+    normalized_names = {
+        bone.name: normalize_name(bone.name)
+        for bone in snapshot.bones
+    }
+    normalized_aliases = {
+        role: tuple(
+            normalize_name(alias)
+            for alias in profile.aliases.get(role, (role,))
+        )
+        for role in profile.all_roles()
+    }
 
     if profile.profile_id == HUMANOID_PROFILE_ID:
         exact_required = set(ANIMATE_ANYTHING_PROFILE.values()) - {"arm_left_hand", "arm_right_hand"}
@@ -106,15 +117,18 @@ def resolve_roles(
         if role in mapping:
             continue
         candidates: list[tuple[int, str]] = []
-        aliases = tuple(profile.aliases.get(role, (role,)))
+        aliases = normalized_aliases[role]
         for bone in snapshot.bones:
-            base_score = _alias_score(bone.name, aliases)
+            normalized = normalized_names[bone.name]
+            base_score = _normalized_alias_score(normalized, aliases)
             if base_score > 0:
                 candidates.append((
-                    base_score + _side_adjustment(role, bone.name),
+                    base_score + _normalized_side_adjustment(role, normalized),
                     bone.name,
                 ))
-        candidates.sort(key=lambda item: (-item[0], normalize_name(item[1]), item[1]))
+        candidates.sort(
+            key=lambda item: (-item[0], normalized_names[item[1]], item[1])
+        )
         if not candidates:
             continue
         best_score = candidates[0][0]
@@ -128,11 +142,14 @@ def resolve_roles(
             ambiguities.append({"role": role, "candidates": tied, "selected": chosen})
 
     for role, spec in profile.chains.items():
-        aliases = tuple(profile.aliases.get(role, (role,)))
+        aliases = normalized_aliases[role]
         candidates = [
             bone.name
             for bone in snapshot.bones
-            if _alias_score(bone.name, aliases) >= 60 and bone.name not in owned
+            if (
+                _normalized_alias_score(normalized_names[bone.name], aliases) >= 60
+                and bone.name not in owned
+            )
         ]
         ordered, ambiguous = _order_chain(candidates, snapshot)
         if spec.max_count is not None:

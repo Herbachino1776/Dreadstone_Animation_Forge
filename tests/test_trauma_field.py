@@ -155,6 +155,29 @@ class TraumaFieldTests(unittest.TestCase):
         self.assertEqual(first, second)
         self.assertEqual(trauma_field.gore_mask_value(0.0, (0.12, -0.03, 0.44), overlay), 0.0)
 
+    def test_bulk_gore_mask_is_exactly_scalar_equivalent(self) -> None:
+        weights = [0.0, 0.01, 0.25, 0.5, 0.84, 1.0, 1.25]
+        positions = [
+            (index * 0.017, -index * 0.009, (index % 3) * 0.041)
+            for index in range(len(weights))
+        ]
+        for seed in (1, 1776, 8675309):
+            overlay = valid_gore_overlay(seed=seed)
+            expected = [
+                trauma_field.gore_mask_value(weight, position, overlay)
+                for weight, position in zip(weights, positions)
+            ]
+            self.assertEqual(
+                trauma_field.gore_mask_values(weights, positions, overlay),
+                expected,
+            )
+
+        disabled = trauma_field.default_gore_overlay()
+        self.assertEqual(
+            trauma_field.gore_mask_values(weights, positions, disabled),
+            [0.0] * len(weights),
+        )
+
     def test_surface_gore_export_metadata_includes_runtime_semantics(self) -> None:
         exported = trauma_field.gore_overlay_export_metadata(valid_gore_overlay(seed=31415))
         overlay = exported["surfaceGoreOverlay"]

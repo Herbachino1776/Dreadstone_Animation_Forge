@@ -2550,20 +2550,29 @@ def _surface_gore_macro_values(settings):
     )
 
 
+def _sample_mean_edge_length(obj, *, maximum_edges=512):
+    matrix = obj.matrix_world
+    vertices = obj.data.vertices
+    samples = []
+    for edge in obj.data.edges[:max(0, int(maximum_edges))]:
+        first, second = edge.vertices
+        distance = (
+            matrix @ vertices[int(first)].co
+            - matrix @ vertices[int(second)].co
+        ).length
+        if math.isfinite(distance) and distance > 1e-12:
+            samples.append(distance)
+    return sum(samples) / len(samples) if samples else None
+
+
 def _gore_scale_inputs(context, settings):
     region_scale = _impact_region_scale(settings)
     mean_edge_length = region_scale * 0.05
     try:
         _registry, _region, attached, _detached = _resolve_active_region(context)
-        positions = mesh_snapshot.world_positions(attached)
-        edges = mesh_snapshot.edges(attached)
-        samples = []
-        for first, second in edges[:512]:
-            distance = (Vector(positions[int(first)]) - Vector(positions[int(second)])).length
-            if math.isfinite(distance) and distance > 1e-12:
-                samples.append(distance)
-        if samples:
-            mean_edge_length = sum(samples) / len(samples)
+        sampled_edge_length = _sample_mean_edge_length(attached)
+        if sampled_edge_length is not None:
+            mean_edge_length = sampled_edge_length
     except Exception:
         pass
     return region_scale, max(1e-6, mean_edge_length)
@@ -7890,10 +7899,7 @@ def _surface_gore_preview_data(region, attached, entry):
         raise RuntimeError(" ".join(errors))
     weights, _distances = _stamp_weights(attached, region, stamp)
     positions = _basis_world_positions(attached)
-    mask_values = [
-        trauma_field.gore_mask_value(weight, position, overlay)
-        for weight, position in zip(weights, positions)
-    ]
+    mask_values = trauma_field.gore_mask_values(weights, positions, overlay)
     if max(mask_values, default=0.0) <= 1e-6:
         raise RuntimeError("The linked capture produced no usable surface gore preview mask.")
     return overlay, mask_values

@@ -1747,7 +1747,86 @@ def _gore_noise(position: Sequence[float], scale: float, seed: int) -> float:
     return total
 
 
-def gore_mask_value(base_weight: float, position: Sequence[float], overlay: Mapping[str, object]) -> float:
+def _prepared_gore_mask_value(
+    base_weight: float,
+    position: Sequence[float],
+    *,
+    enabled: bool,
+    edge_exponent: float,
+    scale: float,
+    seed: int,
+    coverage: float,
+    scatter: float,
+) -> float:
+    weight = min(1.0, max(0.0, float(base_weight)))
+    if not enabled or weight <= 0.0:
+        return 0.0
+    edge = weight ** edge_exponent
+    coarse = _gore_noise(position, scale, seed)
+    fine = _gore_noise(position, scale * 0.43, seed + 7919)
+    fragments = _gore_noise(position, scale * 0.19, seed + 15485863)
+    ridges = 1.0 - abs(2.0 * fine - 1.0)
+    noise = coarse * 0.48 + fine * 0.24 + ridges * 0.18 + fragments * 0.10
+    softness = 0.12
+    threshold = 1.0 - coverage
+    patch = min(1.0, max(0.0, (noise - threshold + softness) / (2.0 * softness)))
+    patch = patch * patch * (3.0 - 2.0 * patch)
+    breakup = (1.0 - scatter) + scatter * patch
+    erosion = min(1.0, max(0.0, (fragments - (0.22 + scatter * 0.25)) / 0.32))
+    clean_gap = (1.0 - scatter * 0.82) + scatter * erosion
+    core_stain = edge * ((1.0 - scatter * 0.30) + scatter * 0.30 * coarse)
+    return min(1.0, max(0.0, core_stain * breakup * clean_gap))
+
+
+def _gore_mask_parameters(
+    overlay: Mapping[str, object],
+) -> tuple[bool, float, float, int, float, float]:
+    recipe = normalize_gore_overlay(overlay)
+    return (
+        bool(recipe["goreOverlayEnabled"]),
+        1.0 + 4.0 * (1.0 - float(recipe["goreEdgeFeather"])),
+        float(recipe["gorePatchScale"]),
+        int(recipe["goreMaskSeed"]),
+        float(recipe["goreCoverage"]),
+        float(recipe["goreScatter"]),
+    )
+
+
+def gore_mask_values(
+    base_weights: Iterable[float],
+    positions: Iterable[Sequence[float]],
+    overlay: Mapping[str, object],
+) -> list[float]:
+    """Evaluate one normalized stain recipe across a vertex sequence."""
+
+    (
+        enabled,
+        edge_exponent,
+        scale,
+        seed,
+        coverage,
+        scatter,
+    ) = _gore_mask_parameters(overlay)
+    return [
+        _prepared_gore_mask_value(
+            weight,
+            position,
+            enabled=enabled,
+            edge_exponent=edge_exponent,
+            scale=scale,
+            seed=seed,
+            coverage=coverage,
+            scatter=scatter,
+        )
+        for weight, position in zip(base_weights, positions)
+    ]
+
+
+def gore_mask_value(
+    base_weight: float,
+    position: Sequence[float],
+    overlay: Mapping[str, object],
+) -> float:
     """Return a stable broken stain mask constrained by stamp influence.
 
     Three frequency bands and a deterministic erosion gate keep the stain from
@@ -1756,30 +1835,19 @@ def gore_mask_value(base_weight: float, position: Sequence[float], overlay: Mapp
     edge-for-edge.
     """
 
-    recipe = normalize_gore_overlay(overlay)
-    weight = min(1.0, max(0.0, float(base_weight)))
-    if not recipe["goreOverlayEnabled"] or weight <= 0.0:
-        return 0.0
-    edge_exponent = 1.0 + 4.0 * (1.0 - float(recipe["goreEdgeFeather"]))
-    edge = weight ** edge_exponent
-    scale = float(recipe["gorePatchScale"])
-    seed = int(recipe["goreMaskSeed"])
-    coarse = _gore_noise(position, scale, seed)
-    fine = _gore_noise(position, scale * 0.43, seed + 7919)
-    fragments = _gore_noise(position, scale * 0.19, seed + 15485863)
-    ridges = 1.0 - abs(2.0 * fine - 1.0)
-    noise = coarse * 0.48 + fine * 0.24 + ridges * 0.18 + fragments * 0.10
-    coverage = float(recipe["goreCoverage"])
-    softness = 0.12
-    threshold = 1.0 - coverage
-    patch = min(1.0, max(0.0, (noise - threshold + softness) / (2.0 * softness)))
-    patch = patch * patch * (3.0 - 2.0 * patch)
-    scatter = float(recipe["goreScatter"])
-    breakup = (1.0 - scatter) + scatter * patch
-    erosion = min(1.0, max(0.0, (fragments - (0.22 + scatter * 0.25)) / 0.32))
-    clean_gap = (1.0 - scatter * 0.82) + scatter * erosion
-    core_stain = edge * ((1.0 - scatter * 0.30) + scatter * 0.30 * coarse)
-    return min(1.0, max(0.0, core_stain * breakup * clean_gap))
+    enabled, edge_exponent, scale, seed, coverage, scatter = (
+        _gore_mask_parameters(overlay)
+    )
+    return _prepared_gore_mask_value(
+        base_weight,
+        position,
+        enabled=enabled,
+        edge_exponent=edge_exponent,
+        scale=scale,
+        seed=seed,
+        coverage=coverage,
+        scatter=scatter,
+    )
 
 
 def gore_generated_object_name(
