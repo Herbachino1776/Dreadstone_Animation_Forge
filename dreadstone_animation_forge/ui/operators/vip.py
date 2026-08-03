@@ -39,6 +39,39 @@ class DAF_OT_toggle_damage_key_preview(_VipOperator):
             return self.failed("Toggle Damage Key Preview", exc)
 
 
+class DAF_OT_rename_damage_key(_VipOperator):
+    bl_idname = "daf.rename_damage_key"
+    bl_label = "Rename Damage Key"
+    bl_description = (
+        "Rename this Damage Key while preserving its stable ID, Stamps, gore, "
+        "animation paths, and progressive-site assignments"
+    )
+    bl_options = {"REGISTER", "UNDO"}
+
+    key_name: StringProperty()
+
+    def execute(self, context):
+        from ... import deformation_authoring
+
+        try:
+            settings = context.scene.daf_settings
+            result = deformation_authoring.rename_deformation_key(
+                context,
+                old_name=self.key_name or settings.deformation_active_key,
+                new_name=settings.deformation_key_name,
+            )
+            if result.get("changed", False):
+                self.report(
+                    {"INFO"},
+                    f"Renamed {result['oldName']} to {result['newName']}.",
+                )
+            else:
+                self.report({"INFO"}, f"Damage Key is already named {result['newName']}.")
+            return {"FINISHED"}
+        except Exception as exc:
+            return self.failed("Rename Damage Key", exc)
+
+
 class DAF_OT_select_damage_stamp(_VipOperator):
     bl_idname = "daf.select_damage_stamp"
     bl_label = "Select Damage Stamp"
@@ -190,6 +223,7 @@ class DAF_OT_apply_damage_blueprint(_VipOperator):
 
 CLASSES = (
     DAF_OT_toggle_damage_key_preview,
+    DAF_OT_rename_damage_key,
     DAF_OT_select_damage_stamp,
     DAF_OT_randomize_damage_recipe,
     DAF_OT_save_vip_damage,

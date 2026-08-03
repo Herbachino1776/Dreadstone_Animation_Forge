@@ -247,6 +247,7 @@ REQUIRED_OPERATORS = {
     "daf.preview_mace_guard_active": "Preview Guard_Active",
     "daf.validate_mace_head_guards": "Validate Mace Head-Guard Drafts",
     "daf.toggle_damage_key_preview": "Toggle Damage Key Preview",
+    "daf.rename_damage_key": "Rename Damage Key",
     "daf.select_damage_stamp": "Select Damage Stamp",
     "daf.randomize_damage_recipe": "RANDOMIZE DAMAGE",
     "daf.save_vip_damage": "SAVE DAMAGE KEY",

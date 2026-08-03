@@ -19,6 +19,7 @@ from bpy.props import BoolProperty, EnumProperty, FloatProperty, IntProperty, St
 from bpy.types import Operator
 from bpy_extras.io_utils import ExportHelper, ImportHelper
 
+from . import animation_library
 from . import parameter_schema
 from . import trauma_field
 from .deformation import (
@@ -1052,7 +1053,7 @@ def _rename_shape_key_data_paths(key_data_blocks, old_name, new_name):
                     if old_token in path:
                         target.data_path = path.replace(old_token, new_token)
     for action in actions:
-        for curve in getattr(action, "fcurves", ()):
+        for curve in animation_library.iter_action_fcurves(action):
             if old_token in str(curve.data_path):
                 curve.data_path = str(curve.data_path).replace(
                     old_token,
@@ -1241,9 +1242,14 @@ def rename_deformation_key(context=None, old_name=None, new_name=None):
         settings.deformation_active_key = new_name
         if str(settings.deformation_key_name) == old_name:
             settings.deformation_key_name = new_name
-    settings.deformation_status = (
-        f"DAMAGE KEY RENAMED - {old_name} -> {new_name}"
-    )
+    preview_restore_error = ""
+    try:
+        apply_damage_key_previews(context)
+    except Exception as exc:
+        preview_restore_error = str(exc)
+    settings.deformation_status = f"DAMAGE KEY RENAMED - {old_name} -> {new_name}"
+    if preview_restore_error:
+        settings.deformation_status += " - PREVIEW REFRESH NEEDED"
     if renamed_stage_count:
         settings.progression_status = (
             "DAMAGE KEY RENAMED - VALIDATE + ENABLE SITE FOR EXPORT"
@@ -1257,6 +1263,7 @@ def rename_deformation_key(context=None, old_name=None, new_name=None):
         "renamedStageCount": renamed_stage_count,
         "renamedCompoundParticipantCount": renamed_compound_count,
         "rebuiltGoreNodeNames": [obj.name for obj in new_gore],
+        "previewRestoreError": preview_restore_error,
         "changed": True,
     }
 
@@ -11591,7 +11598,12 @@ def _legacy_draw_panel_source(box, context, settings):
 
     library = box.box()
     library.label(text="2. Active Deformation", icon='SHAPEKEY_DATA')
-    library.prop(settings, "deformation_key_name")
+    rename = library.row(align=True)
+    rename.prop(settings, "deformation_key_name", text="Rename to")
+    rename_button = rename.row(align=True)
+    rename_button.enabled = bool(settings.deformation_active_key)
+    rename_action = rename_button.operator("daf.rename_damage_key", text="Rename Active")
+    rename_action.key_name = settings.deformation_active_key
     row = library.row(align=True)
     row.operator("daf.create_damage_shape_key", text="Create Damage Shape Key", icon='ADD')
     row.operator("daf.create_standard_head_deformations", text="Create Standard Head Set", icon='PRESET')
@@ -11926,7 +11938,12 @@ def draw_panel(box, context, settings):
         box, settings, "ui_advanced_deformations_open", "Managed Deformations", 'SHAPEKEY_DATA'
     )
     if keys is not None:
-        keys.prop(settings, "deformation_key_name")
+        rename = keys.row(align=True)
+        rename.prop(settings, "deformation_key_name", text="Rename to")
+        rename_button = rename.row(align=True)
+        rename_button.enabled = bool(settings.deformation_active_key)
+        rename_action = rename_button.operator("daf.rename_damage_key", text="Rename Active")
+        rename_action.key_name = settings.deformation_active_key
         row = keys.row(align=True)
         row.operator("daf.create_damage_shape_key", text="Create Damage Shape Key")
         row.operator("daf.create_standard_head_deformations", text="Create Standard Head Set")

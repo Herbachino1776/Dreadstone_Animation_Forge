@@ -22,7 +22,11 @@ if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
 import dreadstone_animation_forge as addon  # noqa: E402
-from dreadstone_animation_forge import deformation_authoring, trauma_field  # noqa: E402
+from dreadstone_animation_forge import (  # noqa: E402
+    animation_library,
+    deformation_authoring,
+    trauma_field,
+)
 from dreadstone_animation_forge.deformation import preview_service  # noqa: E402
 
 
@@ -402,6 +406,111 @@ def main():
             "FAST left BALANCED preview geometry behind.",
         )
 
+        # The front-facing inline action must rename the complete ownership
+        # graph, not only the visible shape-key label. This models the common
+        # duplicate-as-starting-point workflow.
+        animated_key = attached.data.shape_keys.key_blocks[active_name]
+        animated_key.value = 0.4
+        animated_key.keyframe_insert(data_path="value", frame=1)
+        animated_action = attached.data.shape_keys.animation_data.action
+        require(animated_action is not None, "Could not create the rename animation fixture.")
+        payload_before_rename = deformation_authoring._metadata(attached)
+        entry_before_rename = payload_before_rename["keys"][active_name]
+        stable_key_id = str(entry_before_rename.get("damageKeyId", ""))
+        stamp_ids = [
+            str(stamp.get("stampId", ""))
+            for stamp in entry_before_rename.get("stamps", [])
+        ]
+        require(stable_key_id, "The source Damage Key has no stable ID.")
+        renamed_name = "face_patch_followup_origin"
+        settings.deformation_key_name = renamed_name
+        rename_result = bpy.ops.daf.rename_damage_key(key_name=active_name)
+        require(rename_result == {"FINISHED"}, f"Inline rename failed: {rename_result}")
+        renamed_payload = deformation_authoring._metadata(attached)
+        require(active_name not in renamed_payload["keys"], "Old key metadata survived rename.")
+        require(renamed_name in renamed_payload["keys"], "Renamed key metadata is missing.")
+        renamed_entry = renamed_payload["keys"][renamed_name]
+        require(
+            str(renamed_entry.get("damageKeyId", "")) == stable_key_id,
+            "Rename changed the stable Damage Key ID.",
+        )
+        require(
+            [str(stamp.get("stampId", "")) for stamp in renamed_entry.get("stamps", [])]
+            == stamp_ids,
+            "Rename changed child Stamp identities.",
+        )
+        require(
+            attached.data.shape_keys.key_blocks.get(active_name) is None
+            and detached.data.shape_keys.key_blocks.get(active_name) is None,
+            "Old attached/detached shape-key names survived rename.",
+        )
+        require(
+            attached.data.shape_keys.key_blocks.get(renamed_name) is not None
+            and detached.data.shape_keys.key_blocks.get(renamed_name) is not None,
+            "Renamed attached/detached shape keys are missing.",
+        )
+        require(
+            settings.deformation_active_key == renamed_name
+            and settings.deformation_key_name == renamed_name,
+            "Rename did not keep the inline editor focused on the new name.",
+        )
+        renamed_gore = deformation_authoring.generated_gore_objects(
+            "head",
+            renamed_name,
+        )
+        require(
+            not deformation_authoring.generated_gore_objects("head", active_name),
+            "Old generated-gore ownership survived rename.",
+        )
+        require(
+            len(renamed_gore) == len(final_objects),
+            "Rename did not rebuild the complete generated-gore ownership graph.",
+        )
+        driver_targets = [
+            str(target.data_path)
+            for curve in detached.data.shape_keys.animation_data.drivers
+            for variable in curve.driver.variables
+            for target in variable.targets
+            if getattr(target, "id", None) == attached.data.shape_keys
+        ]
+        require(
+            any(renamed_name in path for path in driver_targets)
+            and all(active_name not in path for path in driver_targets),
+            "Detached shape-key driver paths did not follow the rename.",
+        )
+        animated_paths = [
+            str(curve.data_path)
+            for curve in animation_library.iter_action_fcurves(animated_action)
+        ]
+        require(
+            any(renamed_name in path for path in animated_paths)
+            and all(active_name not in path for path in animated_paths),
+            "Blender 5.x Action paths did not follow the Damage Key rename.",
+        )
+        require(
+            bool(renamed_entry.get("previewEnabled", False))
+            and attached.data.shape_keys.key_blocks[renamed_name].value > 0.0,
+            "Rename did not restore the enabled Damage Key preview.",
+        )
+
+        # Invalid/colliding edits are rejected before touching the ownership graph.
+        settings.deformation_key_name = created[0]
+        try:
+            collision_result = bpy.ops.daf.rename_damage_key(key_name=renamed_name)
+        except RuntimeError:
+            collision_result = {"CANCELLED"}
+        require(
+            collision_result == {"CANCELLED"},
+            "A colliding inline rename was not rejected.",
+        )
+        require(
+            renamed_name in deformation_authoring._metadata(attached)["keys"],
+            "A rejected rename mutated the active Damage Key.",
+        )
+        settings.deformation_key_name = renamed_name
+        active_name = renamed_name
+        final_objects = renamed_gore
+
         print(json.dumps({
             "status": "PASS",
             "createdKeys": created,
@@ -412,6 +521,8 @@ def main():
             "raisedNucleusCount": raised_nucleus_count,
             "fastMaskedVertices": fast["goreMaskedVertexCount"],
             "balancedPreviewComponents": balanced["previewGoreObjectCount"],
+            "renamedKey": renamed_name,
+            "renameStableId": stable_key_id,
             "worldDisplacementCap": clamped_maximum,
             "rebuildDisplacementCap": capped_rebuild["validation"][
                 "maximumDisplacement"

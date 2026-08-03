@@ -673,6 +673,19 @@ def _draw_vip_damage_workflow(layout, context, settings, summary):
             depress=preview_enabled,
         )
         toggle.key_name = key_name
+        if focused:
+            rename = card.row(align=True)
+            rename.prop(settings, "deformation_key_name", text="Rename to")
+            rename_action = rename.operator(
+                "daf.rename_damage_key",
+                text="RENAME",
+                icon="CHECKMARK",
+            )
+            rename_action.key_name = key_name
+            card.label(
+                text="Use letters, numbers, and underscores.",
+                icon="INFO",
+            )
         for stamp in key.get("stamps", []):
             stamp_id = str(stamp.get("stampId", ""))
             stamp_active = stamp_id == str(key.get("activeStampId", ""))

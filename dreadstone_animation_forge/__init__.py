@@ -1591,7 +1591,14 @@ class DAFSettings(PropertyGroup):
         description="Optional Damage Authoring seam ID used for protection weighting",
         default="head_neck",
     )
-    deformation_key_name: StringProperty(name="New Key Name", default="Head_Dent_Left")
+    deformation_key_name: StringProperty(
+        name="Damage Key Name",
+        description=(
+            "Editable name for the focused Damage Key; use the Rename action to "
+            "apply it without changing the key's stable identity"
+        ),
+        default="Head_Dent_Left",
+    )
     deformation_active_key: StringProperty(name="Active Deformation", default="", options={'HIDDEN'})
     deformation_capture_mode: EnumProperty(
         name="Placement Mode",

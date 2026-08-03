@@ -297,6 +297,7 @@ class StaticContractTests(unittest.TestCase):
         self.assertNotIn('text="BUILD ACTIVE PRESET"', self.deformation)
         self.assertIn("VIP DAMAGE WORKFLOW", panels)
         self.assertIn('bl_idname = "daf.randomize_damage_recipe"', vip)
+        self.assertIn('bl_idname = "daf.rename_damage_key"', vip)
         self.assertIn('bl_idname = "daf.save_damage_blueprint"', vip)
         self.assertIn("attached_key.value = 0.0", self.deformation)
         self.assertIn("_zero_managed_weights(attached)", self.deformation)

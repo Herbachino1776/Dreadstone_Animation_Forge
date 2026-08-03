@@ -77,6 +77,9 @@ class DamagePreviewLifecycleTests(unittest.TestCase):
         self.assertIn("depress=region_id == active_region_id", panels)
         self.assertIn("requested_key_name in current_key_names", panels)
         self.assertIn('bl_idname = "daf.toggle_damage_key_preview"', operators)
+        self.assertIn('bl_idname = "daf.rename_damage_key"', operators)
+        self.assertIn('"daf.rename_damage_key"', panels)
+        self.assertIn('text="Rename to"', panels)
         self.assertIn("def apply_damage_key_previews(", authoring)
 
     def test_authoring_cache_invalidations_restore_damage_key_cards(self):

@@ -56,6 +56,12 @@ commit/final-validation step; it is not required to see macro changes.
 Every Damage Key has a large card. The focused card is highlighted and says
 **WORKING ON** so it is always clear which key receives edits.
 
+To rename the focused key at any time, edit **Rename to** in that card and click
+**RENAME**. This is especially useful immediately after **DUPLICATE ACTIVE KEY
+AS STARTING POINT**. Names accept letters, numbers, and underscores. Renaming
+preserves the key's stable ID, child Stamps, generated gore, animation links,
+and progressive-stage assignment; an assigned site is marked for revalidation.
+
 Each card owns its own **PREVIEW ON** / **PREVIEW OFF** toggle. Preview state is
 independent of focus:
 
@@ -385,8 +391,9 @@ authoring asset.
   **Load READY Handoff**, **Build Authoring Asset**.
 - VIP placement: Head, Body, Left Forearm, Right Forearm,
   **CREATE DAMAGE KEY FROM SELECTION**.
-- VIP keys/stamps: **WORKING ON**, **PREVIEW ON**, **PREVIEW OFF**,
-  **ADD STAMP ALTERNATIVE**, **REMOVE ACTIVE**, **STAMP · name**.
+- VIP keys/stamps: **WORKING ON**, **Rename to**, **RENAME**, **PREVIEW ON**,
+  **PREVIEW OFF**, **ADD STAMP ALTERNATIVE**, **REMOVE ACTIVE**,
+  **STAMP · name**.
 - VIP macros/actions: **AREA**, **DEPTH**, **FALLOFF**, **EDGE DAMAGE**,
   **DISTORTION**, **ASYMMETRY**, **RAISED AMOUNT**, **INLAY AMOUNT**,
   **COVERAGE**, **EDGE BREAKUP**, **FILL**, **WETNESS**,
