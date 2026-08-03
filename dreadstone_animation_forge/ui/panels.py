@@ -1303,10 +1303,19 @@ def _draw_death_animation(layout, settings):
     )
     if death is None:
         return
-    for name in (
-        "collapse_style", "collapse_seconds", "death_pain_side", "death_lead_knee",
-        "death_brace_side", "death_arm_tuck", "death_wiggle",
-    ):
+    death.prop(settings, "collapse_style")
+    death.prop(
+        settings,
+        "death_instant_seconds"
+        if settings.collapse_style == "INSTANT_LIMP"
+        else "collapse_seconds",
+    )
+    common_names = [
+        "death_pain_side", "death_lead_knee", "death_arm_tuck",
+    ]
+    if settings.collapse_style != "INSTANT_LIMP":
+        common_names.extend(("death_brace_side", "death_wiggle"))
+    for name in common_names:
         death.prop(settings, name, slider=name in {"death_arm_tuck", "death_wiggle"})
     advanced = death.box()
     advanced.prop(

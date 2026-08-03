@@ -1,14 +1,14 @@
-# Dreadstone Animation Forge 4.1.0 — User Workflow Guide
+# Dreadstone Animation Forge 4.1.1 — User Workflow Guide
 
-- Release archive: `Dreadstone_Animation_Forge_v4_1_0.zip`
+- Release archive: `Dreadstone_Animation_Forge_v4_1_1.zip`
 - Supported release runtime: Blender 5.1.2
 - Damage authoring model: Damage Keys → child Stamp alternatives → strong macros
 - Reuse model: topology-independent Damage Blueprints
 
-## 1. Install Dreadstone Animation Forge 4.1.0
+## 1. Install Dreadstone Animation Forge 4.1.1
 
 In Blender choose **Edit > Preferences > Add-ons > Install from Disk**, select
-`Dreadstone_Animation_Forge_v4_1_0.zip` without extracting it, and enable
+`Dreadstone_Animation_Forge_v4_1_1.zip` without extracting it, and enable
 **Dreadstone Animation Forge**.
 
 ## 2. Open the Dreadstone panel
@@ -241,6 +241,13 @@ The animation workspace remains independent of Damage Key previews. Analyze the
 rig, draft walk/collapse/hurt or mace head-guard actions, inspect them, and use
 the explicit Version/Approve controls. Generated actions do not animate bone
 scale. Approved Actions and NLA-used Actions are protected.
+
+Every death style now bakes signed floor alignment through the Action and ends
+in a validated low-profile body-contact pose. Select **Instant Unconscious** for
+an immediate, brace-free loss of consciousness; its separate duration control
+defaults to a fully limp terminal contact in under one second. Chest Hold,
+Faceplant, and Knees First retain their authored lead-ins but use the same final
+ground-contact guarantee.
 
 Start with the compact anatomy card and click **ANALYZE CREATURE ANATOMY**. It
 shows creature class, selected anatomy profile, confidence, authoritative

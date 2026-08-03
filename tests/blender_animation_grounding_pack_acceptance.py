@@ -91,27 +91,71 @@ def main():
     armature, mesh = make_character()
     settings = bpy.context.scene.daf_settings
     settings.ground_sink = 0.005
-
-    collapse_result = bpy.ops.daf.collapse()
-    require(
-        "FINISHED" in collapse_result,
-        f"Death generation failed: {sorted(collapse_result)}",
-    )
-    death = bpy.data.actions.get(addon.DRAFT_ACTION_NAMES["DEATH"])
-    require(death is not None, "Death draft was not created.")
-    require(
-        bool(death.get("dsb_floor_grounded", False)),
-        "Death draft has no baked floor-grounding metadata.",
-    )
-    start, end = addon.action_frame_bounds(death)
-    worst_minimum = float("inf")
-    for frame in range(int(start), int(end) + 1):
-        bpy.context.scene.frame_set(frame)
-        worst_minimum = min(worst_minimum, minimum_z(mesh))
-    require(
-        worst_minimum >= -settings.ground_sink - 0.0011,
-        f"Grounded death penetrated the floor: {worst_minimum:.6f} m.",
-    )
+    settings.death_instant_seconds = 0.72
+    death_results = {}
+    for style in ("CHEST_HOLD", "FACEPLANT", "KNEES_FIRST", "INSTANT_LIMP"):
+        settings.collapse_style = style
+        collapse_result = bpy.ops.daf.collapse()
+        require(
+            "FINISHED" in collapse_result,
+            f"{style} death generation failed: {sorted(collapse_result)}",
+        )
+        death = bpy.data.actions.get(addon.DRAFT_ACTION_NAMES["DEATH"])
+        require(death is not None, f"{style} death draft was not created.")
+        require(
+            bool(death.get("dsb_floor_grounded", False)),
+            f"{style} death has no baked floor-grounding metadata.",
+        )
+        require(
+            bool(death.get("dsb_terminal_contact_baked", False)),
+            f"{style} death has no terminal body-contact metadata.",
+        )
+        start, end = addon.action_frame_bounds(death)
+        worst_minimum = float("inf")
+        for frame in range(int(start), int(end) + 1):
+            bpy.context.scene.frame_set(frame)
+            worst_minimum = min(worst_minimum, minimum_z(mesh))
+        require(
+            worst_minimum >= -settings.ground_sink - 0.0011,
+            f"{style} death penetrated the floor: {worst_minimum:.6f} m.",
+        )
+        bpy.context.scene.frame_set(int(end))
+        final_minimum, final_maximum = addon.world_bounds(bpy.context, [mesh])
+        final_height = float(final_maximum.z - final_minimum.z)
+        reference_height = float(death["dsb_terminal_reference_height_m"])
+        final_ratio = final_height / reference_height
+        maximum_ratio = float(death["dsb_terminal_max_height_ratio"])
+        require(
+            abs(float(final_minimum.z) + settings.ground_sink) <= 0.0011,
+            f"{style} death does not end flush: {float(final_minimum.z):.6f} m.",
+        )
+        require(
+            final_ratio <= maximum_ratio + 0.0001,
+            f"{style} death remains upright: {final_ratio:.6f} > {maximum_ratio:.6f}.",
+        )
+        validation = addon.validate_death_floor_action(
+            bpy.context,
+            death,
+            armature,
+            [mesh],
+            fallback_ground_sink=settings.ground_sink,
+        )
+        require(
+            validation["status"] == "PASS",
+            f"{style} terminal validation failed: {validation['errors']}",
+        )
+        if style == "INSTANT_LIMP":
+            terminal_frame = int(death["dsb_terminal_contact_frame"])
+            instant_motion_frames = terminal_frame - int(start)
+            require(
+                instant_motion_frames <= round(settings.death_instant_seconds * 24) + 1,
+                f"Instant collapse is too slow: {instant_motion_frames} frames.",
+            )
+        death_results[style] = {
+            "minimumZ": worst_minimum,
+            "terminalHeightRatio": final_ratio,
+            "terminalFrame": int(death["dsb_terminal_contact_frame"]),
+        }
 
     walk_result = bpy.ops.daf.walk()
     require(
@@ -180,7 +224,7 @@ def main():
         + json.dumps(
             {
                 "status": "PASS",
-                "deathMinimumZ": worst_minimum,
+                "deathStyles": death_results,
                 "groundSinkM": settings.ground_sink,
                 "wrapperlessPack": True,
                 "approvedWalk": walk.name,

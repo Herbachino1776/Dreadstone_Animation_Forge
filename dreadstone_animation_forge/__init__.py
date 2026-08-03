@@ -1,7 +1,7 @@
 bl_info = {
     "name": "Dreadstone Animation Forge",
     "author": "Dreadstone Black",
-    "version": (4, 1, 0),
+    "version": (4, 1, 1),
     "blender": (3, 6, 0),
     "location": "3D Viewport > Sidebar > Dreadstone",
     "description": "Animation authoring, protected damage assets, and registered-region trauma-field shape-key authoring.",
@@ -343,6 +343,31 @@ def rotate_local(arm, mapping, role, local_axis_vector, degrees):
     )
 
 
+def rotate_for_disabled_inheritance(arm, mapping, roles, axis, degrees):
+    """Carry a parent rotation into bones that explicitly ignore it.
+
+    Some production rigs disable ``use_inherit_rotation`` throughout their
+    deform chains. Rotating only the pelvis on those rigs moves child heads but
+    leaves every child pointing upright. A terminal fall therefore needs the
+    same gross pitch on each inheritance break before its local limp offsets
+    are applied.
+    """
+
+    for role in roles:
+        bone_name = mapping.get(role)
+        data_bone = arm.data.bones.get(bone_name) if bone_name else None
+        if data_bone is not None and not bool(data_bone.use_inherit_rotation):
+            rotate(arm, mapping, role, axis, degrees)
+
+
+def rotation_inheritance_disabled(arm, mapping, role):
+    """Return whether a mapped bone ignores its parent's pose rotation."""
+
+    bone_name = mapping.get(role)
+    data_bone = arm.data.bones.get(bone_name) if bone_name else None
+    return bool(data_bone is not None and not data_bone.use_inherit_rotation)
+
+
 def apply_arm_hand_pose_polish(arm, mapping, settings, side_axis):
     """Overlay safe rotation-only arm and hand adjustments."""
     if not settings.pose_polish_enabled:
@@ -475,6 +500,9 @@ def key_pose(arm, mapping, frame):
             pb.keyframe_insert("location", frame=frame, group=name)
 
 
+DEATH_TERMINAL_MAX_HEIGHT_RATIO = 0.50
+
+
 def ground_current_pose(
     context,
     arm,
@@ -483,11 +511,11 @@ def ground_current_pose(
     *,
     target_lowest_z,
 ):
-    """Raise the animated hips just enough to keep visible geometry on the floor."""
+    """Align the visible character to the floor with signed hips translation."""
     context.view_layer.update()
     minimum, _maximum = world_bounds(context, meshes)
-    correction = max(0.0, float(target_lowest_z) - float(minimum.z))
-    if correction > 1.0e-7:
+    correction = float(target_lowest_z) - float(minimum.z)
+    if abs(correction) > 1.0e-7:
         offset(
             arm,
             mapping,
@@ -523,14 +551,19 @@ def bake_grounded_death_motion(
     frame_end,
     *,
     ground_sink,
+    terminal_frame,
+    reference_height,
+    maximum_terminal_height_ratio=DEATH_TERMINAL_MAX_HEIGHT_RATIO,
 ):
-    """Bake per-frame hips translation so a death clip respects world Z=0."""
+    """Bake signed floor alignment and require a low terminal body-contact pose."""
     hips = arm.pose.bones.get(mapping.get("hips", ""))
     if hips is None:
         raise RuntimeError("Death grounding requires the mapped hips bone.")
 
     target_lowest_z = -float(ground_sink)
     maximum_correction = 0.0
+    maximum_upward_correction = 0.0
+    maximum_downward_correction = 0.0
     worst_minimum = float("inf")
     grounded_frames = 0
     frames = range(int(math.floor(frame_start)), int(math.ceil(frame_end)) + 1)
@@ -543,9 +576,17 @@ def bake_grounded_death_motion(
             meshes,
             target_lowest_z=target_lowest_z,
         )
-        if result["correction"] > 1.0e-7:
+        if abs(result["correction"]) > 1.0e-7:
             grounded_frames += 1
-        maximum_correction = max(maximum_correction, result["correction"])
+        maximum_correction = max(maximum_correction, abs(result["correction"]))
+        maximum_upward_correction = max(
+            maximum_upward_correction,
+            result["correction"],
+        )
+        maximum_downward_correction = min(
+            maximum_downward_correction,
+            result["correction"],
+        )
         worst_minimum = min(worst_minimum, result["minimum_after"])
 
         # Key every sampled hips location. This is the actual runtime floor
@@ -560,6 +601,25 @@ def bake_grounded_death_motion(
             f"floor (lowest {worst_minimum:.4f} m, allowed "
             f"{target_lowest_z:.4f} m). Check hips mapping and skin weights."
         )
+    context.scene.frame_set(int(terminal_frame))
+    context.view_layer.update()
+    terminal_minimum, terminal_maximum = world_bounds(context, meshes)
+    terminal_height = float(terminal_maximum.z - terminal_minimum.z)
+    safe_reference_height = max(float(reference_height), 1.0e-6)
+    terminal_height_ratio = terminal_height / safe_reference_height
+    if terminal_height_ratio > float(maximum_terminal_height_ratio) + 1.0e-4:
+        raise RuntimeError(
+            "Death terminal pose is not flat enough for ground contact "
+            f"({terminal_height:.4f} m / {safe_reference_height:.4f} m = "
+            f"{terminal_height_ratio:.3f}; maximum "
+            f"{float(maximum_terminal_height_ratio):.3f})."
+        )
+    if abs(float(terminal_minimum.z) - target_lowest_z) > tolerance:
+        raise RuntimeError(
+            "Death terminal pose did not finish flush on the preview floor "
+            f"(lowest {float(terminal_minimum.z):.4f} m; target "
+            f"{target_lowest_z:.4f} m)."
+        )
     return {
         "floor_z": 0.0,
         "ground_sink_m": float(ground_sink),
@@ -567,7 +627,14 @@ def bake_grounded_death_motion(
         "sample_count": int(math.ceil(frame_end)) - int(math.floor(frame_start)) + 1,
         "grounded_frame_count": grounded_frames,
         "maximum_correction_m": maximum_correction,
+        "maximum_upward_correction_m": maximum_upward_correction,
+        "maximum_downward_correction_m": maximum_downward_correction,
         "minimum_z": worst_minimum,
+        "terminal_contact_frame": int(terminal_frame),
+        "reference_height_m": safe_reference_height,
+        "terminal_height_m": terminal_height,
+        "terminal_height_ratio": terminal_height_ratio,
+        "maximum_terminal_height_ratio": float(maximum_terminal_height_ratio),
     }
 
 
@@ -649,6 +716,7 @@ def approval_base_name(settings, kind):
             "CHEST_HOLD": "ChestHold",
             "FACEPLANT": "Faceplant",
             "KNEES_FIRST": "KneesFirst",
+            "INSTANT_LIMP": "InstantUnconscious",
         }[settings.collapse_style]
         return f"DSB_Death_{style_label}_{settings.death_pain_side}"
 
@@ -1249,6 +1317,11 @@ class DAFSettings(PropertyGroup):
             ("CHEST_HOLD", "Chest-Hold Forward", "Hold the flank/chest and weaken"),
             ("FACEPLANT", "Uncontrolled Faceplant", "Less bracing, stronger forward fall"),
             ("KNEES_FIRST", "Knees First", "Longer knee-buckle phase"),
+            (
+                "INSTANT_LIMP",
+                "Instant Unconscious",
+                "Immediate loss of consciousness with completely lifeless limb collapse",
+            ),
         ],
         default="CHEST_HOLD"
     )
@@ -1257,6 +1330,14 @@ class DAFSettings(PropertyGroup):
         default=3.8,
         min=2,
         max=8,
+        unit='TIME'
+    )
+    death_instant_seconds: FloatProperty(
+        name="Instant Collapse Duration",
+        description="Time from consciousness loss to full-body ground contact",
+        default=0.72,
+        min=0.35,
+        max=1.5,
         unit='TIME'
     )
     death_pain_side: EnumProperty(
@@ -1575,7 +1656,7 @@ class DAFSettings(PropertyGroup):
     last_damage_manifest_path: StringProperty(default="", options={'HIDDEN'})
     last_damage_validation_path: StringProperty(default="", options={'HIDDEN'})
 
-    # Trauma Field Authoring v4.1.0.
+    # Trauma Field Authoring v4.1.1.
     deformation_region: EnumProperty(
         name="Active Region",
         items=_deformation_region_items,
@@ -3092,6 +3173,164 @@ def brace_arm_pose(arm, mapping, side_name, side_axis, forward_axis,
         18.0 * outward_sign
     )
 
+def apply_terminal_death_pose(
+    arm,
+    mapping,
+    settings,
+    forward_axis,
+    side_axis,
+    up_axis,
+    height,
+    frame,
+    *,
+    strength=1.0,
+):
+    """Author a low, limp terminal pose that puts the whole body on the floor."""
+
+    profile = {
+        "CHEST_HOLD": {
+            "pitch": 90.0,
+            "roll": 10.0,
+            "travel": 0.34,
+            "curl": 16.0,
+            "lead_knee": 72.0,
+            "trail_knee": 54.0,
+        },
+        "FACEPLANT": {
+            "pitch": 96.0,
+            "roll": 4.0,
+            "travel": 0.42,
+            "curl": 7.0,
+            "lead_knee": 58.0,
+            "trail_knee": 42.0,
+        },
+        "KNEES_FIRST": {
+            "pitch": 91.0,
+            "roll": 8.0,
+            "travel": 0.30,
+            "curl": 13.0,
+            "lead_knee": 92.0,
+            "trail_knee": 76.0,
+        },
+        "INSTANT_LIMP": {
+            "pitch": 94.0,
+            "roll": 11.0,
+            "travel": 0.36,
+            "curl": 5.0,
+            "lead_knee": 66.0,
+            "trail_knee": 48.0,
+        },
+    }[settings.collapse_style]
+    amount = max(0.0, min(1.0, float(strength)))
+    fall_sign = -1.0 if settings.death_pain_side == "LEFT" else 1.0
+    knee_sign = -1.0 if settings.invert_knees else 1.0
+    elbow_sign = -1.0 if settings.invert_elbows else 1.0
+
+    reset_pose(arm, mapping)
+    terminal_pitch = profile["pitch"] * amount
+    rotate(arm, mapping, "hips", side_axis, terminal_pitch)
+    rotate_for_disabled_inheritance(
+        arm,
+        mapping,
+        (
+            "spine", "spine_mid", "chest", "neck", "head",
+            "shoulder_l", "upper_arm_l", "lower_arm_l", "hand_l",
+            "shoulder_r", "upper_arm_r", "lower_arm_r", "hand_r",
+            "thigh_l", "shin_l", "foot_l",
+            "thigh_r", "shin_r", "foot_r",
+        ),
+        side_axis,
+        terminal_pitch,
+    )
+    rotate(
+        arm,
+        mapping,
+        "hips",
+        forward_axis,
+        profile["roll"] * fall_sign * amount,
+    )
+    rotate(arm, mapping, "hips", up_axis, 7.0 * fall_sign * amount)
+
+    # Keep the center chain almost horizontal. A restrained curl reads as
+    # compression without lifting the head and shoulders back off the floor.
+    curl = profile["curl"] * amount
+    rotate(arm, mapping, "spine", side_axis, curl * .45)
+    rotate(arm, mapping, "spine_mid", side_axis, curl * .20)
+    rotate(arm, mapping, "chest", side_axis, curl * .35)
+    rotate(arm, mapping, "chest", forward_axis, 9.0 * fall_sign * amount)
+    # Finish with the head turned and heavy, but do not let the snout become a
+    # single low pivot that suspends the chest above the floor.
+    rotate(arm, mapping, "neck", side_axis, -12.0 * amount)
+    rotate(arm, mapping, "head", side_axis, -26.0 * amount)
+    rotate(arm, mapping, "neck", forward_axis, 24.0 * fall_sign * amount)
+    rotate(arm, mapping, "head", forward_axis, 52.0 * fall_sign * amount)
+
+    if settings.death_lead_knee == "LEFT":
+        left_knee = profile["lead_knee"]
+        right_knee = profile["trail_knee"]
+    else:
+        right_knee = profile["lead_knee"]
+        left_knee = profile["trail_knee"]
+    rotate(arm, mapping, "thigh_l", side_axis, -left_knee * .24 * amount)
+    rotate(arm, mapping, "thigh_r", side_axis, -right_knee * .21 * amount)
+    left_shin_scale = .30 if rotation_inheritance_disabled(arm, mapping, "shin_l") else 1.0
+    right_shin_scale = .30 if rotation_inheritance_disabled(arm, mapping, "shin_r") else 1.0
+    left_foot_scale = .45 if rotation_inheritance_disabled(arm, mapping, "foot_l") else 1.0
+    right_foot_scale = .45 if rotation_inheritance_disabled(arm, mapping, "foot_r") else 1.0
+    rotate(
+        arm, mapping, "shin_l", side_axis,
+        left_knee * knee_sign * left_shin_scale * amount,
+    )
+    rotate(
+        arm, mapping, "shin_r", side_axis,
+        right_knee * knee_sign * right_shin_scale * amount,
+    )
+    rotate(
+        arm, mapping, "foot_l", side_axis,
+        -left_knee * knee_sign * .32 * left_foot_scale * amount,
+    )
+    rotate(
+        arm, mapping, "foot_r", side_axis,
+        -right_knee * knee_sign * .28 * right_foot_scale * amount,
+    )
+
+    # No protective brace survives the terminal pose. Unequal limb bends and
+    # relaxed wrists make the body read as unconscious rather than supported.
+    terminal_tuck = min(75.0, float(settings.death_arm_tuck) + 28.0)
+    apply_arm_tuck(
+        arm,
+        mapping,
+        forward_axis,
+        terminal_tuck * amount,
+        left_scale=.86,
+        right_scale=1.0,
+    )
+    rotate(arm, mapping, "upper_arm_l", side_axis, 26.0 * amount)
+    rotate(arm, mapping, "upper_arm_r", side_axis, 15.0 * amount)
+    left_elbow_scale = .50 if rotation_inheritance_disabled(arm, mapping, "lower_arm_l") else 1.0
+    right_elbow_scale = .50 if rotation_inheritance_disabled(arm, mapping, "lower_arm_r") else 1.0
+    rotate(
+        arm, mapping, "lower_arm_l", side_axis,
+        68.0 * elbow_sign * left_elbow_scale * amount,
+    )
+    rotate(
+        arm, mapping, "lower_arm_r", side_axis,
+        88.0 * elbow_sign * right_elbow_scale * amount,
+    )
+    rotate_local(arm, mapping, "hand_l", (1.0, 0.0, 0.0), -18.0 * amount)
+    rotate_local(arm, mapping, "hand_r", (1.0, 0.0, 0.0), 13.0 * amount)
+
+    offset(
+        arm,
+        mapping,
+        "hips",
+        -up_axis * (height * .58 * amount)
+        + forward_axis * (height * profile["travel"] * amount)
+        + side_axis * (height * .08 * fall_sign * amount),
+    )
+    key_pose(arm, mapping, frame)
+
+
 class DAF_OT_walk(Operator):
     bl_idname = "daf.walk"
     bl_label = "Generate Polished Walk"
@@ -3243,12 +3482,19 @@ class DAF_OT_collapse(Operator):
             if missing:
                 raise RuntimeError("Missing mapped bones: " + ", ".join(missing))
 
-            meshes = [
+            candidate_meshes = [
                 obj for obj in character_objects_for_armature(context, arm)
                 if obj.type == 'MESH'
                 and obj.name != PREVIEW_FLOOR_NAME
                 and not bool(obj.get("dsb_preview_only", False))
             ]
+            displayed_meshes = [
+                obj for obj in candidate_meshes
+                if not obj.hide_render
+                and not obj.hide_viewport
+                and not obj.hide_get()
+            ]
+            meshes = displayed_meshes or candidate_meshes
             if not meshes:
                 raise RuntimeError(
                     "No skinned character mesh was found for death grounding."
@@ -3258,6 +3504,7 @@ class DAF_OT_collapse(Operator):
                 "CHEST_HOLD": "ChestHold",
                 "FACEPLANT": "Faceplant",
                 "KNEES_FIRST": "KneesFirst",
+                "INSTANT_LIMP": "InstantUnconscious",
             }[s.collapse_style]
             action = ensure_draft_action(
                 arm,
@@ -3266,7 +3513,12 @@ class DAF_OT_collapse(Operator):
 
             fps = context.scene.render.fps / max(context.scene.render.fps_base, .001)
             start = 1
-            motion_end = start + round(s.collapse_seconds * fps)
+            motion_seconds = (
+                s.death_instant_seconds
+                if s.collapse_style == "INSTANT_LIMP"
+                else s.collapse_seconds
+            )
+            motion_end = start + max(2, round(motion_seconds * fps))
             final_end = motion_end + s.death_hold_frames
             context.scene.frame_start = start
             context.scene.frame_end = final_end
@@ -3275,6 +3527,9 @@ class DAF_OT_collapse(Operator):
             knee_sign = -1.0 if s.invert_knees else 1.0
             elbow_sign = -1.0 if s.invert_elbows else 1.0
 
+            context.scene.frame_set(start)
+            reset_pose(arm, m)
+            context.view_layer.update()
             mn, mx = world_bounds(context, meshes)
             height = max(mx.z - mn.z, .5)
             base_drop = min(max(height * .42, .55), 1.15) * s.death_drop_strength
@@ -3300,19 +3555,33 @@ class DAF_OT_collapse(Operator):
                     hold=.72, brace=.82, curl=.90,
                     travel=.68, drop=.96, knees=1.18, head=.92
                 )
+            elif s.collapse_style == "INSTANT_LIMP":
+                style.update(
+                    hold=0.0, brace=0.0, curl=.62,
+                    travel=1.18, drop=1.16, knees=1.0, head=1.32
+                )
 
             # Ratios: curl, hips pitch, lead knee, trailing knee, drop,
             # forward travel, hold arm, brace arm, head, twist, side fall.
-            poses = [
-                (0.00, 0,  0,  0,  0, 0.00, 0.00, 0.00, 0.00,  0,  0, 0.00),
-                (0.12, 9,  4,  3,  2, 0.03, 0.01, 0.38, 0.05, -2,  3, 0.03),
-                (0.28, 23, 12, 25, 12, 0.20, 0.08, 0.78, 0.20,  5,  7, 0.12),
-                (0.48, 40, 27, 63, 44, 0.48, 0.25, 1.00, 0.55, 12, 10, 0.35),
-                (0.68, 61, 49, 78, 65, 0.76, 0.58, 0.78, 0.88, 24, 13, 0.68),
-                (0.84, 77, 70, 72, 58, 0.95, 0.90, 0.55, 1.00, 38, 15, 0.92),
-                (0.94, 82, 76, 67, 53, 1.00, 1.00, 0.42, 0.82, 46, 17, 1.00),
-                (1.00, 80, 74, 64, 50, 1.00, 1.00, 0.32, 0.68, 49, 16, 1.00),
-            ]
+            if s.collapse_style == "INSTANT_LIMP":
+                poses = [
+                    (0.00, 0,  0,  0,  0, 0.00, 0.00, 0.00, 0.00,  0,  0, 0.00),
+                    (0.12, 3,  2,  1,  1, 0.02, 0.04, 0.00, 0.00, 12,  0, 0.08),
+                    (0.30, 10, 10, 14, 10, 0.18, 0.24, 0.00, 0.00, 32,  2, 0.24),
+                    (0.50, 24, 29, 46, 34, 0.48, 0.55, 0.00, 0.00, 55,  5, 0.52),
+                    (0.66, 35, 46, 70, 52, 0.76, 0.82, 0.00, 0.00, 68,  7, 0.78),
+                ]
+                contact_ratio = .74
+            else:
+                poses = [
+                    (0.00, 0,  0,  0,  0, 0.00, 0.00, 0.00, 0.00,  0,  0, 0.00),
+                    (0.12, 9,  4,  3,  2, 0.03, 0.01, 0.38, 0.05, -2,  3, 0.03),
+                    (0.28, 23, 12, 25, 12, 0.20, 0.08, 0.78, 0.20,  5,  7, 0.12),
+                    (0.48, 40, 27, 63, 44, 0.48, 0.25, 1.00, 0.55, 12, 10, 0.35),
+                    (0.68, 61, 49, 78, 65, 0.76, 0.58, 0.78, 0.88, 24, 13, 0.68),
+                    (0.84, 77, 70, 72, 58, 0.95, 0.90, 0.55, 1.00, 38, 15, 0.92),
+                ]
+                contact_ratio = .90
 
             # Alternating, damped body motion: visible but deliberately restrained.
             wiggle_pattern = [0.0, .65, -.85, .90, -.62, .38, -.14, 0.0]
@@ -3363,7 +3632,11 @@ class DAF_OT_collapse(Operator):
                 rotate(arm, m, "neck", side, head_r * .35)
                 rotate(arm, m, "head", side, head_r)
 
-                wiggle = wiggle_pattern[pose_index] * s.death_wiggle
+                wiggle = (
+                    0.0
+                    if s.collapse_style == "INSTANT_LIMP"
+                    else wiggle_pattern[pose_index] * s.death_wiggle
+                )
                 rotate(arm, m, "hips", up, wiggle * 4.0)
                 rotate(arm, m, "spine", fwd, wiggle * 6.5)
                 rotate(arm, m, "chest", fwd, -wiggle * 8.0)
@@ -3411,7 +3684,32 @@ class DAF_OT_collapse(Operator):
                 apply_arm_hand_pose_polish(arm, m, s, side)
                 key_pose(arm, m, frame)
 
-            # Duplicate the exact final pose later so it remains frozen.
+            contact_start = start + round((motion_end - start) * contact_ratio)
+            apply_terminal_death_pose(
+                arm,
+                m,
+                s,
+                fwd,
+                side,
+                up,
+                height,
+                contact_start,
+                strength=.84,
+            )
+            apply_terminal_death_pose(
+                arm,
+                m,
+                s,
+                fwd,
+                side,
+                up,
+                height,
+                motion_end,
+                strength=1.0,
+            )
+
+            # Duplicate the exact grounded terminal pose so runtime playback
+            # freezes in a fully settled body-contact state.
             context.scene.frame_set(motion_end)
             key_pose(arm, m, final_end)
 
@@ -3425,6 +3723,8 @@ class DAF_OT_collapse(Operator):
                 start,
                 final_end,
                 ground_sink=s.ground_sink,
+                terminal_frame=motion_end,
+                reference_height=height,
             )
             action["dsb_floor_grounded"] = True
             action["dsb_ground_floor_z"] = grounding["floor_z"]
@@ -3433,6 +3733,26 @@ class DAF_OT_collapse(Operator):
             action["dsb_grounded_frame_count"] = grounding["grounded_frame_count"]
             action["dsb_ground_max_correction_m"] = grounding["maximum_correction_m"]
             action["dsb_ground_minimum_z"] = grounding["minimum_z"]
+            action["dsb_ground_max_upward_correction_m"] = grounding[
+                "maximum_upward_correction_m"
+            ]
+            action["dsb_ground_max_downward_correction_m"] = grounding[
+                "maximum_downward_correction_m"
+            ]
+            action["dsb_terminal_contact_baked"] = True
+            action["dsb_terminal_contact_frame"] = grounding[
+                "terminal_contact_frame"
+            ]
+            action["dsb_terminal_reference_height_m"] = grounding[
+                "reference_height_m"
+            ]
+            action["dsb_terminal_height_m"] = grounding["terminal_height_m"]
+            action["dsb_terminal_height_ratio"] = grounding[
+                "terminal_height_ratio"
+            ]
+            action["dsb_terminal_max_height_ratio"] = grounding[
+                "maximum_terminal_height_ratio"
+            ]
             animation_library.mark_draft(
                 action,
                 arm,
@@ -4402,6 +4722,34 @@ def action_pack_metadata(action, fps):
                 action.get("dsb_ground_max_correction_m", 0.0)
             ),
             "minimum_z": float(action.get("dsb_ground_minimum_z", 0.0)),
+            "signed_alignment": True,
+            "maximum_upward_correction_m": float(
+                action.get("dsb_ground_max_upward_correction_m", 0.0)
+            ),
+            "maximum_downward_correction_m": float(
+                action.get("dsb_ground_max_downward_correction_m", 0.0)
+            ),
+            "terminal_contact_baked": bool(
+                action.get("dsb_terminal_contact_baked", False)
+            ),
+            "terminal_contact_frame": int(
+                action.get("dsb_terminal_contact_frame", 0)
+            ),
+            "terminal_reference_height_m": float(
+                action.get("dsb_terminal_reference_height_m", 0.0)
+            ),
+            "terminal_height_m": float(
+                action.get("dsb_terminal_height_m", 0.0)
+            ),
+            "terminal_height_ratio": float(
+                action.get("dsb_terminal_height_ratio", 1.0)
+            ),
+            "maximum_terminal_height_ratio": float(
+                action.get(
+                    "dsb_terminal_max_height_ratio",
+                    DEATH_TERMINAL_MAX_HEIGHT_RATIO,
+                )
+            ),
         }
     guard_variant = str(action.get("dsb_guard_variant", ""))
     if guard_variant:
@@ -4443,7 +4791,12 @@ def validate_death_floor_action(
     errors = []
     worst_minimum = float("inf")
     worst_frame = None
+    start_height = None
+    final_minimum = None
+    final_height = None
     start, end = action_frame_bounds(action)
+    start_frame = int(math.floor(start))
+    final_frame = int(math.ceil(end))
 
     if armature.animation_data is None:
         armature.animation_data_create()
@@ -4466,16 +4819,18 @@ def validate_death_floor_action(
             except (AttributeError, RuntimeError):
                 pass
         animation_data.action = action
-        for frame in range(
-            int(math.floor(start)),
-            int(math.ceil(end)) + 1,
-        ):
+        for frame in range(start_frame, final_frame + 1):
             context.scene.frame_set(frame)
             context.view_layer.update()
-            minimum, _maximum = world_bounds(context, meshes)
+            minimum, maximum = world_bounds(context, meshes)
             if float(minimum.z) < worst_minimum:
                 worst_minimum = float(minimum.z)
                 worst_frame = frame
+            if frame == start_frame:
+                start_height = float(maximum.z - minimum.z)
+            if frame == final_frame:
+                final_minimum = float(minimum.z)
+                final_height = float(maximum.z - minimum.z)
     finally:
         animation_data.action = previous_action
         for track, mute, solo in track_states:
@@ -4491,6 +4846,38 @@ def validate_death_floor_action(
             f"{action.name} reaches {worst_minimum:.4f} m at frame "
             f"{worst_frame}; floor policy allows {allowed_minimum:.4f} m."
         )
+    if not bool(action.get("dsb_terminal_contact_baked", False)):
+        errors.append(
+            f"{action.name} has no baked terminal full-body ground-contact pass."
+        )
+    if final_minimum is None or final_height is None:
+        errors.append(f"{action.name} has no measurable terminal pose.")
+        final_height_ratio = float("inf")
+    else:
+        reference_height = float(
+            action.get(
+                "dsb_terminal_reference_height_m",
+                start_height if start_height is not None else 0.0,
+            )
+        )
+        reference_height = max(reference_height, 1.0e-6)
+        final_height_ratio = final_height / reference_height
+        maximum_ratio = float(
+            action.get(
+                "dsb_terminal_max_height_ratio",
+                DEATH_TERMINAL_MAX_HEIGHT_RATIO,
+            )
+        )
+        if abs(final_minimum - allowed_minimum) > tolerance:
+            errors.append(
+                f"{action.name} ends at {final_minimum:.4f} m instead of "
+                f"finishing flush at {allowed_minimum:.4f} m."
+            )
+        if final_height_ratio > maximum_ratio + 1.0e-4:
+            errors.append(
+                f"{action.name} terminal body height ratio is "
+                f"{final_height_ratio:.3f}; maximum is {maximum_ratio:.3f}."
+            )
     return {
         "status": "FAIL" if errors else "PASS",
         "action": action.name,
@@ -4499,6 +4886,18 @@ def validate_death_floor_action(
         "allowedMinimumZ": allowed_minimum,
         "minimumZ": worst_minimum,
         "worstFrame": worst_frame,
+        "terminalContactBaked": bool(
+            action.get("dsb_terminal_contact_baked", False)
+        ),
+        "terminalMinimumZ": final_minimum,
+        "terminalHeightM": final_height,
+        "terminalHeightRatio": final_height_ratio,
+        "maximumTerminalHeightRatio": float(
+            action.get(
+                "dsb_terminal_max_height_ratio",
+                DEATH_TERMINAL_MAX_HEIGHT_RATIO,
+            )
+        ),
         "sampleCount": int(math.ceil(end)) - int(math.floor(start)) + 1,
         "errors": errors,
     }
@@ -5375,7 +5774,7 @@ class DAF_PT_legacy_panel(Panel):
             layout,
             s,
             "ui_deformation_authoring_open",
-            "Trauma Field Authoring v4.1.0",
+            "Trauma Field Authoring v4.1.1",
         )
         if opened:
             configure_property_box(box)
@@ -5489,12 +5888,19 @@ class DAF_PT_legacy_panel(Panel):
         if opened:
             configure_property_box(box)
             box.prop(s, "collapse_style")
-            box.prop(s, "collapse_seconds")
+            box.prop(
+                s,
+                "death_instant_seconds"
+                if s.collapse_style == "INSTANT_LIMP"
+                else "collapse_seconds",
+            )
             box.prop(s, "death_pain_side")
             box.prop(s, "death_lead_knee")
-            box.prop(s, "death_brace_side")
+            if s.collapse_style != "INSTANT_LIMP":
+                box.prop(s, "death_brace_side")
             box.prop(s, "death_arm_tuck", slider=True)
-            box.prop(s, "death_wiggle", slider=True)
+            if s.collapse_style != "INSTANT_LIMP":
+                box.prop(s, "death_wiggle", slider=True)
 
             if draw_subfoldout(
                 box,

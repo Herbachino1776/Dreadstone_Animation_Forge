@@ -426,7 +426,7 @@ class RaisedGoreTests(unittest.TestCase):
         self.assertTrue(any("limit is 12000" in error for error in errors))
 
     def test_triangle_budget_reports_asset_excess(self):
-        errors = trauma_field.raised_gore_budget_errors([9000] * 6)
+        errors = trauma_field.raised_gore_budget_errors([11000] * 6)
         self.assertTrue(any("asset total" in error for error in errors))
 
     def test_face_selection_obeys_recipe_triangle_cap(self):

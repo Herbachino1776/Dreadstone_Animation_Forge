@@ -15,7 +15,7 @@ from .anatomy import persistence as anatomy_persistence
 
 
 ANIMATION_CLIP_SCHEMA = "dreadstone.animation_clip.v1"
-ANIMATION_LIBRARY_BUILD_ID = "2026-07-31.creature-anatomy-profile-4.1.0"
+ANIMATION_LIBRARY_BUILD_ID = "2026-08-02.death-terminal-grounding-4.1.1"
 
 CLIP_ID_PROPERTY = "dsb_animation_clip_id"
 CLIP_SCHEMA_PROPERTY = "dsb_animation_clip_schema"
@@ -89,6 +89,7 @@ KIND_SETTING_FIELDS = {
     "DEATH": (
         "collapse_style",
         "collapse_seconds",
+        "death_instant_seconds",
         "death_pain_side",
         "death_lead_knee",
         "death_brace_side",

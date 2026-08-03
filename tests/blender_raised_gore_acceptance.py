@@ -159,7 +159,7 @@ def main():
 
     report = {
         "status": "PASS",
-        "forgeVersion": "4.1.0",
+        "forgeVersion": "4.1.1",
         "sourceBlend": source_blend,
         "headTriangleCounts": counts,
         "previewChecks": preview_checks,

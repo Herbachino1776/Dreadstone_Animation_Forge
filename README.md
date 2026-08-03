@@ -1,6 +1,6 @@
 # Dreadstone Animation Forge
 
-Dreadstone Animation Forge `4.1.0` is a proprietary Blender add-on for
+Dreadstone Animation Forge `4.1.1` is a proprietary Blender add-on for
 animation drafting and compatibility-preserving damage authoring. The supported
 release runtime is Blender `5.1.2`.
 
@@ -22,6 +22,11 @@ editing, overwriting, deleting, and renaming saved Actions. Individual clips
 can be exported as native `.blend` Action packages and imported onto another
 humanoid after bone/hierarchy compatibility checks.
 
+Forge 4.1.1 adds a low-profile terminal contact pass to every generated death
+Action, including rigs whose deform bones disable rotation inheritance. The new
+**Instant Unconscious** style removes the protective brace and struggle beats,
+then reaches its fully limp, floor-aligned pose in under a second by default.
+
 Forge 4.1 introduces centralized, versioned Creature Anatomy Profiles. The
 existing humanoid mapping remains compatible, while the first digitigrade
 quadruped profile provides semantic core, spine/neck/tail, four distinct limb,
@@ -39,7 +44,7 @@ keyframes and original settings payload unchanged.
 
 ## Install and open
 
-1. Download `Dreadstone_Animation_Forge_v4_1_0.zip`.
+1. Download `Dreadstone_Animation_Forge_v4_1_1.zip`.
 2. In Blender choose **Edit > Preferences > Add-ons > Install from Disk**.
 3. Select the ZIP without extracting it and enable the add-on.
 4. In the 3D Viewport press `N`, open **Dreadstone**, then choose

@@ -1,5 +1,17 @@
 # Changelog
 
+## 4.1.1
+
+- Added a signed, per-frame death grounding bake so generated collapse Actions
+  can move down to the floor as well as recover from penetration.
+- Added low-profile terminal contact poses and validation to Chest Hold,
+  Faceplant, and Knees First, including explicit support for rigs that disable
+  rotation inheritance on deform chains.
+- Added **Instant Unconscious**, a fast, brace-free and wiggle-free collapse
+  that reaches a fully limp terminal pose in under one second by default.
+- Raised the validated per-asset triangle allowance for raised gore from
+  48,000 to 60,000.
+
 ## 4.1.0
 
 - Added centralized, versioned Creature Anatomy Profiles with deterministic
