@@ -184,7 +184,7 @@ def main():
             "supportedStampLibraryFormats": [1, 2, 3, 4],
             "goreRecipeVersion": 3,
             "goreMaximumTrianglesPerDeformation": 12000,
-            "goreMaximumTrianglesPerAsset": 48000,
+            "goreMaximumTrianglesPerAsset": 60000,
             "goreMinimumSurfaceOffset": 0.00015,
             "goreMaximumSurfaceOffset": 0.012,
             "normalizers": [
