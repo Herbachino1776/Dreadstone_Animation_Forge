@@ -22,6 +22,7 @@ if str(ROOT) not in sys.path:
 
 import dreadstone_animation_forge as addon  # noqa: E402
 from dreadstone_animation_forge import animation_library  # noqa: E402
+from dreadstone_animation_forge.anatomy import skin_and_bones  # noqa: E402
 
 
 def require(condition, message):
@@ -56,20 +57,51 @@ def make_armature(name, *, include_spine=True, length_scale=1.0):
     )
     armature = bpy.context.active_object
     armature.name = name
-    hips = armature.data.edit_bones[0]
-    hips.name = "hips"
-    hips.head = (0.0, 0.0, 0.0)
-    hips.tail = (0.0, 0.0, 0.4 * length_scale)
-    if include_spine:
-        spine = armature.data.edit_bones.new("spine")
-        spine.head = hips.tail
-        spine.tail = (0.0, 0.0, 1.0 * length_scale)
-        spine.parent = hips
-        spine.use_connect = True
+    hierarchy = {
+        "root": "", "body": "root", "body_top0": "body",
+        "body_top1": "body_top0", "body_top2": "body_top1",
+        "neck": "body_top2", "head": "neck",
+        "shoulder_left": "body_top2", "arm_left_top": "shoulder_left",
+        "arm_left_bot": "arm_left_top", "arm_left_hand": "arm_left_bot",
+        "shoulder_right": "body_top2", "arm_right_top": "shoulder_right",
+        "arm_right_bot": "arm_right_top", "arm_right_hand": "arm_right_bot",
+        "leg_left_top": "body", "leg_left_bot": "leg_left_top",
+        "leg_left_foot": "leg_left_bot", "leg_right_top": "body",
+        "leg_right_bot": "leg_right_top", "leg_right_foot": "leg_right_bot",
+    }
+    first = armature.data.edit_bones[0]
+    first.name = "root"
+    created = {"root": first}
+    for index, (bone_name, parent_name) in enumerate(hierarchy.items()):
+        if bone_name == "root" or (bone_name == "body_top0" and not include_spine):
+            continue
+        bone = armature.data.edit_bones.new(bone_name)
+        created[bone_name] = bone
+        parent = created.get(parent_name) or created.get("body")
+        bone.parent = parent
+        bone.head = (0.0, 0.0, index * 0.12 * length_scale)
+        bone.tail = (0.0, 0.02, (index * 0.12 + 0.10) * length_scale)
+    for index, bone in enumerate(armature.data.edit_bones):
+        if bone == first:
+            bone.head = (0.0, 0.0, 0.0)
+            bone.tail = (0.0, 0.0, 0.1 * length_scale)
     bpy.ops.object.mode_set(mode="POSE")
     for pose_bone in armature.pose.bones:
         pose_bone.rotation_mode = "QUATERNION"
     bpy.ops.object.mode_set(mode="OBJECT")
+    sbf_mapping = {
+        sbf_role: skin_and_bones.CANONICAL_HUMANOID_MAPPING[forge_role]
+        for sbf_role, forge_role in skin_and_bones.SBF_TO_FORGE_ROLE.items()
+    }
+    armature["sbf_canonical_rig_version"] = skin_and_bones.SBF_CANONICAL_RIG_VERSION
+    armature["sbf_forward_axis"] = "+Y"
+    armature["sbf_up_axis"] = "+Z"
+    armature["sbf_root_bone"] = "root"
+    armature["sbf_orientation_revision"] = 1
+    armature["sbf_orientation_state"] = "CANONICAL_Y_PLUS"
+    armature["sbf_rig_contract_version"] = 1
+    armature["sbf_unit_scale_meters"] = 1.0
+    armature["sbf_bone_mapping"] = json.dumps(sbf_mapping)
     return armature
 
 
@@ -87,26 +119,26 @@ def make_saved_walk(context, armature):
         (25, 0.0, 1.0),
     ):
         context.scene.frame_set(frame)
-        hips = armature.pose.bones["hips"]
+        hips = armature.pose.bones["body"]
         hips.location = (shift, 0.0, 0.0)
         hips.rotation_quaternion = (turn, 0.0, 0.0, 0.0)
-        hips.keyframe_insert("location", frame=frame, group="hips")
+        hips.keyframe_insert("location", frame=frame, group="body")
         hips.keyframe_insert(
             "rotation_quaternion",
             frame=frame,
-            group="hips",
+            group="body",
         )
-        spine = armature.pose.bones["spine"]
+        spine = armature.pose.bones["body_top0"]
         spine.rotation_quaternion = (turn, 0.0, 0.0, 0.0)
         spine.keyframe_insert(
             "rotation_quaternion",
             frame=frame,
-            group="spine",
+            group="body_top0",
         )
     context.scene.frame_start = 1
     context.scene.frame_end = 25
     settings.stride = 31.0
-    settings.walk_asymmetry = 8.0
+    settings.walk_asymmetry = 0.08
     animation_library.mark_draft(
         action,
         armature,
@@ -124,6 +156,7 @@ def main():
     context = bpy.context
     settings = context.scene.daf_settings
     source_armature = make_armature("VIP_Source_Rig")
+    bpy.ops.daf.analyze()
     saved = make_saved_walk(context, source_armature)
     original_name = saved.name
     original_clip_id = str(
@@ -256,10 +289,9 @@ def main():
             "Imported clip was not listed for the target character.",
         )
 
-        # A 3.20.1-style animation clip uses the same v1 clip schema but lacks
-        # all 4.0 pose-shaping settings. Import must preserve its Action curves
-        # and settings payload exactly; the new defaults apply only if a user
-        # deliberately regenerates a draft.
+        # Unversioned/Y- era clips are intentionally rejected. Conversion of
+        # characters belongs to Skin & Bones and Animation Forge never guesses
+        # or rotates legacy Actions.
         legacy_action = overwritten.copy()
         legacy_action.name = "Zombie_Attack_3_20_1"
         legacy_action[animation_library.CLIP_EXPORT_NAME_PROPERTY] = legacy_action.name
@@ -282,7 +314,6 @@ def main():
             "mace_guard_recovery_seconds": 0.18,
         }, sort_keys=True)
         legacy_action[animation_library.CLIP_SETTINGS_PROPERTY] = legacy_settings
-        legacy_fingerprint = action_fingerprint(legacy_action)
         legacy_path = Path(temp_directory) / "Zombie_Attack_3_20_1.blend"
         bpy.data.libraries.write(
             str(legacy_path),
@@ -292,42 +323,18 @@ def main():
             compress=True,
         )
         bpy.data.actions.remove(legacy_action)
-        legacy_import = animation_library.import_action_clip(
-            context,
-            target_armature,
-            str(legacy_path),
-        )
-        require(
-            len(legacy_import["legacyImports"]) == 1,
-            "The 3.20.1 zombie attack was not identified as a legacy clip.",
-        )
-        imported_legacy_action = bpy.data.actions.get(
-            legacy_import["actions"][0]
-        )
-        require(
-            imported_legacy_action is not None,
-            "The legacy zombie attack Action was not imported.",
-        )
-        require(
-            action_fingerprint(imported_legacy_action) == legacy_fingerprint,
-            "Legacy import changed zombie attack keyframes or curve identity.",
-        )
-        require(
-            str(imported_legacy_action[animation_library.CLIP_SETTINGS_PROPERTY])
-            == legacy_settings,
-            "Legacy import changed the original 3.20.1 settings payload.",
-        )
-        require(
-            bool(imported_legacy_action[animation_library.CLIP_LEGACY_PROPERTY])
-            and bool(imported_legacy_action[animation_library.CLIP_ANATOMY_LEGACY_PROPERTY])
-            and str(
-                imported_legacy_action[
-                    animation_library.CLIP_SOURCE_BUILD_PROPERTY
-                ]
+        action_count = len(bpy.data.actions)
+        try:
+            animation_library.import_action_clip(
+                context,
+                target_armature,
+                str(legacy_path),
             )
-            == "2026-07-28.vip-animation-library.1",
-            "Legacy import did not retain its 3.20.1 source-build provenance.",
-        )
+        except RuntimeError as exc:
+            require("legacy animation clips are unsupported" in str(exc), str(exc))
+        else:
+            raise RuntimeError("An unversioned legacy clip was accepted.")
+        require(len(bpy.data.actions) == action_count, "Rejected legacy import leaked an Action.")
         require(
             "mace_guard_style" not in legacy_settings
             and "left_elbow_flex" not in legacy_settings,
@@ -367,11 +374,6 @@ def main():
             bpy.data.actions.get(deleted["action"]) is None,
             "Delete did not remove the imported animation.",
         )
-        animation_library.delete_action(
-            context,
-            target_armature,
-            imported_legacy_action,
-        )
 
     for operator_id in (
         "animation_library_select",
@@ -399,7 +401,7 @@ def main():
             len(record["warnings"])
             for record in imported["reports"]
         ),
-        "legacyZombieAttackPreserved": True,
+        "legacyZombieAttackRejected": True,
         "missingBoneRejected": True,
         "saveResult": saved_result,
     }

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import ast
 import json
 import sys
 from pathlib import Path
@@ -33,11 +34,34 @@ def main():
         raise RuntimeError("Extracted release did not register DAFSettings.")
     if not deformation_authoring.GORE_TEXTURE_ATLAS_PATH.is_file():
         raise RuntimeError("Extracted release is missing its muscle-fiber atlas.")
+    panel_source = (package_dir / "ui" / "panels.py").read_text(encoding="utf-8")
+    panel_tree = ast.parse(panel_source)
+    requested_icons = {
+        keyword.value.value
+        for node in ast.walk(panel_tree)
+        if isinstance(node, ast.Call)
+        for keyword in node.keywords
+        if keyword.arg == "icon"
+        and isinstance(keyword.value, ast.Constant)
+        and isinstance(keyword.value.value, str)
+    }
+    valid_icons = set(
+        bpy.types.UILayout.bl_rna.functions["operator"]
+        .parameters["icon"]
+        .enum_items.keys()
+    )
+    invalid_icons = sorted(requested_icons - valid_icons)
+    if invalid_icons:
+        raise RuntimeError(
+            "Extracted release contains invalid Blender UI icons: "
+            + ", ".join(invalid_icons)
+        )
     report = {
         "status": "PASS",
         "version": list(addon.bl_info["version"]),
         "module": str(imported),
         "textureAtlas": str(deformation_authoring.GORE_TEXTURE_ATLAS_PATH),
+        "panelIconsValidated": len(requested_icons),
     }
     addon.unregister()
     print("RELEASE_ZIP_SMOKE=" + json.dumps(report, sort_keys=True))

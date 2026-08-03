@@ -10,12 +10,16 @@ from .model import BoneRecord, RigSnapshot
 from .orientation import FACING_TO_AXIS
 from .persistence import clear_override, load_metadata, store_metadata
 from .profiles import (
-    ANIMATE_ANYTHING_PROFILE,
     HUMANOID_PROFILE_ID,
     capability_status,
     registry,
 )
 from .resolver import mapping_digest
+from .skin_and_bones import (
+    SBF_CANONICAL_RIG_VERSION,
+    contract as skin_and_bones_contract,
+    require_canonical_yplus,
+)
 from .ui_state import summary_from_analysis
 
 
@@ -38,18 +42,6 @@ def snapshot_armature(armature) -> RigSnapshot:
     )
 
 
-def is_animate_anything_snapshot(snapshot: RigSnapshot) -> bool:
-    available = set(snapshot.by_name())
-    required = {
-        "body", "body_top0", "body_top1", "body_top2",
-        "leg_left_top", "leg_left_bot", "leg_left_foot",
-        "leg_right_top", "leg_right_bot", "leg_right_foot",
-        "arm_left_top", "arm_left_bot", "arm_right_top", "arm_right_bot",
-        "neck", "head",
-    }
-    return required.issubset(available)
-
-
 def _manual_overrides(settings) -> dict[str, str]:
     return {
         "hips": str(getattr(settings, "manual_hips", "")),
@@ -66,14 +58,37 @@ def analyze_armature(
 ) -> dict[str, object]:
     snapshot = snapshot_armature(armature)
     override = str(getattr(settings, "anatomy_profile_override", "AUTO") or "AUTO")
-    explicit_forward = str(getattr(settings, "facing", "NEG_Y"))
+    sbf = skin_and_bones_contract(armature)
+    if sbf is not None:
+        require_canonical_yplus(armature, label="Creature Anatomy analysis")
+        profile = registry.require(HUMANOID_PROFILE_ID)
+        result = analyze_selected_profile(
+            profile,
+            snapshot,
+            sbf["roleMapping"],
+            confidence=1.0,
+            override="HUMANOID",
+            explicit_forward="+Y",
+            rig_profile_id=SBF_CANONICAL_RIG_VERSION,
+        )
+        result.update({
+            "canonicalRigVersion": SBF_CANONICAL_RIG_VERSION,
+            "rigContractVersion": int(sbf["rigContractVersion"]),
+            "orientationRevision": int(sbf["orientationRevision"]),
+            "rootMotionCarrier": str(sbf["rootBone"]),
+            "unitScaleMeters": float(sbf["unitScaleMeters"]),
+        })
+        store_metadata(armature, result)
+        update_settings_summary(settings, result)
+        return result
+
+    explicit_forward = str(getattr(settings, "facing", "POS_Y"))
     result = detect_profile(
         snapshot,
         override=override,
         manual_overrides=_manual_overrides(settings),
-        # AUTO quadrupeds must use their profile's +Y convention, not the
-        # legacy humanoid facing selector's default -Y. The humanoid legacy
-        # rebuild below still consumes that selector exactly as before.
+        # AUTO quadrupeds use their own profile convention. Humanoids are
+        # explicitly +Y-only in this release.
         explicit_forward=(
             explicit_forward
             if override in {"HUMANOID", HUMANOID_PROFILE_ID}
@@ -81,24 +96,36 @@ def analyze_armature(
         ),
     )
     if result.get("profileId") == HUMANOID_PROFILE_ID and legacy_humanoid_mapper is not None:
-        legacy_mapping = dict(legacy_humanoid_mapper(armature, settings))
+        humanoid_mapping = dict(legacy_humanoid_mapper(armature, settings))
         profile = registry.require(HUMANOID_PROFILE_ID)
         rebuilt = analyze_selected_profile(
             profile,
             snapshot,
-            legacy_mapping,
+            humanoid_mapping,
             confidence=float(result.get("detectionConfidence", 0.0)),
             override=override,
             ambiguities=list(result.get("ambiguities", [])),
             explicit_forward=explicit_forward,
-            rig_profile_id=(
-                "ANIMATE_ANYTHING_TESTMAN_INSPECTED_V1"
-                if is_animate_anything_snapshot(snapshot)
-                else ""
-            ),
+            rig_profile_id="GENERIC_HUMANOID_YPLUS",
         )
         rebuilt["profileScores"] = result.get("profileScores", [])
         result = rebuilt
+    orientation = result.get("orientation", {})
+    if (
+        result.get("profileId") == HUMANOID_PROFILE_ID
+        and str(orientation.get("forwardAxis", "")) != "+Y"
+    ):
+        blocker = {
+            "code": "UNSUPPORTED_FORWARD_AXIS",
+            "message": (
+                "Animation Forge requires Blender +Y forward. Convert or rebuild "
+                "this character in Skin & Bones; Y- animation authoring is unsupported."
+            ),
+        }
+        result["ready"] = False
+        result["readinessStatus"] = "UNSUPPORTED_FORWARD_AXIS"
+        result["blockers"] = [blocker] + list(result.get("blockers", []))
+        result["worstBlocker"] = blocker["message"]
     store_metadata(armature, result)
     update_settings_summary(settings, result)
     return result
@@ -145,20 +172,68 @@ def current_analysis(armature, settings=None) -> dict[str, object] | None:
 
 
 def authoritative_forward_axis(armature, settings) -> str:
+    sbf = skin_and_bones_contract(armature) if armature is not None else None
+    if sbf is not None:
+        require_canonical_yplus(armature, label="Animation generation")
+        return "+Y"
     value = load_metadata(armature) if armature is not None else None
     orientation = value.get("orientation", {}) if value else {}
     axis = str(orientation.get("forwardAxis", ""))
     if axis:
         return axis
-    return FACING_TO_AXIS.get(str(getattr(settings, "facing", "NEG_Y")), "-Y")
+    return FACING_TO_AXIS.get(str(getattr(settings, "facing", "POS_Y")), "+Y")
 
 
 def require_generator_capability(armature, capability: str, label: str) -> None:
     metadata = load_metadata(armature)
+    sbf = skin_and_bones_contract(armature)
+    if sbf is not None:
+        require_canonical_yplus(armature, label=label)
+        if (
+            metadata is None
+            or str(metadata.get("canonicalRigVersion", ""))
+            != SBF_CANONICAL_RIG_VERSION
+            or str(metadata.get("orientation", {}).get("forwardAxis", ""))
+            != "+Y"
+        ):
+            snapshot = snapshot_armature(armature)
+            profile = registry.require(HUMANOID_PROFILE_ID)
+            metadata = analyze_selected_profile(
+                profile,
+                snapshot,
+                sbf["roleMapping"],
+                confidence=1.0,
+                override="HUMANOID",
+                explicit_forward="+Y",
+                rig_profile_id=SBF_CANONICAL_RIG_VERSION,
+            )
+            metadata.update({
+                "canonicalRigVersion": SBF_CANONICAL_RIG_VERSION,
+                "rigContractVersion": int(sbf["rigContractVersion"]),
+                "orientationRevision": int(sbf["orientationRevision"]),
+                "rootMotionCarrier": str(sbf["rootBone"]),
+                "unitScaleMeters": float(sbf["unitScaleMeters"]),
+            })
+            store_metadata(armature, metadata)
+    elif capability in {
+        "idle", "walk", "collapse", "hurt", "mace_head_guard",
+    }:
+        raise RuntimeError(
+            f"{label} requires {SBF_CANONICAL_RIG_VERSION}. Rig or re-rig "
+            "the character in Skin & Bones Forge 2.1.0+. Y- and unversioned "
+            "humanoid rigs are unsupported."
+        )
     if metadata is None:
-        # Pre-4.1 files retain the exact legacy humanoid workflow until they are
-        # explicitly analyzed. This is deliberate backwards compatibility.
-        return
+        raise RuntimeError(
+            f"{label} requires a Y+ Creature Anatomy analysis. Run ANALYZE "
+            "CREATURE ANATOMY, or rig the character in Skin & Bones Forge 2.1.0+."
+        )
+    forward_axis = str(metadata.get("orientation", {}).get("forwardAxis", ""))
+    if forward_axis != "+Y":
+        raise RuntimeError(
+            f"{label} requires Blender +Y forward. Convert or rebuild the "
+            "character in Skin & Bones; Y- rigs are unsupported."
+        )
     profile_id = str(metadata.get("profileId", ""))
     profile = registry.get(profile_id)
     if profile is None:
@@ -186,7 +261,6 @@ __all__ = (
     "authoritative_forward_axis",
     "clear_profile_override",
     "current_analysis",
-    "is_animate_anything_snapshot",
     "legacy_mapping_digest",
     "require_generator_capability",
     "snapshot_armature",

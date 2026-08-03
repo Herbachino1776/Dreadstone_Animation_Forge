@@ -21,6 +21,7 @@ if str(ROOT) not in sys.path:
 
 import dreadstone_animation_forge as addon  # noqa: E402
 from dreadstone_animation_forge import animation_library  # noqa: E402
+from dreadstone_animation_forge.anatomy import skin_and_bones  # noqa: E402
 
 
 def require(condition, message):
@@ -36,12 +37,26 @@ def make_character():
     armature.select_set(True)
     bpy.ops.object.mode_set(mode="EDIT")
 
-    bone_names = sorted(set(addon.ANIMATE_ANYTHING_PROFILE.values()))
-    for index, name in enumerate(bone_names):
+    hierarchy = {
+        "root": "", "body": "root", "body_top0": "body",
+        "body_top1": "body_top0", "body_top2": "body_top1",
+        "neck": "body_top2", "head": "neck",
+        "shoulder_left": "body_top2", "arm_left_top": "shoulder_left",
+        "arm_left_bot": "arm_left_top", "arm_left_hand": "arm_left_bot",
+        "shoulder_right": "body_top2", "arm_right_top": "shoulder_right",
+        "arm_right_bot": "arm_right_top", "arm_right_hand": "arm_right_bot",
+        "leg_left_top": "body", "leg_left_bot": "leg_left_top",
+        "leg_left_foot": "leg_left_bot", "leg_right_top": "body",
+        "leg_right_bot": "leg_right_top", "leg_right_foot": "leg_right_bot",
+    }
+    created = {}
+    for index, (name, parent_name) in enumerate(hierarchy.items()):
         bone = armature_data.edit_bones.new(name)
         x = ((index % 5) - 2) * 0.015
         bone.head = (x, 0.0, 0.70)
         bone.tail = (x, 0.0, 0.90)
+        bone.parent = created.get(parent_name)
+        created[name] = bone
     bpy.ops.object.mode_set(mode="OBJECT")
 
     vertices = [
@@ -67,12 +82,31 @@ def make_character():
     mesh_data.update()
     mesh = bpy.data.objects.new("Native_Character", mesh_data)
     bpy.context.collection.objects.link(mesh)
-    group = mesh.vertex_groups.new(
-        name=addon.ANIMATE_ANYTHING_PROFILE["hips"]
-    )
-    group.add(list(range(len(vertices))), 1.0, "REPLACE")
+    for role in ("hips", "spine", "spine_mid", "chest"):
+        group = mesh.vertex_groups.new(
+            name=skin_and_bones.CANONICAL_HUMANOID_MAPPING[role]
+        )
+        group.add(
+            list(range(len(vertices))),
+            1.0 if role == "hips" else 0.25,
+            "REPLACE",
+        )
     modifier = mesh.modifiers.new("Native_Armature", "ARMATURE")
     modifier.object = armature
+
+    sbf_mapping = {
+        sbf_role: skin_and_bones.CANONICAL_HUMANOID_MAPPING[forge_role]
+        for sbf_role, forge_role in skin_and_bones.SBF_TO_FORGE_ROLE.items()
+    }
+    armature["sbf_canonical_rig_version"] = skin_and_bones.SBF_CANONICAL_RIG_VERSION
+    armature["sbf_forward_axis"] = "+Y"
+    armature["sbf_up_axis"] = "+Z"
+    armature["sbf_root_bone"] = "root"
+    armature["sbf_orientation_revision"] = 1
+    armature["sbf_orientation_state"] = "CANONICAL_Y_PLUS"
+    armature["sbf_rig_contract_version"] = 1
+    armature["sbf_unit_scale_meters"] = 1.0
+    armature["sbf_bone_mapping"] = json.dumps(sbf_mapping)
 
     bpy.ops.object.select_all(action="DESELECT")
     armature.select_set(True)
@@ -90,6 +124,7 @@ def main():
     addon.register()
     armature, mesh = make_character()
     settings = bpy.context.scene.daf_settings
+    bpy.ops.daf.analyze()
     settings.ground_sink = 0.005
     settings.death_instant_seconds = 0.72
     death_results = {}
@@ -154,6 +189,9 @@ def main():
         death_results[style] = {
             "minimumZ": worst_minimum,
             "terminalHeightRatio": final_ratio,
+            "terminalTorsoHeightRatio": validation["terminalTorsoHeightRatio"],
+            "groundCarrierBone": validation["groundCarrierBone"],
+            "torsoRegions": sorted(validation["terminalTorsoRegions"]),
             "terminalFrame": int(death["dsb_terminal_contact_frame"]),
         }
 

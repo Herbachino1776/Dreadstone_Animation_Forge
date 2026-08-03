@@ -1,7 +1,7 @@
 bl_info = {
     "name": "Dreadstone Animation Forge",
     "author": "Dreadstone Black",
-    "version": (4, 1, 1),
+    "version": (5, 0, 0),
     "blender": (3, 6, 0),
     "location": "3D Viewport > Sidebar > Dreadstone",
     "description": "Animation authoring, protected damage assets, and registered-region trauma-field shape-key authoring.",
@@ -17,24 +17,23 @@ from . import animation_library
 from . import parameter_schema
 from .anatomy import blender_adapter as anatomy_blender
 from .anatomy import persistence as anatomy_persistence
-from .anatomy.profiles import ANIMATE_ANYTHING_PROFILE, HUMANOID_ALIASES
+from .anatomy.profiles import CANONICAL_HUMANOID_MAPPING, HUMANOID_ALIASES
 from .anatomy.schema import axis_vector as anatomy_axis_vector
+from .anatomy import skin_and_bones as sbf_handoff
 
 # Public compatibility aliases. Their authority moved into DSB_HUMANOID_V1;
 # existing scripts importing these names continue to receive the same values.
 ALIASES = {role: list(aliases) for role, aliases in HUMANOID_ALIASES.items()}
 
-def detect_animate_anything_profile(arm):
-    required = {
-        "body", "body_top0", "body_top1", "body_top2",
-        "leg_left_top", "leg_left_bot", "leg_left_foot",
-        "leg_right_top", "leg_right_bot", "leg_right_foot",
-        "arm_left_top", "arm_left_bot",
-        "arm_right_top", "arm_right_bot",
-        "neck", "head",
-    }
+def detect_canonical_humanoid_profile(arm):
+    required = set(CANONICAL_HUMANOID_MAPPING.values())
     available = {bone.name for bone in arm.data.bones}
-    return required.issubset(available)
+    contract = sbf_handoff.contract(arm)
+    return bool(
+        contract
+        and contract.get("canonicalYPlus", False)
+        and available == required
+    )
 
 def norm(name):
     s = name.lower().replace("mixamorig","")
@@ -123,6 +122,105 @@ def world_bounds(context, meshes):
         raise RuntimeError("Could not measure the selected mesh.")
     return mn, mx
 
+
+def world_bounds_for_bone_groups(
+    context,
+    meshes,
+    bone_names,
+    *,
+    minimum_weight=0.20,
+):
+    """Measure evaluated vertices influenced by selected deform bones."""
+
+    requested = {str(name) for name in bone_names if name}
+    if not requested:
+        raise RuntimeError("No deform groups were supplied for weighted bounds.")
+    deps = context.evaluated_depsgraph_get()
+    minimum = Vector((1.0e30, 1.0e30, 1.0e30))
+    maximum = Vector((-1.0e30, -1.0e30, -1.0e30))
+    count = 0
+    for obj in meshes:
+        group_indices = {
+            group.index
+            for group in obj.vertex_groups
+            if group.name in requested
+        }
+        if not group_indices:
+            continue
+        evaluated = obj.evaluated_get(deps)
+        mesh = None
+        try:
+            mesh = evaluated.to_mesh()
+            if mesh is None:
+                continue
+            for vertex in mesh.vertices:
+                influence = sum(
+                    float(group.weight)
+                    for group in vertex.groups
+                    if group.group in group_indices
+                )
+                if influence < float(minimum_weight):
+                    continue
+                point = evaluated.matrix_world @ vertex.co
+                minimum.x = min(minimum.x, point.x)
+                minimum.y = min(minimum.y, point.y)
+                minimum.z = min(minimum.z, point.z)
+                maximum.x = max(maximum.x, point.x)
+                maximum.y = max(maximum.y, point.y)
+                maximum.z = max(maximum.z, point.z)
+                count += 1
+        finally:
+            if mesh is not None:
+                evaluated.to_mesh_clear()
+    if not count:
+        raise RuntimeError(
+            "Could not measure mesh vertices weighted to: "
+            + ", ".join(sorted(requested))
+            + "."
+        )
+    return minimum, maximum, count
+
+
+def torso_contact_bounds(context, meshes, mapping):
+    """Measure the body core without allowing arms/hands to define contact."""
+
+    role_names = {
+        role: mapping.get(role, "")
+        for role in ("hips", "spine", "spine_mid", "chest")
+        if mapping.get(role)
+    }
+    minimum, maximum, count = world_bounds_for_bone_groups(
+        context,
+        meshes,
+        role_names.values(),
+    )
+    regions = {}
+    for role, bone_name in role_names.items():
+        try:
+            region_minimum, region_maximum, region_count = (
+                world_bounds_for_bone_groups(
+                    context,
+                    meshes,
+                    (bone_name,),
+                    minimum_weight=0.25,
+                )
+            )
+        except RuntimeError:
+            continue
+        regions[role] = {
+            "minimum_z": float(region_minimum.z),
+            "maximum_z": float(region_maximum.z),
+            "vertex_count": int(region_count),
+        }
+    return {
+        "minimum": minimum,
+        "maximum": maximum,
+        "vertex_count": int(count),
+        "regions": regions,
+        "required_roles": sorted(role_names),
+        "missing_regions": sorted(set(role_names) - set(regions)),
+    }
+
 def bone_ancestors(bone):
     out = []
     current = bone
@@ -189,12 +287,12 @@ def map_bones(arm, settings=None):
     bones = list(arm.data.bones)
     result = {}
 
-    # Exact profile derived from the uploaded Animate Anything GLB.
-    if detect_animate_anything_profile(arm):
-        for role, bone_name in ANIMATE_ANYTHING_PROFILE.items():
-            if arm.data.bones.get(bone_name):
-                result[role] = bone_name
-
+    # Skin & Bones owns this exact semantic map. Its explicit metadata is the
+    # only humanoid animation authority; bone-name resemblance is not enough.
+    sbf = sbf_handoff.contract(arm)
+    if sbf is not None:
+        sbf_handoff.require_canonical_yplus(arm, label="Rig mapping")
+        return dict(sbf["roleMapping"])
     # First pass: familiar bone names. Exact profile entries are preserved.
     for role, aliases in ALIASES.items():
         best = None
@@ -296,7 +394,16 @@ def unique_action(base):
 
 def vectors(settings, armature=None):
     """Compatibility accessor backed by the authoritative orientation service."""
+    if str(getattr(settings, "facing", "POS_Y")) != "POS_Y":
+        settings.facing = "POS_Y"
+        settings.invert_knees = False
+        settings.invert_elbows = False
     forward_axis = anatomy_blender.authoritative_forward_axis(armature, settings)
+    if forward_axis != "+Y":
+        raise RuntimeError(
+            "Animation Forge is Y+ only. Convert or rebuild this character in "
+            "Skin & Bones before generating animation."
+        )
     fwd = Vector(anatomy_axis_vector(forward_axis))
     up = Vector(anatomy_axis_vector("+Z"))
     side = up.cross(fwd).normalized()
@@ -501,6 +608,8 @@ def key_pose(arm, mapping, frame):
 
 
 DEATH_TERMINAL_MAX_HEIGHT_RATIO = 0.50
+DEATH_TERMINAL_MAX_TORSO_HEIGHT_RATIO = 0.30
+DEATH_TORSO_CONTACT_TOLERANCE_RATIO = 0.031
 
 
 def ground_current_pose(
@@ -510,24 +619,64 @@ def ground_current_pose(
     meshes,
     *,
     target_lowest_z,
+    torso_contact=False,
 ):
-    """Align the visible character to the floor with signed hips translation."""
+    """Align the character through root motion using whole-body or torso contact."""
     context.view_layer.update()
-    minimum, _maximum = world_bounds(context, meshes)
+    torso = torso_contact_bounds(context, meshes, mapping) if torso_contact else None
+    if torso is None:
+        minimum, _maximum = world_bounds(context, meshes)
+    else:
+        minimum = torso["minimum"]
     correction = float(target_lowest_z) - float(minimum.z)
+    carrier_role = (
+        "root"
+        if mapping.get("root") and arm.pose.bones.get(mapping.get("root"))
+        else "hips"
+    )
     if abs(correction) > 1.0e-7:
         offset(
             arm,
             mapping,
-            "hips",
+            carrier_role,
             Vector((0.0, 0.0, correction)),
         )
         context.view_layer.update()
     grounded_minimum, _grounded_maximum = world_bounds(context, meshes)
+    safety_lift = 0.0
+    if torso_contact and float(grounded_minimum.z) < float(target_lowest_z):
+        # Torso contact is authoritative, but a head or limb may not visibly
+        # penetrate the preview floor. Lift only enough to clear the complete
+        # mesh, then let the per-region torso tolerance reject a body that was
+        # actually being supported far above the floor by that secondary part.
+        safety_lift = float(target_lowest_z) - float(grounded_minimum.z)
+        offset(
+            arm,
+            mapping,
+            carrier_role,
+            Vector((0.0, 0.0, safety_lift)),
+        )
+        correction += safety_lift
+        context.view_layer.update()
+        grounded_minimum, _grounded_maximum = world_bounds(context, meshes)
+    grounded_torso = (
+        torso_contact_bounds(context, meshes, mapping)
+        if torso_contact
+        else None
+    )
     return {
         "correction": correction,
         "minimum_before": float(minimum.z),
         "minimum_after": float(grounded_minimum.z),
+        "contact_minimum_after": float(
+            grounded_torso["minimum"].z
+            if grounded_torso is not None
+            else grounded_minimum.z
+        ),
+        "carrier_role": carrier_role,
+        "carrier_bone": str(mapping.get(carrier_role, "")),
+        "torso_safety_lift": safety_lift,
+        "torso": grounded_torso,
     }
 
 
@@ -556,9 +705,10 @@ def bake_grounded_death_motion(
     maximum_terminal_height_ratio=DEATH_TERMINAL_MAX_HEIGHT_RATIO,
 ):
     """Bake signed floor alignment and require a low terminal body-contact pose."""
-    hips = arm.pose.bones.get(mapping.get("hips", ""))
-    if hips is None:
-        raise RuntimeError("Death grounding requires the mapped hips bone.")
+    carrier_role = "root" if mapping.get("root") else "hips"
+    carrier = arm.pose.bones.get(mapping.get(carrier_role, ""))
+    if carrier is None:
+        raise RuntimeError("Death grounding requires the mapped top-level root bone.")
 
     target_lowest_z = -float(ground_sink)
     maximum_correction = 0.0
@@ -566,15 +716,18 @@ def bake_grounded_death_motion(
     maximum_downward_correction = 0.0
     worst_minimum = float("inf")
     grounded_frames = 0
+    maximum_torso_safety_lift = 0.0
     frames = range(int(math.floor(frame_start)), int(math.ceil(frame_end)) + 1)
     for frame in frames:
         context.scene.frame_set(frame)
+        terminal_contact = frame >= int(terminal_frame)
         result = ground_current_pose(
             context,
             arm,
             mapping,
             meshes,
             target_lowest_z=target_lowest_z,
+            torso_contact=terminal_contact,
         )
         if abs(result["correction"]) > 1.0e-7:
             grounded_frames += 1
@@ -588,25 +741,41 @@ def bake_grounded_death_motion(
             result["correction"],
         )
         worst_minimum = min(worst_minimum, result["minimum_after"])
+        maximum_torso_safety_lift = max(
+            maximum_torso_safety_lift,
+            float(result["torso_safety_lift"]),
+        )
 
-        # Key every sampled hips location. This is the actual runtime floor
+        # Key every sampled root location. This is the actual runtime floor
         # correction and remains valid even when glTF force sampling is off.
-        hips.keyframe_insert("location", frame=frame, group=hips.name)
+        carrier.keyframe_insert("location", frame=frame, group=carrier.name)
 
-    set_bone_location_linear(action, hips)
+    set_bone_location_linear(action, carrier)
     tolerance = 0.001
     if worst_minimum < target_lowest_z - tolerance:
         raise RuntimeError(
             "Death grounding could not keep the visible mesh above the preview "
             f"floor (lowest {worst_minimum:.4f} m, allowed "
-            f"{target_lowest_z:.4f} m). Check hips mapping and skin weights."
+            f"{target_lowest_z:.4f} m). Check root mapping and skin weights."
         )
     context.scene.frame_set(int(terminal_frame))
     context.view_layer.update()
     terminal_minimum, terminal_maximum = world_bounds(context, meshes)
+    terminal_torso = torso_contact_bounds(context, meshes, mapping)
     terminal_height = float(terminal_maximum.z - terminal_minimum.z)
+    terminal_torso_height = float(
+        terminal_torso["maximum"].z - terminal_torso["minimum"].z
+    )
     safe_reference_height = max(float(reference_height), 1.0e-6)
     terminal_height_ratio = terminal_height / safe_reference_height
+    terminal_torso_height_ratio = terminal_torso_height / safe_reference_height
+    if terminal_torso["missing_regions"]:
+        raise RuntimeError(
+            "Death grounding cannot verify the full torso because these "
+            "canonical deform groups have no measurable weights: "
+            + ", ".join(terminal_torso["missing_regions"])
+            + "."
+        )
     if terminal_height_ratio > float(maximum_terminal_height_ratio) + 1.0e-4:
         raise RuntimeError(
             "Death terminal pose is not flat enough for ground contact "
@@ -619,6 +788,29 @@ def bake_grounded_death_motion(
             "Death terminal pose did not finish flush on the preview floor "
             f"(lowest {float(terminal_minimum.z):.4f} m; target "
             f"{target_lowest_z:.4f} m)."
+        )
+    if terminal_torso_height_ratio > DEATH_TERMINAL_MAX_TORSO_HEIGHT_RATIO + 1.0e-4:
+        raise RuntimeError(
+            "Death terminal torso is not flat enough for full body-core contact "
+            f"({terminal_torso_height_ratio:.3f}; maximum "
+            f"{DEATH_TERMINAL_MAX_TORSO_HEIGHT_RATIO:.3f})."
+        )
+    contact_tolerance = max(
+        0.02,
+        min(0.08, safe_reference_height * DEATH_TORSO_CONTACT_TOLERANCE_RATIO),
+    )
+    floating_regions = {
+        role: record["minimum_z"] - target_lowest_z
+        for role, record in terminal_torso["regions"].items()
+        if record["minimum_z"] - target_lowest_z > contact_tolerance
+    }
+    if floating_regions:
+        detail = ", ".join(
+            f"{role} {gap:.3f} m"
+            for role, gap in sorted(floating_regions.items())
+        )
+        raise RuntimeError(
+            "Death terminal torso is still floating above the floor: " + detail + "."
         )
     return {
         "floor_z": 0.0,
@@ -635,10 +827,20 @@ def bake_grounded_death_motion(
         "terminal_height_m": terminal_height,
         "terminal_height_ratio": terminal_height_ratio,
         "maximum_terminal_height_ratio": float(maximum_terminal_height_ratio),
+        "carrier_role": carrier_role,
+        "carrier_bone": str(mapping.get(carrier_role, "")),
+        "terminal_torso_minimum_z": float(terminal_torso["minimum"].z),
+        "terminal_torso_height_m": terminal_torso_height,
+        "terminal_torso_height_ratio": terminal_torso_height_ratio,
+        "maximum_terminal_torso_height_ratio": DEATH_TERMINAL_MAX_TORSO_HEIGHT_RATIO,
+        "torso_contact_tolerance_m": contact_tolerance,
+        "torso_regions": terminal_torso["regions"],
+        "maximum_torso_safety_lift_m": maximum_torso_safety_lift,
     }
 
 
 DRAFT_ACTION_NAMES = {
+    "IDLE": "DSB_DRAFT_Idle",
     "WALK": "DSB_DRAFT_Walk",
     "DEATH": "DSB_DRAFT_Death",
     "HURT_LEFT": "DSB_DRAFT_Hurt_LEFT",
@@ -708,6 +910,9 @@ def next_approved_version_name(base_name):
 
 
 def approval_base_name(settings, kind):
+    if kind == "IDLE":
+        return "DSB_Idle_Humanoid"
+
     if kind == "WALK":
         return f"DSB_Walk_{settings.walk_style}"
 
@@ -881,7 +1086,7 @@ def _gore_identity_property_updated(self, context):
 
 
 def _anatomy_facing_updated(self, context):
-    """Keep analyzed humanoid orientation synchronized with the legacy control."""
+    """Keep analyzed humanoid orientation synchronized with the Y+ contract."""
 
     try:
         armature = find_armature(context)
@@ -977,6 +1182,7 @@ class DAFSettings(PropertyGroup):
     ui_pose_open: BoolProperty(default=True)
     ui_pose_left_open: BoolProperty(default=False)
     ui_pose_right_open: BoolProperty(default=False)
+    ui_idle_open: BoolProperty(default=True)
     ui_walk_open: BoolProperty(default=True)
     ui_walk_advanced_open: BoolProperty(default=False)
     ui_death_open: BoolProperty(default=False)
@@ -1024,7 +1230,7 @@ class DAFSettings(PropertyGroup):
     pack_filename: StringProperty(
         name="Pack Filename",
         description="Filename without the .glb extension",
-        default="testman_animpack_v001"
+        default="humanoid_yplus_animpack_v001"
     )
     pack_auto_increment: BoolProperty(
         name="Auto-Increment Existing Filename",
@@ -1114,21 +1320,18 @@ class DAFSettings(PropertyGroup):
     facing: EnumProperty(
         name="Character Faces",
         items=[
-            ("NEG_Y", "-Y (Animate Anything)", ""),
-            ("POS_Y", "+Y", ""),
-            ("POS_X", "+X", ""),
-            ("NEG_X", "-X", ""),
+            ("POS_Y", "+Y (Skin & Bones Canonical)", "Blender +Y forward; glTF -Z"),
         ],
-        default="NEG_Y",
+        default="POS_Y",
         update=_anatomy_facing_updated,
     )
 
-    # The inspected Animate Anything rig needs the knee hinge inverted but not
-    # the elbow hinge. Keeping these independent fixes the v2 behavior.
+    # Y+ is the only production basis. Independent switches remain available
+    # as artistic overrides, but the canonical knee/elbow defaults are direct.
     invert_knees: BoolProperty(
         name="Invert Knees",
         description="Reverse only the knee bend direction",
-        default=True
+        default=False
     )
     invert_elbows: BoolProperty(
         name="Invert Elbows",
@@ -1150,6 +1353,39 @@ class DAFSettings(PropertyGroup):
         name="Upper Spine / Chest Bone",
         description="Optional manual override",
         default=""
+    )
+
+    # Seamless humanoid idle controls.
+    idle_seconds: FloatProperty(
+        name="Loop Duration",
+        default=3.2,
+        min=1.5,
+        max=8.0,
+        unit='TIME',
+    )
+    idle_breathing: FloatProperty(
+        name="Breathing",
+        default=1.0,
+        min=0.0,
+        max=2.0,
+    )
+    idle_weight_shift: FloatProperty(
+        name="Weight Shift",
+        default=1.0,
+        min=0.0,
+        max=2.0,
+    )
+    idle_arm_tuck: FloatProperty(
+        name="Arm Drop to Sides",
+        description="Additively lower both complete arm chains from the current Draft Base Pose toward the torso",
+        default=18.0,
+        min=0.0,
+        max=75.0,
+    )
+    animation_base_pose_status: StringProperty(
+        name="Draft Base Pose Status",
+        default="No Idle Draft Base Pose captured",
+        options={'HIDDEN'},
     )
 
     # Walk controls.
@@ -1628,7 +1864,7 @@ class DAFSettings(PropertyGroup):
     damage_authoring_filename: StringProperty(
         name="Damage Asset Filename",
         description="Filename without extension",
-        default="testman_damage_v001"
+        default="humanoid_damage_v001"
     )
     damage_authoring_seam: EnumProperty(
         name="Detached Preview Seam",
@@ -1656,7 +1892,7 @@ class DAFSettings(PropertyGroup):
     last_damage_manifest_path: StringProperty(default="", options={'HIDDEN'})
     last_damage_validation_path: StringProperty(default="", options={'HIDDEN'})
 
-    # Trauma Field Authoring v4.1.1.
+    # Trauma Field Authoring v5.0.0.
     deformation_region: EnumProperty(
         name="Active Region",
         items=_deformation_region_items,
@@ -2617,7 +2853,9 @@ def infer_approved_kind(action_name):
         return "HURT_RIGHT"
     if any(word in lower for word in ("death", "collapse", "faceplant")):
         return "DEATH"
-    if any(word in lower for word in ("walk", "idle", "locomotion")):
+    if "idle" in lower:
+        return "IDLE"
+    if any(word in lower for word in ("walk", "locomotion")):
         return "WALK"
 
     return "IMPORTED"
@@ -2667,8 +2905,8 @@ def write_rig_mapping_report(armature, mapping):
     text.clear()
 
     profile = (
-        "Animate Anything / testman exact profile"
-        if detect_animate_anything_profile(armature)
+        "Skin & Bones canonical humanoid Y+ profile"
+        if sbf_handoff.contract(armature) is not None
         else "Generic structural profile"
     )
 
@@ -3114,10 +3352,9 @@ def style_walk_values(settings):
 def apply_arm_tuck(arm, mapping, forward_axis, degrees, left_scale=1.0, right_scale=1.0):
     """Adduct both complete arm chains toward the ribs.
 
-    For the inspected Animate Anything rig, the character faces -Y. The
-    shoulder chain must rotate left-positive and right-negative around the
-    forward axis to lower the arms. v3.1 used the opposite signs and tended to
-    lift or widen them.
+    The Skin & Bones rest basis faces +Y. Looking from above, the left chain
+    rotates negative and the right chain positive around +Y so both complete
+    arm chains descend toward the ribs.
     """
     if degrees <= 0.0:
         return
@@ -3127,11 +3364,11 @@ def apply_arm_tuck(arm, mapping, forward_axis, degrees, left_scale=1.0, right_sc
 
     # Rotate the shoulder parent first so the forearm and hand descend with
     # the complete limb, like lowering the arms during a jumping jack.
-    rotate(arm, mapping, "shoulder_l", forward_axis, left_degrees * .82)
-    rotate(arm, mapping, "upper_arm_l", forward_axis, left_degrees * .18)
+    rotate(arm, mapping, "shoulder_l", forward_axis, -left_degrees * .82)
+    rotate(arm, mapping, "upper_arm_l", forward_axis, -left_degrees * .18)
 
-    rotate(arm, mapping, "shoulder_r", forward_axis, -right_degrees * .82)
-    rotate(arm, mapping, "upper_arm_r", forward_axis, -right_degrees * .18)
+    rotate(arm, mapping, "shoulder_r", forward_axis, right_degrees * .82)
+    rotate(arm, mapping, "upper_arm_r", forward_axis, right_degrees * .18)
 
 
 def resolve_brace_side(settings):
@@ -3190,23 +3427,23 @@ def apply_terminal_death_pose(
     profile = {
         "CHEST_HOLD": {
             "pitch": 90.0,
-            "roll": 10.0,
+            "roll": 4.0,
             "travel": 0.34,
-            "curl": 16.0,
+            "curl": 18.0,
             "lead_knee": 72.0,
             "trail_knee": 54.0,
         },
         "FACEPLANT": {
-            "pitch": 96.0,
-            "roll": 4.0,
+            "pitch": 94.0,
+            "roll": 2.0,
             "travel": 0.42,
-            "curl": 7.0,
+            "curl": 5.0,
             "lead_knee": 58.0,
             "trail_knee": 42.0,
         },
         "KNEES_FIRST": {
             "pitch": 91.0,
-            "roll": 8.0,
+            "roll": 4.0,
             "travel": 0.30,
             "curl": 13.0,
             "lead_knee": 92.0,
@@ -3214,7 +3451,7 @@ def apply_terminal_death_pose(
         },
         "INSTANT_LIMP": {
             "pitch": 94.0,
-            "roll": 11.0,
+            "roll": 5.0,
             "travel": 0.36,
             "curl": 5.0,
             "lead_knee": 66.0,
@@ -3257,11 +3494,11 @@ def apply_terminal_death_pose(
     rotate(arm, mapping, "spine", side_axis, curl * .45)
     rotate(arm, mapping, "spine_mid", side_axis, curl * .20)
     rotate(arm, mapping, "chest", side_axis, curl * .35)
-    rotate(arm, mapping, "chest", forward_axis, 9.0 * fall_sign * amount)
+    rotate(arm, mapping, "chest", forward_axis, 4.0 * fall_sign * amount)
     # Finish with the head turned and heavy, but do not let the snout become a
     # single low pivot that suspends the chest above the floor.
-    rotate(arm, mapping, "neck", side_axis, -12.0 * amount)
-    rotate(arm, mapping, "head", side_axis, -26.0 * amount)
+    rotate(arm, mapping, "neck", side_axis, -32.0 * amount)
+    rotate(arm, mapping, "head", side_axis, -78.0 * amount)
     rotate(arm, mapping, "neck", forward_axis, 24.0 * fall_sign * amount)
     rotate(arm, mapping, "head", forward_axis, 52.0 * fall_sign * amount)
 
@@ -3296,7 +3533,7 @@ def apply_terminal_death_pose(
 
     # No protective brace survives the terminal pose. Unequal limb bends and
     # relaxed wrists make the body read as unconscious rather than supported.
-    terminal_tuck = min(75.0, float(settings.death_arm_tuck) + 28.0)
+    terminal_tuck = min(18.0, float(settings.death_arm_tuck) * .25)
     apply_arm_tuck(
         arm,
         mapping,
@@ -3305,17 +3542,17 @@ def apply_terminal_death_pose(
         left_scale=.86,
         right_scale=1.0,
     )
-    rotate(arm, mapping, "upper_arm_l", side_axis, 26.0 * amount)
-    rotate(arm, mapping, "upper_arm_r", side_axis, 15.0 * amount)
+    rotate(arm, mapping, "upper_arm_l", side_axis, 8.0 * amount)
+    rotate(arm, mapping, "upper_arm_r", side_axis, -5.0 * amount)
     left_elbow_scale = .50 if rotation_inheritance_disabled(arm, mapping, "lower_arm_l") else 1.0
     right_elbow_scale = .50 if rotation_inheritance_disabled(arm, mapping, "lower_arm_r") else 1.0
     rotate(
         arm, mapping, "lower_arm_l", side_axis,
-        68.0 * elbow_sign * left_elbow_scale * amount,
+        28.0 * elbow_sign * left_elbow_scale * amount,
     )
     rotate(
         arm, mapping, "lower_arm_r", side_axis,
-        88.0 * elbow_sign * right_elbow_scale * amount,
+        38.0 * elbow_sign * right_elbow_scale * amount,
     )
     rotate_local(arm, mapping, "hand_l", (1.0, 0.0, 0.0), -18.0 * amount)
     rotate_local(arm, mapping, "hand_r", (1.0, 0.0, 0.0), 13.0 * amount)
@@ -3329,6 +3566,444 @@ def apply_terminal_death_pose(
         + side_axis * (height * .08 * fall_sign * amount),
     )
     key_pose(arm, mapping, frame)
+
+
+ANIMATION_BASE_POSE_SCHEMA = "dreadstone.animation_base_pose.v1"
+ANIMATION_BASE_POSES_PROPERTY = "dsb_animation_base_poses_json"
+ANIMATION_BASE_POSE_SESSION_PROPERTY = "dsb_animation_base_pose_session_json"
+
+
+def animation_base_pose_library(armature):
+    raw = str(armature.get(ANIMATION_BASE_POSES_PROPERTY, ""))
+    if not raw:
+        return {"schema": ANIMATION_BASE_POSE_SCHEMA, "poses": {}}
+    try:
+        value = json.loads(raw)
+    except (TypeError, ValueError, json.JSONDecodeError):
+        return {"schema": ANIMATION_BASE_POSE_SCHEMA, "poses": {}}
+    if not isinstance(value, dict) or not isinstance(value.get("poses"), dict):
+        return {"schema": ANIMATION_BASE_POSE_SCHEMA, "poses": {}}
+    value["schema"] = ANIMATION_BASE_POSE_SCHEMA
+    return value
+
+
+def animation_base_pose(armature, kind):
+    return animation_base_pose_library(armature)["poses"].get(str(kind), {})
+
+
+def store_animation_base_pose(armature, mapping, kind):
+    """Capture a reusable additive pose recipe without changing the rest rig."""
+
+    bones = {}
+    for role, bone_name in sorted(mapping.items()):
+        if role == "root":
+            continue
+        pose_bone = armature.pose.bones.get(bone_name)
+        if pose_bone is None:
+            continue
+        pose_bone.rotation_mode = 'QUATERNION'
+        rotation = pose_bone.rotation_quaternion.normalized()
+        bones[role] = {
+            "bone": bone_name,
+            "rotation": [float(value) for value in rotation],
+            "location": [float(value) for value in pose_bone.location],
+        }
+    library = animation_base_pose_library(armature)
+    library["poses"][str(kind)] = {
+        "schema": ANIMATION_BASE_POSE_SCHEMA,
+        "kind": str(kind),
+        "canonicalRigVersion": sbf_handoff.SBF_CANONICAL_RIG_VERSION,
+        "bones": bones,
+    }
+    armature[ANIMATION_BASE_POSES_PROPERTY] = json.dumps(
+        library,
+        sort_keys=True,
+        separators=(",", ":"),
+    )
+    return library["poses"][str(kind)]
+
+
+def apply_animation_base_pose(armature, mapping, kind):
+    """Apply a captured pose before a generator adds its motion layer."""
+
+    payload = animation_base_pose(armature, kind)
+    if not payload:
+        return 0
+    if (
+        str(payload.get("canonicalRigVersion", ""))
+        != sbf_handoff.SBF_CANONICAL_RIG_VERSION
+    ):
+        raise RuntimeError(
+            f"{kind} Base Pose was captured for a different canonical rig."
+        )
+    applied = 0
+    for role, record in payload.get("bones", {}).items():
+        bone_name = mapping.get(str(role), "")
+        pose_bone = armature.pose.bones.get(bone_name) if bone_name else None
+        if pose_bone is None or not isinstance(record, dict):
+            continue
+        rotation = record.get("rotation", ())
+        location = record.get("location", ())
+        if len(rotation) != 4 or len(location) != 3:
+            continue
+        values = [float(value) for value in (*rotation, *location)]
+        if not all(math.isfinite(value) for value in values):
+            continue
+        pose_bone.rotation_mode = 'QUATERNION'
+        pose_bone.rotation_quaternion = Quaternion(rotation).normalized()
+        pose_bone.location = Vector(location)
+        applied += 1
+    return applied
+
+
+def clear_animation_base_pose(armature, kind):
+    library = animation_base_pose_library(armature)
+    removed = library["poses"].pop(str(kind), None) is not None
+    if library["poses"]:
+        armature[ANIMATION_BASE_POSES_PROPERTY] = json.dumps(
+            library,
+            sort_keys=True,
+            separators=(",", ":"),
+        )
+    elif ANIMATION_BASE_POSES_PROPERTY in armature:
+        del armature[ANIMATION_BASE_POSES_PROPERTY]
+    return removed
+
+
+def _begin_animation_base_pose_session(context, armature, mapping, kind):
+    if context.mode != 'OBJECT':
+        bpy.ops.object.mode_set(mode='OBJECT')
+    armature.animation_data_create()
+    animation_data = armature.animation_data
+    session = {
+        "kind": str(kind),
+        "action": animation_data.action.name if animation_data.action else "",
+        "tracks": [
+            {"name": track.name, "mute": bool(track.mute)}
+            for track in animation_data.nla_tracks
+        ],
+    }
+    armature[ANIMATION_BASE_POSE_SESSION_PROPERTY] = json.dumps(
+        session,
+        sort_keys=True,
+        separators=(",", ":"),
+    )
+    animation_data.action = None
+    for track in animation_data.nla_tracks:
+        track.mute = True
+    reset_pose(armature, mapping)
+    apply_animation_base_pose(armature, mapping, kind)
+    bpy.ops.object.select_all(action='DESELECT')
+    armature.hide_set(False)
+    armature.hide_viewport = False
+    armature.select_set(True)
+    armature.show_in_front = True
+    context.view_layer.objects.active = armature
+    context.view_layer.update()
+    bpy.ops.object.mode_set(mode='POSE')
+    return session
+
+
+def _restore_animation_base_pose_session(armature, *, restore_action):
+    raw = str(armature.get(ANIMATION_BASE_POSE_SESSION_PROPERTY, ""))
+    try:
+        session = json.loads(raw) if raw else {}
+    except (TypeError, ValueError, json.JSONDecodeError):
+        session = {}
+    if armature.animation_data is not None:
+        tracks = {
+            str(record.get("name", "")): bool(record.get("mute", False))
+            for record in session.get("tracks", [])
+            if isinstance(record, dict)
+        }
+        for track in armature.animation_data.nla_tracks:
+            if track.name in tracks:
+                track.mute = tracks[track.name]
+        if restore_action:
+            armature.animation_data.action = bpy.data.actions.get(
+                str(session.get("action", ""))
+            )
+    if ANIMATION_BASE_POSE_SESSION_PROPERTY in armature:
+        del armature[ANIMATION_BASE_POSE_SESSION_PROPERTY]
+    return session
+
+
+class DAF_OT_edit_animation_base_pose(Operator):
+    bl_idname = "daf.edit_animation_base_pose"
+    bl_label = "Edit Draft Base Pose"
+    bl_description = "Detach animation playback and enter Pose Mode on the reusable additive base pose"
+    bl_options = {'REGISTER', 'UNDO'}
+
+    kind: StringProperty(default="IDLE")
+
+    def execute(self, context):
+        try:
+            settings = context.scene.daf_settings
+            armature = find_armature(context)
+            sbf_handoff.require_canonical_yplus(
+                armature,
+                label=f"{self.kind} Base Pose editing",
+            )
+            mapping = map_bones(armature, settings)
+            _begin_animation_base_pose_session(
+                context,
+                armature,
+                mapping,
+                self.kind,
+            )
+            if self.kind == "IDLE":
+                settings.idle_arm_tuck = 0.0
+            settings.animation_base_pose_status = (
+                f"EDITING {self.kind} BASE - pose bones, then Capture + Preview"
+            )
+            self.report(
+                {'INFO'},
+                f"Editing {self.kind} Base Pose. Pose the body, then Capture + Preview.",
+            )
+            return {'FINISHED'}
+        except Exception as exc:
+            self.report({'ERROR'}, str(exc))
+            return {'CANCELLED'}
+
+
+class DAF_OT_capture_animation_base_pose(Operator):
+    bl_idname = "daf.capture_animation_base_pose"
+    bl_label = "Capture Base Pose and Preview"
+    bl_description = "Capture the current manual pose and regenerate the draft with motion layered on top"
+    bl_options = {'REGISTER', 'UNDO'}
+
+    kind: StringProperty(default="IDLE")
+
+    def execute(self, context):
+        try:
+            settings = context.scene.daf_settings
+            armature = find_armature(context)
+            session_raw = str(
+                armature.get(ANIMATION_BASE_POSE_SESSION_PROPERTY, "")
+            )
+            session = json.loads(session_raw) if session_raw else {}
+            if str(session.get("kind", "")) != self.kind:
+                raise RuntimeError(
+                    f"Click Edit {self.kind.title()} Base Pose before capturing."
+                )
+            mapping = map_bones(armature, settings)
+            payload = store_animation_base_pose(
+                armature,
+                mapping,
+                self.kind,
+            )
+            if context.mode != 'OBJECT':
+                bpy.ops.object.mode_set(mode='OBJECT')
+            _restore_animation_base_pose_session(
+                armature,
+                restore_action=False,
+            )
+            bpy.ops.object.select_all(action='DESELECT')
+            armature.select_set(True)
+            context.view_layer.objects.active = armature
+            if self.kind == "IDLE":
+                result = bpy.ops.daf.idle()
+                if 'FINISHED' not in result:
+                    raise RuntimeError("Idle preview regeneration failed.")
+            settings.animation_base_pose_status = (
+                f"{self.kind} BASE CAPTURED - {len(payload['bones'])} bones"
+            )
+            self.report(
+                {'INFO'},
+                f"Captured {self.kind} Base Pose and refreshed its draft preview.",
+            )
+            return {'FINISHED'}
+        except Exception as exc:
+            self.report({'ERROR'}, str(exc))
+            return {'CANCELLED'}
+
+
+class DAF_OT_cancel_animation_base_pose(Operator):
+    bl_idname = "daf.cancel_animation_base_pose"
+    bl_label = "Cancel Base Pose Edit"
+    bl_description = "Discard uncaptured pose changes and restore the prior animation state"
+    bl_options = {'REGISTER', 'UNDO'}
+
+    kind: StringProperty(default="IDLE")
+
+    def execute(self, context):
+        try:
+            settings = context.scene.daf_settings
+            armature = find_armature(context)
+            mapping = map_bones(armature, settings)
+            if context.mode != 'OBJECT':
+                bpy.ops.object.mode_set(mode='OBJECT')
+            reset_pose(armature, mapping)
+            _restore_animation_base_pose_session(
+                armature,
+                restore_action=True,
+            )
+            context.view_layer.update()
+            settings.animation_base_pose_status = (
+                f"{self.kind} Base Pose edit cancelled"
+            )
+            return {'FINISHED'}
+        except Exception as exc:
+            self.report({'ERROR'}, str(exc))
+            return {'CANCELLED'}
+
+
+class DAF_OT_clear_animation_base_pose(Operator):
+    bl_idname = "daf.clear_animation_base_pose"
+    bl_label = "Clear Draft Base Pose"
+    bl_description = "Remove the captured base pose and regenerate from the canonical rest pose"
+    bl_options = {'REGISTER', 'UNDO'}
+
+    kind: StringProperty(default="IDLE")
+
+    def execute(self, context):
+        try:
+            settings = context.scene.daf_settings
+            armature = find_armature(context)
+            if context.mode != 'OBJECT':
+                bpy.ops.object.mode_set(mode='OBJECT')
+            _restore_animation_base_pose_session(
+                armature,
+                restore_action=False,
+            )
+            clear_animation_base_pose(armature, self.kind)
+            bpy.ops.object.select_all(action='DESELECT')
+            armature.select_set(True)
+            context.view_layer.objects.active = armature
+            if self.kind == "IDLE":
+                result = bpy.ops.daf.idle()
+                if 'FINISHED' not in result:
+                    raise RuntimeError("Idle preview regeneration failed.")
+            settings.animation_base_pose_status = (
+                f"{self.kind} Base Pose cleared"
+            )
+            self.report({'INFO'}, f"Cleared {self.kind} Base Pose.")
+            return {'FINISHED'}
+        except Exception as exc:
+            self.report({'ERROR'}, str(exc))
+            return {'CANCELLED'}
+
+
+class DAF_OT_idle(Operator):
+    bl_idname = "daf.idle"
+    bl_label = "Generate Humanoid Idle"
+    bl_description = "Generate a seamless Y+ in-place breathing and weight-shift loop"
+    bl_options = {'REGISTER', 'UNDO'}
+
+    def execute(self, context):
+        try:
+            settings = context.scene.daf_settings
+            armature = find_armature(context)
+            anatomy_blender.require_generator_capability(
+                armature,
+                "idle",
+                "Humanoid Idle generator",
+            )
+            mapping = map_bones(armature, settings)
+            needed = ["root", "hips", "spine", "chest", "head"]
+            missing = [role for role in needed if role not in mapping]
+            if missing:
+                raise RuntimeError("Missing mapped bones: " + ", ".join(missing))
+
+            action = ensure_draft_action(
+                armature,
+                DRAFT_ACTION_NAMES["IDLE"],
+            )
+            fps = context.scene.render.fps / max(
+                context.scene.render.fps_base,
+                0.001,
+            )
+            start = 1
+            loop_frames = max(24, round(float(settings.idle_seconds) * fps))
+            end = start + loop_frames
+            context.scene.frame_start = start
+            context.scene.frame_end = end
+            forward, side, up = vectors(settings, armature)
+
+            # The first and last samples are identical. Breathing and the
+            # lateral weight shift are quarter-cycle offset so the result does
+            # not pulse like a mechanical two-pose loop.
+            phases = (
+                (0.00, 0.0, -1.0),
+                (0.25, 1.0, 0.0),
+                (0.50, 0.0, 1.0),
+                (0.75, -1.0, 0.0),
+                (1.00, 0.0, -1.0),
+            )
+            for ratio, breath_phase, shift_phase in phases:
+                frame = start + round(loop_frames * ratio)
+                context.scene.frame_set(frame)
+                reset_pose(armature, mapping)
+                apply_animation_base_pose(armature, mapping, "IDLE")
+                breathing = float(settings.idle_breathing) * breath_phase
+                shift = float(settings.idle_weight_shift) * shift_phase
+
+                apply_arm_tuck(
+                    armature,
+                    mapping,
+                    forward,
+                    float(settings.idle_arm_tuck),
+                )
+                rotate(armature, mapping, "hips", forward, 0.75 * shift)
+                rotate(armature, mapping, "hips", up, 0.45 * shift)
+                rotate(armature, mapping, "spine", side, -0.55 * breathing)
+                rotate(armature, mapping, "spine", forward, -0.30 * shift)
+                rotate(armature, mapping, "chest", side, 1.15 * breathing)
+                rotate(armature, mapping, "chest", forward, 0.50 * shift)
+                rotate(armature, mapping, "chest", up, -0.35 * shift)
+                rotate(armature, mapping, "head", side, -0.35 * breathing)
+                rotate(armature, mapping, "head", forward, -0.30 * shift)
+                rotate(armature, mapping, "upper_arm_l", side, 0.35 * breathing)
+                rotate(armature, mapping, "upper_arm_r", side, 0.35 * breathing)
+                offset(
+                    armature,
+                    mapping,
+                    "hips",
+                    up * (0.004 * max(0.0, breathing)),
+                )
+                apply_arm_hand_pose_polish(
+                    armature,
+                    mapping,
+                    settings,
+                    side,
+                )
+                key_pose(armature, mapping, frame)
+
+            set_bezier(action, cycles=True)
+            action["dsb_loop"] = True
+            action["dsb_root_motion_policy"] = "IN_PLACE"
+            action["dsb_forward_axis"] = "+Y"
+            action["dsb_up_axis"] = "+Z"
+            animation_library.mark_draft(
+                action,
+                armature,
+                settings,
+                "IDLE",
+            )
+            base_pose = animation_base_pose(armature, "IDLE")
+            if base_pose:
+                action["dsb_animation_base_pose_kind"] = "IDLE"
+                action["dsb_animation_base_pose_json"] = json.dumps(
+                    base_pose,
+                    sort_keys=True,
+                    separators=(",", ":"),
+                )
+            else:
+                for key in (
+                    "dsb_animation_base_pose_kind",
+                    "dsb_animation_base_pose_json",
+                ):
+                    if key in action:
+                        del action[key]
+            context.scene.frame_set(start)
+            self.report(
+                {'INFO'},
+                f"Refreshed {action.name}. The first and last poses match for a seamless loop.",
+            )
+            return {'FINISHED'}
+        except Exception as exc:
+            self.report({'ERROR'}, str(exc))
+            return {'CANCELLED'}
 
 
 class DAF_OT_walk(Operator):
@@ -3445,6 +4120,10 @@ class DAF_OT_walk(Operator):
                 key_pose(arm, m, frame)
 
             set_bezier(action, cycles=True)
+            action["dsb_loop"] = True
+            action["dsb_root_motion_policy"] = "IN_PLACE"
+            action["dsb_forward_axis"] = "+Y"
+            action["dsb_up_axis"] = "+Z"
             animation_library.mark_draft(
                 action,
                 arm,
@@ -3753,6 +4432,34 @@ class DAF_OT_collapse(Operator):
             action["dsb_terminal_max_height_ratio"] = grounding[
                 "maximum_terminal_height_ratio"
             ]
+            action["dsb_ground_carrier_role"] = grounding["carrier_role"]
+            action["dsb_ground_carrier_bone"] = grounding["carrier_bone"]
+            action["dsb_terminal_torso_minimum_z"] = grounding[
+                "terminal_torso_minimum_z"
+            ]
+            action["dsb_terminal_torso_height_m"] = grounding[
+                "terminal_torso_height_m"
+            ]
+            action["dsb_terminal_torso_height_ratio"] = grounding[
+                "terminal_torso_height_ratio"
+            ]
+            action["dsb_terminal_max_torso_height_ratio"] = grounding[
+                "maximum_terminal_torso_height_ratio"
+            ]
+            action["dsb_torso_contact_tolerance_m"] = grounding[
+                "torso_contact_tolerance_m"
+            ]
+            action["dsb_torso_contact_regions_json"] = json.dumps(
+                grounding["torso_regions"],
+                sort_keys=True,
+                separators=(",", ":"),
+            )
+            action["dsb_ground_max_torso_safety_lift_m"] = grounding[
+                "maximum_torso_safety_lift_m"
+            ]
+            action["dsb_forward_axis"] = "+Y"
+            action["dsb_up_axis"] = "+Z"
+            action["dsb_root_motion_bone"] = grounding["carrier_bone"]
             animation_library.mark_draft(
                 action,
                 arm,
@@ -3799,8 +4506,7 @@ def generate_flank_hurt(context, operator, pain_side):
     fwd, side, up = vectors(s, arm)
     knee_sign = -1.0 if s.invert_knees else 1.0
     elbow_sign = -1.0 if s.invert_elbows else 1.0
-    # Facing -Y means anatomical left is -X and right is +X.
-    # v3.0 used the opposite sign, making the body reaction look reversed.
+    # With canonical +Y forward, anatomical left is -X and right is +X.
     pain_sign = -1.0 if pain_side == "LEFT" else 1.0
     opposite_side = "RIGHT" if pain_side == "LEFT" else "LEFT"
 
@@ -4690,9 +5396,15 @@ def action_pack_metadata(action, fps):
 
     lower = action.name.lower()
     kind = str(action.get("dsb_approved_kind", ""))
-    loop = kind == "WALK" or "walk" in lower or "idle" in lower
+    loop = kind in {"IDLE", "WALK"} or "walk" in lower or "idle" in lower
     death = kind == "DEATH" or any(word in lower for word in ("death", "collapse", "faceplant"))
     hurt = kind in {"HURT_LEFT", "HURT_RIGHT"} or "hurt" in lower
+    try:
+        torso_contact_regions = json.loads(
+            str(action.get("dsb_torso_contact_regions_json", "{}"))
+        )
+    except (TypeError, ValueError, json.JSONDecodeError):
+        torso_contact_regions = {}
     result = {
         "name": action.name,
         "approved_kind": kind or None,
@@ -4750,6 +5462,34 @@ def action_pack_metadata(action, fps):
                     DEATH_TERMINAL_MAX_HEIGHT_RATIO,
                 )
             ),
+            "ground_carrier_role": str(
+                action.get("dsb_ground_carrier_role", "")
+            ),
+            "ground_carrier_bone": str(
+                action.get("dsb_ground_carrier_bone", "")
+            ),
+            "terminal_torso_minimum_z": float(
+                action.get("dsb_terminal_torso_minimum_z", 0.0)
+            ),
+            "terminal_torso_height_m": float(
+                action.get("dsb_terminal_torso_height_m", 0.0)
+            ),
+            "terminal_torso_height_ratio": float(
+                action.get("dsb_terminal_torso_height_ratio", 1.0)
+            ),
+            "maximum_terminal_torso_height_ratio": float(
+                action.get(
+                    "dsb_terminal_max_torso_height_ratio",
+                    DEATH_TERMINAL_MAX_TORSO_HEIGHT_RATIO,
+                )
+            ),
+            "torso_contact_tolerance_m": float(
+                action.get("dsb_torso_contact_tolerance_m", 0.0)
+            ),
+            "torso_contact_regions": torso_contact_regions,
+            "maximum_torso_safety_lift_m": float(
+                action.get("dsb_ground_max_torso_safety_lift_m", 0.0)
+            ),
         }
     guard_variant = str(action.get("dsb_guard_variant", ""))
     if guard_variant:
@@ -4794,6 +5534,7 @@ def validate_death_floor_action(
     start_height = None
     final_minimum = None
     final_height = None
+    final_torso = None
     start, end = action_frame_bounds(action)
     start_frame = int(math.floor(start))
     final_frame = int(math.ceil(end))
@@ -4812,6 +5553,7 @@ def validate_death_floor_action(
         for track in animation_data.nla_tracks
     ]
     try:
+        mapping = map_bones(armature, context.scene.daf_settings)
         for track, _mute, _solo in track_states:
             track.mute = True
             try:
@@ -4831,6 +5573,7 @@ def validate_death_floor_action(
             if frame == final_frame:
                 final_minimum = float(minimum.z)
                 final_height = float(maximum.z - minimum.z)
+                final_torso = torso_contact_bounds(context, meshes, mapping)
     finally:
         animation_data.action = previous_action
         for track, mute, solo in track_states:
@@ -4849,6 +5592,12 @@ def validate_death_floor_action(
     if not bool(action.get("dsb_terminal_contact_baked", False)):
         errors.append(
             f"{action.name} has no baked terminal full-body ground-contact pass."
+        )
+    if str(action.get("dsb_ground_carrier_bone", "")) != str(
+        mapping.get("root", "")
+    ):
+        errors.append(
+            f"{action.name} is not grounded through the canonical root bone."
         )
     if final_minimum is None or final_height is None:
         errors.append(f"{action.name} has no measurable terminal pose.")
@@ -4878,6 +5627,63 @@ def validate_death_floor_action(
                 f"{action.name} terminal body height ratio is "
                 f"{final_height_ratio:.3f}; maximum is {maximum_ratio:.3f}."
             )
+    torso_regions = {}
+    final_torso_height = None
+    final_torso_height_ratio = float("inf")
+    if final_torso is None:
+        errors.append(f"{action.name} has no measurable terminal torso contact.")
+    else:
+        if final_torso["missing_regions"]:
+            errors.append(
+                f"{action.name} cannot verify full torso contact; missing "
+                + ", ".join(final_torso["missing_regions"])
+                + " weighted regions."
+            )
+        final_torso_height = float(
+            final_torso["maximum"].z - final_torso["minimum"].z
+        )
+        reference_height = max(
+            float(
+                action.get(
+                    "dsb_terminal_reference_height_m",
+                    start_height if start_height is not None else 0.0,
+                )
+            ),
+            1.0e-6,
+        )
+        final_torso_height_ratio = final_torso_height / reference_height
+        maximum_torso_ratio = float(
+            action.get(
+                "dsb_terminal_max_torso_height_ratio",
+                DEATH_TERMINAL_MAX_TORSO_HEIGHT_RATIO,
+            )
+        )
+        if final_torso_height_ratio > maximum_torso_ratio + 1.0e-4:
+            errors.append(
+                f"{action.name} terminal torso height ratio is "
+                f"{final_torso_height_ratio:.3f}; maximum is "
+                f"{maximum_torso_ratio:.3f}."
+            )
+        contact_tolerance = float(
+            action.get(
+                "dsb_torso_contact_tolerance_m",
+                max(
+                    0.02,
+                    min(
+                        0.08,
+                        reference_height * DEATH_TORSO_CONTACT_TOLERANCE_RATIO,
+                    ),
+                ),
+            )
+        )
+        torso_regions = final_torso["regions"]
+        for role, record in sorted(torso_regions.items()):
+            gap = float(record["minimum_z"]) - allowed_minimum
+            if gap > contact_tolerance:
+                errors.append(
+                    f"{action.name} terminal {role} remains {gap:.4f} m "
+                    "above the floor."
+                )
     return {
         "status": "FAIL" if errors else "PASS",
         "action": action.name,
@@ -4898,6 +5704,16 @@ def validate_death_floor_action(
                 DEATH_TERMINAL_MAX_HEIGHT_RATIO,
             )
         ),
+        "groundCarrierBone": str(action.get("dsb_ground_carrier_bone", "")),
+        "terminalTorsoHeightM": final_torso_height,
+        "terminalTorsoHeightRatio": final_torso_height_ratio,
+        "maximumTerminalTorsoHeightRatio": float(
+            action.get(
+                "dsb_terminal_max_torso_height_ratio",
+                DEATH_TERMINAL_MAX_TORSO_HEIGHT_RATIO,
+            )
+        ),
+        "terminalTorsoRegions": torso_regions,
         "sampleCount": int(math.ceil(end)) - int(math.floor(start)) + 1,
         "errors": errors,
     }
@@ -5326,6 +6142,24 @@ class DAF_OT_build_approved_pack(Operator):
                 raise RuntimeError('No approved Actions found. Approve at least one Draft first.')
             source = resolve_pack_source(context)
             armature = source["armature"]
+            rig_contract = sbf_handoff.require_canonical_yplus(
+                armature,
+                label="Animation pack export",
+            )
+            compatibility = [
+                animation_library.compatibility_report(action, armature)
+                for action in actions
+            ]
+            compatibility_errors = [
+                error
+                for report in compatibility
+                for error in report["errors"]
+            ]
+            if compatibility_errors:
+                raise RuntimeError(
+                    "Animation pack contains a noncanonical clip: "
+                    + "; ".join(compatibility_errors[:4])
+                )
             output_dir = bpy.path.abspath(settings.pack_output_directory)
             if not output_dir:
                 raise RuntimeError('Choose a Pack Output Folder.')
@@ -5393,8 +6227,8 @@ class DAF_OT_build_approved_pack(Operator):
                             for record in invalid_deaths
                             for message in record["errors"][:1]
                         )
-                        + " Regenerate the Death Draft or correct its hips "
-                        "location before approval."
+                        + " Regenerate the Death Draft or correct its root/torso "
+                        "contact before approval."
                     )
             export_approved_glb(
                 context,
@@ -5416,9 +6250,18 @@ class DAF_OT_build_approved_pack(Operator):
                 'approved_animation_count': len(actions),
                 'fps': fps,
                 'character': pack_character_metadata(context, source),
+                'canonical_rig': {
+                    'rig_version': rig_contract['rigVersion'],
+                    'forward_axis': '+Y',
+                    'up_axis': '+Z',
+                    'root_motion_bone': rig_contract['rootBone'],
+                    'orientation_revision': rig_contract['orientationRevision'],
+                    'rig_contract_version': rig_contract['rigContractVersion'],
+                    'unit_scale_meters': rig_contract['unitScaleMeters'],
+                },
                 'anatomy': anatomy_persistence.export_metadata(
                     armature,
-                    infer_legacy=True,
+                    infer_legacy=False,
                 ),
                 'animations': metadata,
                 'mace_head_guard_validation': guard_validation,
@@ -5774,7 +6617,7 @@ class DAF_PT_legacy_panel(Panel):
             layout,
             s,
             "ui_deformation_authoring_open",
-            "Trauma Field Authoring v4.1.1",
+            "Trauma Field Authoring v5.0.0",
         )
         if opened:
             configure_property_box(box)
@@ -6155,6 +6998,11 @@ CLASSES = (
     DAF_OT_analyze,
     DAF_OT_show_anatomy_role_mapping,
     DAF_OT_clear_anatomy_profile_override,
+    DAF_OT_edit_animation_base_pose,
+    DAF_OT_capture_animation_base_pose,
+    DAF_OT_cancel_animation_base_pose,
+    DAF_OT_clear_animation_base_pose,
+    DAF_OT_idle,
     DAF_OT_walk,
     DAF_OT_collapse,
     DAF_OT_hurt_left,

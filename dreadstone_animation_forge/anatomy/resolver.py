@@ -8,7 +8,7 @@ import re
 from typing import Any, Mapping
 
 from .model import RigSnapshot
-from .profiles import ANIMATE_ANYTHING_PROFILE, HUMANOID_PROFILE_ID
+from .profiles import CANONICAL_HUMANOID_MAPPING, HUMANOID_PROFILE_ID
 from .schema import AnatomyProfile
 
 
@@ -105,9 +105,9 @@ def resolve_roles(
     }
 
     if profile.profile_id == HUMANOID_PROFILE_ID:
-        exact_required = set(ANIMATE_ANYTHING_PROFILE.values()) - {"arm_left_hand", "arm_right_hand"}
+        exact_required = set(CANONICAL_HUMANOID_MAPPING.values()) - {"arm_left_hand", "arm_right_hand"}
         if exact_required.issubset(by_name):
-            for role, bone_name in ANIMATE_ANYTHING_PROFILE.items():
+            for role, bone_name in CANONICAL_HUMANOID_MAPPING.items():
                 if bone_name in by_name:
                     mapping[role] = bone_name
                     owned.add(bone_name)

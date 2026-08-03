@@ -20,7 +20,7 @@ OVERRIDE_PROPERTY = "dsb_anatomy_profile_override"
 def legacy_humanoid_metadata(
     mapping: Mapping[str, object] | None = None,
     *,
-    forward_axis: str = "-Y",
+    forward_axis: str = "+Y",
 ) -> dict[str, Any]:
     canonical = canonical_mapping(mapping or {})
     return {
@@ -50,7 +50,7 @@ def legacy_humanoid_metadata(
         "ready": True,
         "missingRequirements": [],
         "ambiguities": [],
-        "warnings": ["Anatomy metadata was absent; legacy humanoid compatibility is in use."],
+        "warnings": ["Anatomy metadata was absent; explicit Y+ analysis is required for animation authoring."],
         "blockers": [],
         "worstBlocker": "",
         "unsupportedFeatures": [],
@@ -126,6 +126,8 @@ def export_metadata(owner_or_metadata, *, infer_legacy: bool = False) -> dict[st
         "schema", "anatomySchema", "profileId", "creatureClass", "locomotionClass",
         "rigProfileId", "roleMapping", "mappingDigest", "orientation",
         "contactRoles", "capabilities", "readinessStatus", "analyzerVersion", "legacy",
+        "canonicalRigVersion", "rigContractVersion", "orientationRevision",
+        "rootMotionCarrier", "unitScaleMeters",
     )
     return {field: copy.deepcopy(value.get(field)) for field in fields}
 

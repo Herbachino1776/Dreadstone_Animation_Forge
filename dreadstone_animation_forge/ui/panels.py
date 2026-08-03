@@ -1215,14 +1215,20 @@ def _draw_animation_setup(layout, context, settings):
     if rig is not None:
         try:
             from .. import find_armature
+            from ..anatomy import skin_and_bones
 
             armature = find_armature(context)
-            rig.prop_search(settings, "manual_hips", armature.data, "bones", text="Pelvis / Hips")
-            rig.prop_search(settings, "manual_spine", armature.data, "bones", text="Lowest Spine")
-            rig.prop_search(settings, "manual_chest", armature.data, "bones", text="Upper Spine / Chest")
+            if skin_and_bones.contract(armature) is not None:
+                rig.label(text="Skin & Bones mapping is authoritative", icon='LOCKED')
+                rig.label(text="body → body_top0 → body_top1 → body_top2")
+            else:
+                rig.prop_search(settings, "manual_hips", armature.data, "bones", text="Pelvis / Hips")
+                rig.prop_search(settings, "manual_spine", armature.data, "bones", text="Lowest Spine")
+                rig.prop_search(settings, "manual_chest", armature.data, "bones", text="Upper Spine / Chest")
         except Exception:
             rig.label(text="Select the target character for bone pickers", icon='INFO')
-        rig.prop(settings, "facing")
+        rig.label(text="Canonical forward: Blender +Y / glTF -Z", icon='ORIENTATION_GLOBAL')
+        rig.label(text="Y- rigs are rejected; convert them in Skin & Bones", icon='INFO')
         row = rig.row(align=True)
         row.prop(settings, "invert_knees")
         row.prop(settings, "invert_elbows")
@@ -1295,6 +1301,60 @@ def _draw_walk_animation(layout, settings):
         "daf.approve_draft", text="Version / Approve Walk Draft", icon='FAKE_USER_ON'
     )
     approve.kind = "WALK"
+
+
+def _draw_idle_animation(layout, settings):
+    idle = _animation_foldout(
+        layout,
+        settings,
+        "ui_idle_open",
+        "Humanoid Idle Draft",
+        icon='ACTION',
+    )
+    if idle is None:
+        return
+    idle.prop(settings, "idle_seconds")
+    idle.prop(settings, "idle_breathing", slider=True)
+    idle.prop(settings, "idle_weight_shift", slider=True)
+    idle.prop(settings, "idle_arm_tuck", slider=True)
+    base_pose = idle.box()
+    base_pose.label(text="Draft Base Pose", icon='POSE_HLT')
+    base_pose.label(text="Pose the relaxed starting stance; Idle motion is added on top.")
+    edit = base_pose.operator(
+        "daf.edit_animation_base_pose",
+        text="Edit Idle Base Pose",
+        icon='POSE_HLT',
+    )
+    edit.kind = "IDLE"
+    capture = base_pose.operator(
+        "daf.capture_animation_base_pose",
+        text="Capture Base + Preview Idle",
+        icon='REC',
+    )
+    capture.kind = "IDLE"
+    row = base_pose.row(align=True)
+    cancel = row.operator(
+        "daf.cancel_animation_base_pose",
+        text="Cancel Edit",
+        icon='X',
+    )
+    cancel.kind = "IDLE"
+    clear = row.operator(
+        "daf.clear_animation_base_pose",
+        text="Clear Base",
+        icon='TRASH',
+    )
+    clear.kind = "IDLE"
+    base_pose.label(text=settings.animation_base_pose_status, icon='INFO')
+    base_pose.label(text="The root is excluded so the preview remains in place.")
+    idle.operator("daf.idle", text="Generate / Refresh Idle Draft", icon='ACTION')
+    approve = idle.operator(
+        "daf.approve_draft",
+        text="Version / Approve Idle Draft",
+        icon='FAKE_USER_ON',
+    )
+    approve.kind = "IDLE"
+    idle.label(text="Seamless, in-place, Y+ loop with no root drift", icon='INFO')
 
 
 def _draw_death_animation(layout, settings):
@@ -1456,6 +1516,7 @@ def _draw_animation(layout, context, settings):
     if settings.anatomy_readiness_status in {
         "PROFILE_AMBIGUOUS", "PROFILE_INCOMPLETE", "ORIENTATION_AMBIGUOUS",
         "MISSING_LIMB_CHAIN", "MISSING_CONTACT_ROLE", "UNSUPPORTED_ANATOMY",
+        "UNSUPPORTED_FORWARD_AXIS",
     }:
         warning = layout.box()
         warning.alert = True
@@ -1463,6 +1524,7 @@ def _draw_animation(layout, context, settings):
         _draw_animation_pack(layout, settings)
         return
     _draw_pose_polish(layout, settings)
+    _draw_idle_animation(layout, settings)
     _draw_walk_animation(layout, settings)
     _draw_death_animation(layout, settings)
     _draw_hurt_animation(layout, settings)

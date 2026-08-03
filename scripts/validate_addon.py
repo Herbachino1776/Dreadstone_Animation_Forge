@@ -35,13 +35,13 @@ ALL_MODULE_PATHS = tuple(sorted(
     if "__pycache__" not in path.parts
 ))
 
-EXPECTED_VERSION = (4, 1, 1)
+EXPECTED_VERSION = (5, 0, 0)
 EXPECTED_READINESS_BUILD = "2026-07-18.source-contract.1"
 EXPECTED_AUTHORING_BUILD = "2026-07-18.source-contract.1"
 EXPECTED_DEFORMATION_BUILD = "2026-07-29.portable-surface-stains.1"
 
 REQUIRED_GUIDE_HEADINGS = (
-    "## 1. Install Dreadstone Animation Forge 4.1.1",
+    "## 1. Install Dreadstone Animation Forge 5.0.0",
     "## 2. Open the Dreadstone panel",
     "## 3. Import and prepare a source GLB",
     "## 4. Use the VIP Damage workflow",
@@ -95,6 +95,10 @@ REQUIRED_GUIDE_UI_LABELS = {
     "**ANALYZE CREATURE ANATOMY**",
     "**SHOW ROLE MAPPING**",
     "**CLEAR PROFILE OVERRIDE**",
+    "**EDIT IDLE BASE POSE**",
+    "**CAPTURE BASE + PREVIEW IDLE**",
+    "**CANCEL EDIT**",
+    "**CLEAR BASE**",
     "**VIP ANIMATION LIBRARY**",
     "**PLAY**",
     "**EDIT**",
@@ -147,6 +151,7 @@ REQUIRED_SCHEMAS = {
     "dreadstone.trauma_stamp_library.v1",
     "dreadstone.compound_trauma_event.v1",
     "dreadstone.animation_clip.v1",
+    "dreadstone.animation_base_pose.v1",
     "dreadstone.creature_anatomy_profile.v1",
     "dreadstone.creature_anatomy_analysis.v1",
 }
@@ -266,12 +271,20 @@ REQUIRED_OPERATORS = {
     "daf.analyze_creature_anatomy": "Analyze Creature Anatomy",
     "daf.show_anatomy_role_mapping": "Show Role Mapping",
     "daf.clear_anatomy_profile_override": "Clear Profile Override",
+    "daf.idle": "Generate Humanoid Idle",
+    "daf.edit_animation_base_pose": "Edit Draft Base Pose",
+    "daf.capture_animation_base_pose": "Capture Base Pose and Preview",
+    "daf.cancel_animation_base_pose": "Cancel Base Pose Edit",
+    "daf.clear_animation_base_pose": "Clear Draft Base Pose",
 }
 
 REQUIRED_UI_TEXT = {
     "Source Damage Readiness",
     "Damage Segment & Stump Authoring v3.9",
-    "Trauma Field Authoring v4.1.1",
+    "Trauma Field Authoring v5.0.0",
+    "Generate Humanoid Idle",
+    "Draft Base Pose",
+    "Capture Base + Preview Idle",
     "VIP DAMAGE WORKFLOW",
     "VIP ANIMATION LIBRARY",
     "ANALYZE CREATURE ANATOMY",
@@ -470,7 +483,7 @@ def check_extension_manifest() -> None:
         (
             'schema_version = "1.0.0"',
             'id = "dreadstone_animation_forge"',
-            'version = "4.1.1"',
+            'version = "5.0.0"',
             'name = "Dreadstone Animation Forge"',
             'type = "add-on"',
             'blender_version_min = "4.2.0"',
@@ -592,7 +605,7 @@ def check_anatomy_profile_contracts() -> None:
     required = {
         "__init__.py", "schema.py", "model.py", "profiles.py", "resolver.py",
         "detection.py", "orientation.py", "validation.py", "persistence.py",
-        "ui_state.py", "blender_adapter.py",
+        "ui_state.py", "blender_adapter.py", "skin_and_bones.py",
     }
     actual = {path.name for path in anatomy.glob("*.py")}
     require(required <= actual, "missing anatomy modules: " + ", ".join(sorted(required - actual)))
@@ -606,6 +619,12 @@ def check_anatomy_profile_contracts() -> None:
         "front_l_paw", "front_r_paw", "hind_l_paw", "hind_r_paw",
     ):
         require(marker in profile_source, f"anatomy profiles missing {marker}")
+    handoff_source = (anatomy / "skin_and_bones.py").read_text(encoding="utf-8")
+    for marker in (
+        "SBF_HUMANOID_YPLUS_V1", "CANONICAL_Y_PLUS",
+        "SBF_TO_FORGE_ROLE", "require_canonical_yplus",
+    ):
+        require(marker in handoff_source, f"Skin & Bones handoff missing {marker}")
     for relative in (
         "docs/CREATURE_ANATOMY_PROFILE_CONTRACT.md",
         "docs/QUADRUPED_CANONICAL_FIXTURE_REQUIREMENTS.md",
@@ -970,14 +989,14 @@ def check_repository_hygiene() -> None:
 
 
 def main() -> int:
-    print("DREADSTONE ANIMATION FORGE v4.1.1 STATIC VALIDATION")
+    print("DREADSTONE ANIMATION FORGE v5.0.0 STATIC VALIDATION")
     print("Blender is not imported; runtime acceptance remains separate.")
 
     sources: dict[str, str] = {}
     trees: dict[str, ast.Module] = {}
     checks: list[tuple[str, Callable[[], None]]] = [
         ("all contract package modules exist", check_module_files),
-        ("Blender extension manifest exists and matches v4.1.1", check_extension_manifest),
+        ("Blender extension manifest exists and matches v5.0.0", check_extension_manifest),
         ("all Python modules parse with ast.parse", lambda: check_parse(sources)),
         ("all Python modules compile with py_compile", check_compile),
         ("add-on/deformation version and build contracts", lambda: check_versions(trees)),

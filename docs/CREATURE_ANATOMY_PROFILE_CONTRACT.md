@@ -2,7 +2,7 @@
 
 Contract schema: `dreadstone.creature_anatomy_profile.v1`
 
-Forge 4.1 separates creature anatomy from a concrete rig. An **anatomy
+Forge 4.2 separates creature anatomy from a concrete rig. An **anatomy
 profile** defines semantic roles, variable-length chains, bilateral groups,
 symmetry, contacts, orientation, damage-region templates, aliases, and feature
 capabilities. A **rig profile** defines one exact production skeleton: canonical
@@ -12,9 +12,10 @@ quadruped rig profile.
 
 ## Built-in profiles
 
-- `DSB_HUMANOID_V1` owns the aliases and requirements previously embedded in
-  the humanoid analyzer. Its `-Y` forward and `+Z` up convention preserves the
-  existing generator result.
+- `DSB_HUMANOID_V1` consumes the exact Skin & Bones Forge 2.1.0 production rig
+  `SBF_HUMANOID_YPLUS_V1`: 21 deform bones, `+Y` forward, `+Z` up, and
+  top-level `root` motion. Humanoid generators do not accept unversioned or
+  `-Y` rigs.
 - `DSB_QUADRUPED_MAMMAL_DIGITIGRADE_V1` describes dog-, wolf-, hyena-, big-cat-,
   and demon-hound-like digitigrade mammals. It has separate front-left,
   front-right, hind-left, and hind-right limb families and four unique paw
@@ -43,9 +44,10 @@ Readiness values include `HUMANOID_READY`, `QUADRUPED_READY`,
 Analysis stores character-local signed forward, up, and left axes, the measured
 head-facing direction, ground-root and body-center roles, the root-motion
 carrier, and contact roles. Axes must be orthogonal and the head must lie in the
-declared forward direction relative to the body. Existing humanoid generators
-use the same orientation accessor and retain their `-Y/+Z` result. Downstream
-systems must consume this record instead of independently inferring forward.
+declared forward direction relative to the body. Humanoid generators use the
+Skin & Bones contract as the authority and produce only `+Y/+Z` motion.
+Downstream systems must consume this record instead of independently inferring
+forward or applying a 180° yaw correction.
 
 ## Mapping, validation, and capabilities
 
@@ -59,8 +61,8 @@ themselves.
 
 Capabilities separate `supported` from `productionReady`. The quadruped schema
 declares future idle, gait, turn, attack, reaction, jaw, tail, and ear concepts,
-but none are production-ready in 4.1. Humanoid Walk, Collapse, Hurt, and Mace
-Guard keep their existing gates. Forge reports a capability error instead of
+but none are production-ready in 4.2. Humanoid Idle, Walk, Collapse, Hurt, and
+Mace Guard require the Skin & Bones canonical rig. Forge reports a capability error instead of
 generating motion for an incompatible anatomy. No unfinished quadruped
 generator is exposed.
 
@@ -78,10 +80,9 @@ requirements, diagnostics, and analyzer version. It is restored after save and
 reopen.
 
 Action-package and damage-manifest schemas receive an additive `anatomy`
-object. A package without anatomy metadata follows the prior humanoid
-compatibility path and is explicitly labeled `legacy`; absence alone is not an
-import failure. Existing files, operators, aliases, and `map_bones` remain
-available through compatibility accessors.
+object. A humanoid Action package must identify `SBF_HUMANOID_YPLUS_V1` and
+`+Y`; missing, unversioned, or `-Y` humanoid metadata is an import failure.
+Animation Forge does not import, duplicate, or own the canonical rig asset.
 
 Profile payload migration accepts the internal pre-v1 shape and revalidates it
 as v1. Metadata migration accepts the previous rig-analysis record without

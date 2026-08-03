@@ -79,6 +79,7 @@ class AnimationLibraryContractTests(unittest.TestCase):
             '"daf.animation_library_export"',
             '"daf.animation_library_import"',
             "_draw_walk_animation",
+            "_draw_idle_animation",
             "_draw_death_animation",
             "_draw_hurt_animation",
         ):
@@ -97,6 +98,54 @@ class AnimationLibraryContractTests(unittest.TestCase):
         ]
         self.assertEqual(calls[0], "_draw_vip_animation_library")
         self.assertIn("_draw_walk_animation", calls)
+        self.assertIn("_draw_idle_animation", calls)
+
+    def test_humanoid_idle_is_a_first_class_yplus_loop(self):
+        for marker in (
+            '"IDLE": "DSB_DRAFT_Idle"',
+            'class DAF_OT_idle(Operator):',
+            'bl_idname = "daf.idle"',
+            'action["dsb_root_motion_policy"] = "IN_PLACE"',
+            'action["dsb_forward_axis"] = "+Y"',
+        ):
+            self.assertIn(marker, self.addon)
+        self.assertIn('"IDLE": (', self.service)
+        self.assertIn('if "idle" in lower:', self.service)
+        self.assertIn('"daf.idle"', self.panels)
+
+    def test_idle_supports_a_reusable_additive_draft_base_pose(self):
+        for marker in (
+            'ANIMATION_BASE_POSE_SCHEMA = "dreadstone.animation_base_pose.v1"',
+            "def store_animation_base_pose(",
+            "def apply_animation_base_pose(",
+            "def clear_animation_base_pose(",
+            'bl_idname = "daf.edit_animation_base_pose"',
+            'bl_idname = "daf.capture_animation_base_pose"',
+            'bl_idname = "daf.cancel_animation_base_pose"',
+            'bl_idname = "daf.clear_animation_base_pose"',
+            'apply_animation_base_pose(armature, mapping, "IDLE")',
+            'action["dsb_animation_base_pose_kind"] = "IDLE"',
+        ):
+            self.assertIn(marker, self.addon)
+        for marker in (
+            "Draft Base Pose",
+            '"daf.edit_animation_base_pose"',
+            '"daf.capture_animation_base_pose"',
+            '"daf.cancel_animation_base_pose"',
+            '"daf.clear_animation_base_pose"',
+            "Capture Base + Preview Idle",
+        ):
+            self.assertIn(marker, self.panels)
+        self.assertIn("icon='POSE_HLT'", self.panels)
+        self.assertNotIn("icon='POSE_DATA'", self.panels)
+
+        store = next(
+            node
+            for node in ast.parse(self.addon).body
+            if isinstance(node, ast.FunctionDef)
+            and node.name == "store_animation_base_pose"
+        )
+        self.assertIn("role == 'root'", ast.unparse(store))
 
     def test_vip_panel_reuses_one_compatibility_inventory(self):
         self.assertIn("available_actions=actions", self.panels)

@@ -63,7 +63,7 @@ Run the Creature Anatomy Profile acceptance first:
 blender --background --factory-startup --python tests/blender_creature_anatomy_acceptance.py
 ```
 
-It must preserve the exact Animate Anything humanoid mapping, keep analysis
+It must preserve the exact Skin & Bones `SBF_HUMANOID_YPLUS_V1` mapping, keep analysis
 non-mutating, resolve the four architectural quadruped limbs and contacts,
 reject missing/duplicate/reversed/ambiguous cases, persist through save/reopen,
 round-trip additive Action-package anatomy metadata, and unregister cleanly.
@@ -134,7 +134,7 @@ should be performed only when requested.
 ## Release archive
 
 `python scripts/build_release.py` validates first and writes
-`dist/Dreadstone_Animation_Forge_v4_1_1.zip`. Every package Python file is
+`dist/Dreadstone_Animation_Forge_v5_0_0.zip`. Every package Python file is
 discovered recursively, so new service/operator modules must appear in the
 archive automatically. `dist/`, bytecode, caches, Blender backups, and
 temporary extraction directories are generated artifacts and are not

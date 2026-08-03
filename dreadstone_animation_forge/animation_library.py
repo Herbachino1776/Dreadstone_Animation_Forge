@@ -12,10 +12,12 @@ from pathlib import Path
 import bpy
 
 from .anatomy import persistence as anatomy_persistence
+from .anatomy import skin_and_bones as sbf_handoff
+from .anatomy.profiles import HUMANOID_PROFILE_ID
 
 
 ANIMATION_CLIP_SCHEMA = "dreadstone.animation_clip.v1"
-ANIMATION_LIBRARY_BUILD_ID = "2026-08-02.death-terminal-grounding-4.1.1"
+ANIMATION_LIBRARY_BUILD_ID = "2026-08-03.idle-panel-draw-5.0.0"
 
 CLIP_ID_PROPERTY = "dsb_animation_clip_id"
 CLIP_SCHEMA_PROPERTY = "dsb_animation_clip_schema"
@@ -32,6 +34,7 @@ CLIP_SOURCE_SCHEMA_PROPERTY = "dsb_imported_source_schema"
 CLIP_SOURCE_BUILD_PROPERTY = "dsb_imported_source_build"
 
 DRAFT_ACTION_NAMES = {
+    "IDLE": "DSB_DRAFT_Idle",
     "WALK": "DSB_DRAFT_Walk",
     "DEATH": "DSB_DRAFT_Death",
     "HURT_LEFT": "DSB_DRAFT_Hurt_LEFT",
@@ -67,6 +70,12 @@ COMMON_SETTING_FIELDS = (
 )
 
 KIND_SETTING_FIELDS = {
+    "IDLE": (
+        "idle_seconds",
+        "idle_breathing",
+        "idle_weight_shift",
+        "idle_arm_tuck",
+    ),
     "WALK": (
         "walk_style",
         "walk_frames",
@@ -280,6 +289,8 @@ def infer_action_kind(action):
         return "HURT_RIGHT"
     if any(token in lower for token in ("death", "collapse", "faceplant")):
         return "DEATH"
+    if "idle" in lower:
+        return "IDLE"
     if any(token in lower for token in ("walk", "locomotion")):
         return "WALK"
     if "crawl" in lower:
@@ -291,7 +302,7 @@ def infer_action_kind(action):
 
 def action_category(action):
     kind = infer_action_kind(action)
-    if kind in {"WALK", "CRAWL"}:
+    if kind in {"IDLE", "WALK", "CRAWL"}:
         return "LOCOMOTION"
     if kind in {"DEATH", "HURT_LEFT", "HURT_RIGHT"}:
         return "REACTIONS"
@@ -410,13 +421,35 @@ def stamp_action_metadata(
         sort_keys=True,
         separators=(",", ":"),
     )
-    anatomy = anatomy_persistence.export_metadata(armature, infer_legacy=True)
+    anatomy = anatomy_persistence.export_metadata(armature, infer_legacy=False)
+    if anatomy is None:
+        raise RuntimeError(
+            "Run ANALYZE CREATURE ANATOMY before saving or approving animation."
+        )
+    if str(anatomy.get("orientation", {}).get("forwardAxis", "")) != "+Y":
+        raise RuntimeError("Animation metadata must use Blender +Y forward.")
     action[CLIP_ANATOMY_PROFILE_PROPERTY] = json.dumps(
         anatomy,
         sort_keys=True,
         separators=(",", ":"),
     )
     action[CLIP_ANATOMY_LEGACY_PROPERTY] = bool(anatomy.get("legacy", False))
+    action["dsb_forward_axis"] = "+Y"
+    action["dsb_up_axis"] = "+Z"
+    if str(anatomy.get("profileId", "")) == HUMANOID_PROFILE_ID:
+        rig_contract = sbf_handoff.require_canonical_yplus(
+            armature,
+            label="Humanoid animation metadata",
+        )
+        if (
+            str(anatomy.get("canonicalRigVersion", ""))
+            != sbf_handoff.SBF_CANONICAL_RIG_VERSION
+        ):
+            raise RuntimeError(
+                "Re-run ANALYZE CREATURE ANATOMY for the current Skin & Bones rig."
+            )
+        action["dsb_canonical_rig_version"] = str(rig_contract["rigVersion"])
+        action["dsb_root_motion_bone"] = str(rig_contract["rootBone"])
     action[CLIP_SETTINGS_PROPERTY] = json.dumps(
         _settings_snapshot(settings, kind),
         sort_keys=True,
@@ -500,17 +533,56 @@ def compatibility_report(action, armature, *, armature_context=None):
                 json.loads(raw_anatomy)
             )
         except (TypeError, ValueError, json.JSONDecodeError):
-            warnings.append(
-                "The source anatomy metadata is unreadable; legacy rig checks remain authoritative."
+            errors.append(
+                "The source anatomy metadata is unreadable; Y+ compatibility cannot be verified."
             )
     else:
-        warnings.append(
-            "The clip has no anatomy metadata and is treated as legacy humanoid-compatible."
+        errors.append(
+            "The clip has no Y+ anatomy metadata; legacy animation clips are unsupported."
         )
-        source_anatomy = anatomy_persistence.legacy_humanoid_metadata()
     target_anatomy = context["targetAnatomy"]
-    if source_anatomy is not None and target_anatomy is not None:
+    source_profile_id = ""
+    if source_anatomy is not None:
         source_profile_id = str(source_anatomy.get("profileId", ""))
+        source_forward = str(
+            source_anatomy.get("orientation", {}).get("forwardAxis", "")
+        )
+        if source_forward != "+Y":
+            errors.append(
+                f"Source animation forward axis is {source_forward or '<missing>'}; +Y is required."
+            )
+        if source_profile_id == HUMANOID_PROFILE_ID:
+            source_rig = str(source_anatomy.get("canonicalRigVersion", ""))
+            if source_rig != sbf_handoff.SBF_CANONICAL_RIG_VERSION:
+                errors.append(
+                    "Source humanoid animation was not authored for "
+                    + sbf_handoff.SBF_CANONICAL_RIG_VERSION
+                    + "."
+                )
+            try:
+                sbf_handoff.require_canonical_yplus(
+                    armature,
+                    label="Humanoid clip import",
+                )
+            except RuntimeError as exc:
+                errors.append(
+                    str(exc)
+                )
+        elif not source_profile_id:
+            errors.append("Source animation has no Creature Anatomy Profile ID.")
+        elif target_anatomy is None:
+            errors.append(
+                "Target character must be analyzed before non-humanoid clip import."
+            )
+    if target_anatomy is not None:
+        target_forward = str(
+            target_anatomy.get("orientation", {}).get("forwardAxis", "")
+        )
+        if target_forward != "+Y":
+            errors.append(
+                f"Target character forward axis is {target_forward or '<missing>'}; +Y is required."
+            )
+    if source_anatomy is not None and target_anatomy is not None:
         target_profile_id = str(target_anatomy.get("profileId", ""))
         if (
             source_profile_id
@@ -1100,14 +1172,7 @@ def import_action_clip(context, armature, filepath):
         action[CLIP_OWNER_PROPERTY] = armature.name
         action[CLIP_SCHEMA_PROPERTY] = ANIMATION_CLIP_SCHEMA
         action[CLIP_BUILD_PROPERTY] = ANIMATION_LIBRARY_BUILD_ID
-        anatomy_legacy = not bool(source.get("anatomy"))
-        if anatomy_legacy:
-            action[CLIP_ANATOMY_PROFILE_PROPERTY] = json.dumps(
-                anatomy_persistence.legacy_humanoid_metadata(),
-                sort_keys=True,
-                separators=(",", ":"),
-            )
-        action[CLIP_ANATOMY_LEGACY_PROPERTY] = anatomy_legacy
+        action[CLIP_ANATOMY_LEGACY_PROPERTY] = False
         action["dsb_approved"] = True
         action["dsb_draft"] = False
         action.use_fake_user = True

@@ -63,13 +63,17 @@ class AnimationGroundingPackTests(unittest.TestCase):
         self.assertIn("action['dsb_terminal_contact_baked'] = True", collapse)
 
         bake = ast.unparse(self.function("bake_grounded_death_motion"))
-        self.assertIn("hips.keyframe_insert('location'", bake)
+        self.assertIn("carrier.keyframe_insert('location'", bake)
         self.assertIn("set_bone_location_linear", bake)
         self.assertIn("terminal_height_ratio", bake)
         self.assertIn("maximum_terminal_height_ratio", bake)
+        self.assertIn("torso_contact_bounds", bake)
+        self.assertIn("terminal_torso_height_ratio", bake)
 
         ground = ast.unparse(self.function("ground_current_pose"))
         self.assertIn("float(target_lowest_z) - float(minimum.z)", ground)
+        self.assertIn("carrier_role", ground)
+        self.assertIn("torso_safety_lift", ground)
         self.assertNotIn("max(0.0", ground)
 
     def test_instant_lifeless_death_style_is_first_class(self) -> None:
@@ -92,6 +96,8 @@ class AnimationGroundingPackTests(unittest.TestCase):
         validator = ast.unparse(self.function("validate_death_floor_action"))
         self.assertIn("dsb_terminal_contact_baked", validator)
         self.assertIn("terminal body height ratio", validator)
+        self.assertIn("terminal torso height ratio", validator)
+        self.assertIn("terminal {role} remains", validator)
 
 
 if __name__ == "__main__":

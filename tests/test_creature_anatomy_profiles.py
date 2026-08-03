@@ -36,6 +36,7 @@ orientation = importlib.import_module("dreadstone_animation_forge.anatomy.orient
 validation = importlib.import_module("dreadstone_animation_forge.anatomy.validation")
 detection = importlib.import_module("dreadstone_animation_forge.anatomy.detection")
 persistence = importlib.import_module("dreadstone_animation_forge.anatomy.persistence")
+skin_and_bones = importlib.import_module("dreadstone_animation_forge.anatomy.skin_and_bones")
 
 
 Bone = model.BoneRecord
@@ -121,6 +122,8 @@ class ProfileSchemaTests(unittest.TestCase):
         for profile in profiles.registry.all():
             self.assertEqual(profile.schema, schema.PROFILE_SCHEMA)
             self.assertEqual(schema.validate_profile(profile), [])
+        self.assertEqual(profiles.HUMANOID_PROFILE.forward_axis, "+Y")
+        self.assertTrue(profiles.HUMANOID_PROFILE.capabilities["idle"].production_ready)
 
     def test_required_optional_variable_chains_symmetry_contacts_and_aliases(self):
         profile = profiles.QUADRUPED_PROFILE
@@ -257,6 +260,7 @@ class PersistenceTests(unittest.TestCase):
         self.assertEqual(legacy["profileId"], profiles.HUMANOID_PROFILE_ID)
         self.assertTrue(legacy["legacy"])
         self.assertEqual(legacy["analyzerVersion"], "LEGACY_PRE_ANATOMY_PROFILE")
+        self.assertEqual(legacy["orientation"]["forwardAxis"], "+Y")
 
     def test_v0_rig_analysis_migrates_without_losing_mapping(self):
         migrated = persistence.migrate_metadata({
@@ -267,6 +271,55 @@ class PersistenceTests(unittest.TestCase):
         self.assertEqual(migrated["roleMapping"], {"hips": "Pelvis"})
         self.assertTrue(migrated["legacy"])
         self.assertEqual(migrated["orientation"]["forwardAxis"], "-Y")
+
+
+class SkinAndBonesHandoffTests(unittest.TestCase):
+    class Bones(dict):
+        pass
+
+    class Data:
+        def __init__(self, names):
+            self.bones = SkinAndBonesHandoffTests.Bones(
+                (name, object()) for name in names
+            )
+
+    class Armature(dict):
+        def __init__(self, properties):
+            super().__init__(properties)
+            self.data = SkinAndBonesHandoffTests.Data(
+                skin_and_bones.CANONICAL_HUMANOID_MAPPING.values()
+            )
+            self.children = []
+            self.children_recursive = []
+
+    def canonical_armature(self, *, forward="+Y"):
+        mapping = {
+            sbf_role: skin_and_bones.CANONICAL_HUMANOID_MAPPING[forge_role]
+            for sbf_role, forge_role in skin_and_bones.SBF_TO_FORGE_ROLE.items()
+        }
+        return self.Armature({
+            "sbf_canonical_rig_version": skin_and_bones.SBF_CANONICAL_RIG_VERSION,
+            "sbf_forward_axis": forward,
+            "sbf_up_axis": "+Z",
+            "sbf_root_bone": "root",
+            "sbf_orientation_revision": 1,
+            "sbf_orientation_state": "CANONICAL_Y_PLUS",
+            "sbf_rig_contract_version": 1,
+            "sbf_unit_scale_meters": 1.0,
+            "sbf_bone_mapping": json.dumps(mapping),
+        })
+
+    def test_exact_contract_translates_all_twenty_one_roles(self):
+        armature = self.canonical_armature()
+        contract = skin_and_bones.require_canonical_yplus(armature)
+        self.assertTrue(contract["canonicalYPlus"])
+        self.assertEqual(contract["roleMapping"], skin_and_bones.CANONICAL_HUMANOID_MAPPING)
+        self.assertEqual(len(contract["roleMapping"]), 21)
+
+    def test_y_minus_contract_is_rejected_without_migration(self):
+        armature = self.canonical_armature(forward="-Y")
+        with self.assertRaisesRegex(RuntimeError, "no longer supports Y- rigs"):
+            skin_and_bones.require_canonical_yplus(armature)
 
 
 if __name__ == "__main__":

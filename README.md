@@ -1,6 +1,6 @@
 # Dreadstone Animation Forge
 
-Dreadstone Animation Forge `4.1.1` is a proprietary Blender add-on for
+Dreadstone Animation Forge `5.0.0` is a proprietary Blender add-on for
 animation drafting and compatibility-preserving damage authoring. The supported
 release runtime is Blender `5.1.2`.
 
@@ -22,10 +22,25 @@ editing, overwriting, deleting, and renaming saved Actions. Individual clips
 can be exported as native `.blend` Action packages and imported onto another
 humanoid after bone/hierarchy compatibility checks.
 
-Forge 4.1.1 adds a low-profile terminal contact pass to every generated death
-Action, including rigs whose deform bones disable rotation inheritance. The new
-**Instant Unconscious** style removes the protective brace and struggle beats,
-then reaches its fully limp, floor-aligned pose in under a second by default.
+Forge 4.2 adopts the Skin & Bones Forge 2.1 canonical humanoid contract:
+`SBF_HUMANOID_YPLUS_V1`, Blender `+Y` forward, `+Z` up, and top-level `root`
+motion. Animation Forge consumes the rig metadata and semantic bone mapping
+already stored on a Skin & Bones character; it does not import or bundle a
+separate canonical GLB. Unversioned and `-Y` humanoids are rejected and must be
+re-rigged or converted in Skin & Bones.
+
+Humanoids now have a seamless in-place breathing/weight-shift idle. Walk,
+hurt, guard, and death generators all use the same `+Y` basis with direct
+canonical knee and elbow defaults. Every generated death is grounded through
+the top-level `root` and validates pelvis, lower spine, middle spine, and chest
+contact so an arm touching the floor cannot leave the torso floating.
+
+Idle also has an animation-only **Draft Base Pose**. Keep the canonical high
+A-pose as the rigging/rest pose, click **Edit Idle Base Pose**, relax or pose
+the mapped bones in Pose Mode, then click **Capture Base + Preview Idle**.
+Breathing and weight shift are regenerated on top of that stance; the root is
+excluded so the loop remains in place. **Arm Drop to Sides** is an optional
+additive shortcut and now lowers both complete arm chains correctly for `+Y`.
 
 Forge 4.1 introduces centralized, versioned Creature Anatomy Profiles. The
 existing humanoid mapping remains compatible, while the first digitigrade
@@ -35,16 +50,16 @@ an architecture milestone: it does not expose production quadruped gait,
 attack, reaction, paw-IK, or damage generators, and its synthetic test rig is
 not a canonical production skeleton.
 
-Animation Forge 4.0 adds independent left/right elbow-flex polish, longer
+Animation Forge also includes independent left/right elbow-flex polish, longer
 natural head-guard and cowering timing, editable cover/wrap/hunch/tuck controls,
-and a selectable legacy Zombie-Insect Attack generator shape. Forearm-to-head
-coverage is advisory and never blocks approval or export. Portable 3.20.1
-Action clips—including previously saved zombie attacks—import with their
-keyframes and original settings payload unchanged.
+and a selectable Zombie-Insect Attack generator shape. Forearm-to-head
+coverage is advisory and never blocks approval or export. Portable humanoid
+Action clips must carry the current Skin & Bones canonical rig and `+Y`
+anatomy metadata.
 
 ## Install and open
 
-1. Download `Dreadstone_Animation_Forge_v4_1_1.zip`.
+1. Download `Dreadstone_Animation_Forge_v5_0_0.zip`.
 2. In Blender choose **Edit > Preferences > Add-ons > Install from Disk**.
 3. Select the ZIP without extracting it and enable the add-on.
 4. In the 3D Viewport press `N`, open **Dreadstone**, then choose
@@ -101,10 +116,10 @@ Older authored deformation and gore records remain migration-readable. Legacy
 factory recipe identifiers are internal compatibility data only and are not
 offered as authoring presets.
 
-Older Action packages without anatomy metadata remain importable through the
-labeled legacy humanoid path. AnyTop is an optional external research reference,
-not a Forge dependency; Forge bundles no ML runtime, checkpoint, dataset, or
-third-party motion source. See the
+Humanoid Action packages without exact `SBF_HUMANOID_YPLUS_V1` and `+Y`
+anatomy metadata are intentionally rejected. AnyTop is an optional external
+research reference, not a Forge dependency; Forge bundles no ML runtime,
+checkpoint, dataset, or third-party motion source. See the
 [AnyTop feasibility audit](docs/research/ANYTOP_FEASIBILITY_AUDIT.md).
 
 ## License

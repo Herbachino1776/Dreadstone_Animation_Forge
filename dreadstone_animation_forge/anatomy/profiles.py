@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from .schema import AnatomyProfile, CapabilitySpec, ChainSpec, ProfileRegistry
+from .skin_and_bones import CANONICAL_HUMANOID_MAPPING
 
 
 HUMANOID_PROFILE_ID = "DSB_HUMANOID_V1"
@@ -63,31 +64,6 @@ HUMANOID_ALIASES = {
 }
 
 
-ANIMATE_ANYTHING_PROFILE = {
-    "root": "root",
-    "hips": "body",
-    "spine": "body_top0",
-    "spine_mid": "body_top1",
-    "chest": "body_top2",
-    "neck": "neck",
-    "head": "head",
-    "shoulder_l": "shoulder_left",
-    "upper_arm_l": "arm_left_top",
-    "lower_arm_l": "arm_left_bot",
-    "hand_l": "arm_left_hand",
-    "shoulder_r": "shoulder_right",
-    "upper_arm_r": "arm_right_top",
-    "lower_arm_r": "arm_right_bot",
-    "hand_r": "arm_right_hand",
-    "thigh_l": "leg_left_top",
-    "shin_l": "leg_left_bot",
-    "foot_l": "leg_left_foot",
-    "thigh_r": "leg_right_top",
-    "shin_r": "leg_right_bot",
-    "foot_r": "leg_right_foot",
-}
-
-
 def _cap(supported=True, ready=False, roles=()):
     return CapabilitySpec(bool(supported), bool(ready), tuple(roles))
 
@@ -96,7 +72,7 @@ HUMANOID_PROFILE = AnatomyProfile(
     profile_id=HUMANOID_PROFILE_ID,
     creature_class="HUMANOID",
     locomotion_class="BIPED_PLANTIGRADE",
-    forward_axis="-Y",
+    forward_axis="+Y",
     up_axis="+Z",
     required_roles=(
         "hips", "thigh_l", "shin_l", "foot_l", "thigh_r", "shin_r", "foot_r",
@@ -123,7 +99,7 @@ HUMANOID_PROFILE = AnatomyProfile(
     contact_roles=("foot_l", "foot_r"),
     aliases=HUMANOID_ALIASES,
     capabilities={
-        "idle": _cap(True, False),
+        "idle": _cap(True, True, ("hips", "spine", "chest", "head")),
         "walk": _cap(True, True, ("hips", "thigh_l", "thigh_r", "foot_l", "foot_r")),
         "collapse": _cap(True, True, ("hips", "spine", "head")),
         "hurt": _cap(True, True, ("hips", "spine", "upper_arm_l", "upper_arm_r")),
@@ -280,7 +256,7 @@ def capability_status(
 
 
 __all__ = (
-    "ANIMATE_ANYTHING_PROFILE",
+    "CANONICAL_HUMANOID_MAPPING",
     "HUMANOID_ALIASES",
     "HUMANOID_PROFILE",
     "HUMANOID_PROFILE_ID",

@@ -2,7 +2,7 @@
 
 Schema: `dreadstone.progressive_damage_sites.v1`
 
-Forge release: `4.1.1`
+Forge release: `5.0.0`
 Supported production authoring runtime: Blender `5.1.2`
 
 ## Product boundary

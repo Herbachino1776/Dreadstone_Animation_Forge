@@ -1,14 +1,14 @@
-# Dreadstone Animation Forge 4.1.1 — User Workflow Guide
+# Dreadstone Animation Forge 5.0.0 — User Workflow Guide
 
-- Release archive: `Dreadstone_Animation_Forge_v4_1_1.zip`
+- Release archive: `Dreadstone_Animation_Forge_v5_0_0.zip`
 - Supported release runtime: Blender 5.1.2
 - Damage authoring model: Damage Keys → child Stamp alternatives → strong macros
 - Reuse model: topology-independent Damage Blueprints
 
-## 1. Install Dreadstone Animation Forge 4.1.1
+## 1. Install Dreadstone Animation Forge 5.0.0
 
 In Blender choose **Edit > Preferences > Add-ons > Install from Disk**, select
-`Dreadstone_Animation_Forge_v4_1_1.zip` without extracting it, and enable
+`Dreadstone_Animation_Forge_v5_0_0.zip` without extracting it, and enable
 **Dreadstone Animation Forge**.
 
 ## 2. Open the Dreadstone panel
@@ -237,13 +237,47 @@ are the normal presentation controls.
 
 ## 11. Author and approve animation drafts
 
-The animation workspace remains independent of Damage Key previews. Analyze the
-rig, draft walk/collapse/hurt or mace head-guard actions, inspect them, and use
-the explicit Version/Approve controls. Generated actions do not animate bone
-scale. Approved Actions and NLA-used Actions are protected.
+The animation workspace remains independent of Damage Key previews. Humanoid
+animation requires a character rigged by Skin & Bones Forge 2.1.0+ with
+`SBF_HUMANOID_YPLUS_V1` metadata. The canonical contract is Blender `+Y`
+forward, `+Z` up, anatomical right `+X`, and top-level `root` motion. Animation
+Forge reads the stored rig metadata and mapping; there is no canonical GLB to
+import here. Old `-Y` and unversioned humanoids are unsupported—convert or
+re-rig them in Skin & Bones first.
 
-Every death style now bakes signed floor alignment through the Action and ends
-in a validated low-profile body-contact pose. Select **Instant Unconscious** for
+Analyze the rig, draft idle/walk/collapse/hurt or mace head-guard Actions,
+inspect them, and use the explicit Version/Approve controls. Generated Actions
+do not animate bone scale. Approved Actions and NLA-used Actions are protected.
+
+Use **Generate Humanoid Idle** for a seamless in-place breathing and
+weight-shift loop. Idle and Walk use `+Y` consistently, with no hidden 180° yaw
+or legacy knee/elbow inversion.
+
+Keep the Skin & Bones high A-pose as the canonical rigging/rest pose. To give
+an animation a more natural stance without changing skinning, use Idle's
+**Draft Base Pose**:
+
+1. Click **EDIT IDLE BASE POSE**. Forge temporarily detaches Action/NLA
+   playback, resets to the stored Idle base (or the canonical rest pose), and
+   enters Pose Mode.
+2. Rotate or move the mapped body bones into the relaxed stance you want.
+   The top-level `root` is deliberately excluded from capture.
+3. Click **CAPTURE BASE + PREVIEW IDLE**. Forge stores the pose by semantic
+   role and regenerates breathing and weight shift on top of it.
+4. Use **CANCEL EDIT** to discard uncaptured adjustments or **CLEAR BASE** to
+   return Idle to the canonical rest pose.
+
+**Arm Drop to Sides** remains a quick additive control. Increasing it lowers
+both complete arm chains toward the torso from the captured base pose. Editing
+a manual Idle base resets this slider to zero to prevent an accidental double
+drop. The rest armature and weights are never changed. The same stored-pose
+contract is designed for later weapon-ready, guard, and attack generators,
+while Idle is its first exposed consumer.
+
+Every death style bakes signed floor alignment through the top-level `root` and
+ends in a validated low-profile torso-contact pose. Pelvis, lower spine, middle
+spine, and chest are measured independently, so hand or arm contact cannot
+hide a floating torso. Select **Instant Unconscious** for
 an immediate, brace-free loss of consciousness; its separate duration control
 defaults to a fully limp terminal contact in under one second. Chest Hold,
 Faceplant, and Knees First retain their authored lead-ins but use the same final
@@ -297,14 +331,13 @@ the verification described in section 13.
 For cross-character reuse, choose a folder and press **EXPORT SELECTED**. Forge
 writes a native `.blend` Action clip plus a JSON manifest. On another humanoid,
 choose that `.blend` under **Clip to Import** and press **IMPORT TO CHARACTER**.
-Every animated bone must exist and retain the same parent chain. Different rest
-orientations, proportions, or pose-bone translation channels produce warnings
-because they may need manual adjustment, but do not block an otherwise
-compatible import.
+Both humanoids must carry the exact `SBF_HUMANOID_YPLUS_V1` mapping and `+Y`
+orientation. Every animated bone must exist and retain the same parent chain.
+Different proportions or pose-bone translation channels can produce warnings.
 
-New packages add anatomy and orientation metadata. Older packages without it
-retain the same compatibility checks through an explicitly labeled legacy
-humanoid route. AnyTop and other external motion systems are not installed or
+Humanoid packages without current anatomy, canonical-rig, and `+Y` orientation
+metadata are rejected; Forge never guesses or rotates an old Action. AnyTop and
+other external motion systems are not installed or
 run inside Blender; candidate BVH must be rights-cleared, imported in isolation,
 retargeted through the anatomy profile, validated, and artist-approved before it
 becomes a protected production Action.
@@ -382,14 +415,13 @@ authoring asset.
 - Anatomy reports `PROFILE_AMBIGUOUS`: choose an explicit profile only after
   checking **SHOW ROLE MAPPING**. The override selects a validator; it does not
   make an incomplete rig ready.
-- Anatomy reports `ORIENTATION_AMBIGUOUS`: verify character-local forward points
-  from body toward head, the declared axes are orthogonal, and the head/tail are
-  not reversed. Do not compensate independently in a generator.
+- A humanoid reports a canonical-rig or orientation blocker: install Skin &
+  Bones Forge 2.1.0+, then convert or re-rig the character as
+  `SBF_HUMANOID_YPLUS_V1`. Animation Forge accepts only Blender `+Y` forward.
 - A quadruped generator is unavailable: this release defines capabilities and
   validation but intentionally does not ship production quadruped motion.
-- A legacy Action package warns about missing anatomy: the existing humanoid
-  import path remains supported; save a newly analyzed/exported package to add
-  current metadata.
+- An old humanoid Action package is rejected: regenerate it for the Skin &
+  Bones `SBF_HUMANOID_YPLUS_V1` rig. Forge does not maintain a `-Y` import path.
 
 ## Complete public button inventory
 
@@ -429,7 +461,9 @@ authoring asset.
 - Anatomy: **ANALYZE CREATURE ANATOMY**, profile override selector,
   **SHOW ROLE MAPPING**, **CLEAR PROFILE OVERRIDE**, **Advanced Anatomy
   Mapping**.
-- Animation: **Generate / Refresh Walk Draft**,
+- Animation: **Generate Humanoid Idle**, **Generate / Refresh Walk Draft**,
+  **EDIT IDLE BASE POSE**, **CAPTURE BASE + PREVIEW IDLE**, **CANCEL EDIT**,
+  **CLEAR BASE**,
   **Generate / Refresh Death Draft**, flank-hurt draft controls,
   **Generate Three Mace Head-Guard Drafts**, **Preview Guard_Active**,
   **Validate Mace Head-Guard Drafts**, **VIP ANIMATION LIBRARY**, **PLAY**,

@@ -26,6 +26,7 @@ if str(ROOT) not in sys.path:
 import dreadstone_animation_forge as addon  # noqa: E402
 from dreadstone_animation_forge import animation_library  # noqa: E402
 from dreadstone_animation_forge.anatomy import blender_adapter, persistence  # noqa: E402
+from dreadstone_animation_forge.anatomy import skin_and_bones  # noqa: E402
 from dreadstone_animation_forge.anatomy.orientation import orientation_contract  # noqa: E402
 from dreadstone_animation_forge.anatomy.profiles import (  # noqa: E402
     QUADRUPED_PROFILE,
@@ -107,9 +108,9 @@ def make_quadruped(name, *, sign=1.0, missing=""):
     return armature
 
 
-def make_animate_anything_humanoid():
-    data = bpy.data.armatures.new("DSB_Humanoid_Compatibility_Data")
-    armature = bpy.data.objects.new("DSB_Humanoid_Compatibility", data)
+def make_skin_and_bones_humanoid():
+    data = bpy.data.armatures.new("SBF_Humanoid_YPlus_Data")
+    armature = bpy.data.objects.new("SBF_Humanoid_YPlus", data)
     bpy.context.collection.objects.link(armature)
     activate(armature)
     bpy.ops.object.mode_set(mode="EDIT")
@@ -120,7 +121,7 @@ def make_animate_anything_humanoid():
         ("body_top1", "body_top0", (0, 0, 1.2), (0, 0, 1.4)),
         ("body_top2", "body_top1", (0, 0, 1.4), (0, 0, 1.6)),
         ("neck", "body_top2", (0, 0, 1.6), (0, 0, 1.75)),
-        ("head", "neck", (0, 0, 1.75), (0, -0.05, 2.0)),
+        ("head", "neck", (0, 0, 1.75), (0, 0.05, 2.0)),
     )
     for value in specs:
         add_bone(data, *value)
@@ -131,8 +132,21 @@ def make_animate_anything_humanoid():
         add_bone(data, f"arm_{side}_hand", f"arm_{side}_bot", (x * 2.4, 0, 1.1), (x * 2.7, 0, 1.05))
         add_bone(data, f"leg_{side}_top", "body", (x, 0, 0.9), (x, 0, 0.55))
         add_bone(data, f"leg_{side}_bot", f"leg_{side}_top", (x, 0, 0.55), (x, 0, 0.18))
-        add_bone(data, f"leg_{side}_foot", f"leg_{side}_bot", (x, 0, 0.18), (x, -0.22, 0.08))
+        add_bone(data, f"leg_{side}_foot", f"leg_{side}_bot", (x, 0, 0.18), (x, 0.22, 0.08))
     bpy.ops.object.mode_set(mode="OBJECT")
+    mapping = {
+        sbf_role: skin_and_bones.CANONICAL_HUMANOID_MAPPING[forge_role]
+        for sbf_role, forge_role in skin_and_bones.SBF_TO_FORGE_ROLE.items()
+    }
+    armature["sbf_canonical_rig_version"] = skin_and_bones.SBF_CANONICAL_RIG_VERSION
+    armature["sbf_forward_axis"] = "+Y"
+    armature["sbf_up_axis"] = "+Z"
+    armature["sbf_root_bone"] = "root"
+    armature["sbf_orientation_revision"] = 1
+    armature["sbf_orientation_state"] = "CANONICAL_Y_PLUS"
+    armature["sbf_rig_contract_version"] = 1
+    armature["sbf_unit_scale_meters"] = 1.0
+    armature["sbf_bone_mapping"] = json.dumps(mapping, sort_keys=True)
     return armature
 
 
@@ -233,23 +247,21 @@ def run():
     require(not duplicate_report["ready"], "Duplicate paw ownership incorrectly passed validation.")
     require(duplicate_report["status"] == "PROFILE_INCOMPLETE", duplicate_report)
 
-    humanoid = make_animate_anything_humanoid()
-    legacy_mapping = addon.map_bones(humanoid, settings)
+    humanoid = make_skin_and_bones_humanoid()
+    canonical_mapping = addon.map_bones(humanoid, settings)
     humanoid_result = analyze(humanoid, "AUTO")
     require(humanoid_result["profileId"] == "DSB_HUMANOID_V1", humanoid_result)
     require(humanoid_result["readinessStatus"] == "HUMANOID_READY", humanoid_result)
-    require(humanoid_result["roleMapping"] == legacy_mapping, {
-        "legacy": legacy_mapping,
+    require(humanoid_result["roleMapping"] == canonical_mapping, {
+        "canonical": canonical_mapping,
         "profile": humanoid_result["roleMapping"],
     })
-    require(humanoid_result["orientation"]["forwardAxis"] == "-Y", humanoid_result)
-    settings.facing = "POS_Y"
+    require(humanoid_result["orientation"]["forwardAxis"] == "+Y", humanoid_result)
     require(
-        persistence.load_metadata(humanoid)["orientation"]["forwardAxis"] == "+Y",
-        "Changing the legacy humanoid facing control did not refresh authoritative orientation.",
+        humanoid_result["canonicalRigVersion"]
+        == skin_and_bones.SBF_CANONICAL_RIG_VERSION,
+        humanoid_result,
     )
-    settings.facing = "NEG_Y"
-    require(persistence.load_metadata(humanoid)["orientation"]["forwardAxis"] == "-Y", humanoid_result)
 
     missing = make_quadruped("DSB_SYNTHETIC_QUAD_MISSING_LIMB", missing="front_l_lower")
     missing_result = analyze(missing, "QUADRUPED_DIGITIGRADE")
@@ -314,7 +326,7 @@ def run():
         "mappingDigest": reopened["mappingDigest"],
         "contacts": reopened["orientation"]["contactBones"],
         "orientation": reopened["orientation"],
-        "humanoidMappingCompatibility": "EXACT",
+        "humanoidCanonicalRig": skin_and_bones.SBF_CANONICAL_RIG_VERSION,
         "actionPackage": package,
         "failuresProved": [
             "MISSING_LIMB_CHAIN",

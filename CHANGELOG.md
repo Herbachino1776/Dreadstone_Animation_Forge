@@ -1,5 +1,47 @@
 # Changelog
 
+## 5.0.0
+
+- Fixed the Humanoid Idle panel terminating at **Edit Idle Base Pose** in
+  Blender 5.1. The button used an invalid `POSE_DATA` icon identifier, causing
+  Blender to abort the remainder of the panel draw and shorten the scrollbar.
+- Added a regression assertion that all Idle Base Pose controls use the valid
+  `POSE_HLT` icon path so the Generate button and every section below Idle
+  remain reachable.
+
+## 4.2.1
+
+- Corrected the Skin & Bones `+Y` left/right signs for **Arm Drop to Sides**;
+  increasing the control now lowers both complete arm chains from the A-pose
+  toward the torso.
+- Added a non-destructive, animation-only **Draft Base Pose** workflow for
+  Humanoid Idle. Artists can enter Pose Mode, relax or reposition mapped
+  bones, capture the stance, and immediately preview breathing and weight
+  shift layered over it without altering the armature rest pose or weights.
+- Stored captured poses by semantic bone role with exact
+  `SBF_HUMANOID_YPLUS_V1` provenance, excluded the top-level `root` to preserve
+  in-place motion, and stamped generated Idle Actions with their base-pose
+  recipe. The generic pose store is ready for later weapon, guard, and attack
+  generators.
+- Added live Townsman acceptance for manual base-pose capture, additive Idle
+  motion, arm lowering, seamless endpoints, and zero root drift.
+
+## 4.2.0
+
+- Adopted Skin & Bones Forge 2.1.0's exact
+  `SBF_HUMANOID_YPLUS_V1` handoff. Humanoid authoring now consumes stored rig
+  metadata and the 21-role semantic mapping without importing a canonical GLB.
+- Made Blender `+Y` the sole humanoid forward direction. Unversioned and `-Y`
+  rigs or Action clips are rejected with a Skin & Bones conversion message;
+  legacy yaw and knee/elbow inversion defaults are gone.
+- Added a seamless, in-place humanoid idle with breathing, weight shift, arm
+  drop, protected draft/approval metadata, and portable clip support.
+- Reworked terminal death grounding to translate the top-level `root` and
+  validate the weighted pelvis/lower-spine/middle-spine/chest regions
+  independently, preventing arm contact from masking a floating torso.
+- Added live Townsman-derived Skin & Bones acceptance for Idle, Walk, Hurt, and
+  all four Death styles.
+
 ## 4.1.1
 
 - Added a signed, per-frame death grounding bake so generated collapse Actions

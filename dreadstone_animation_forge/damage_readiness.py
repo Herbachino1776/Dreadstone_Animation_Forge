@@ -236,7 +236,7 @@ def _resolve_contract_objects(contract):
 
 
 def _resolve_authoring_state_objects(context, state):
-    from . import detect_animate_anything_profile, map_bones
+    from . import detect_canonical_humanoid_profile, map_bones
 
     source_name = str(state.get("source_object_name", ""))
     source = bpy.data.objects.get(source_name)
@@ -275,20 +275,20 @@ def _resolve_authoring_state_objects(context, state):
             f"(expected {expected.get('vertex_group_sha256')}, current {current.get('vertex_group_sha256')})."
         )
     mapping = map_bones(armature, context.scene.daf_settings)
-    profile = "animate_anything_testman" if detect_animate_anything_profile(armature) else "generic_humanoid"
+    profile = "skin_and_bones_yplus_v1" if detect_canonical_humanoid_profile(armature) else "generic_humanoid"
     return armature, [source], mapping, profile, "authoring_state_recovery"
 
 
 def resolve_source_readiness_inputs(context):
     """Resolve preserved source objects before considering current selection."""
 
-    from . import detect_animate_anything_profile, map_bones, related
+    from . import detect_canonical_humanoid_profile, map_bones, related
 
     contract = load_source_readiness_contract()
     if contract is not None:
         armature, meshes = _resolve_contract_objects(contract)
         mapping = map_bones(armature, context.scene.daf_settings)
-        profile = "animate_anything_testman" if detect_animate_anything_profile(armature) else "generic_humanoid"
+        profile = "skin_and_bones_yplus_v1" if detect_canonical_humanoid_profile(armature) else "generic_humanoid"
         return armature, meshes, mapping, profile, "stored_source_contract"
 
     authoring_state = _load_json_text(AUTHORING_STATE_TEXT_NAME)
@@ -314,7 +314,7 @@ def resolve_source_readiness_inputs(context):
         raise RuntimeError("No original source armature was found for Source Damage Readiness.")
     armature = max(armatures, key=lambda obj: len(obj.data.bones))
     mapping = map_bones(armature, context.scene.daf_settings)
-    profile = "animate_anything_testman" if detect_animate_anything_profile(armature) else "generic_humanoid"
+    profile = "skin_and_bones_yplus_v1" if detect_canonical_humanoid_profile(armature) else "generic_humanoid"
     return armature, meshes, mapping, profile, "source_selection"
 
 

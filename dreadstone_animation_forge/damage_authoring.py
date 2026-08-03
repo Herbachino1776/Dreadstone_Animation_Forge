@@ -1829,7 +1829,7 @@ def _export_asset_inactive(context, settings, state):
             + "; ".join(validation["errors"][:4])
         )
     output_dir = _resolve_export_directory(settings)
-    base = re.sub(r"[^A-Za-z0-9._-]+", "_", settings.damage_authoring_filename.strip() or "testman_damage_v001")
+    base = re.sub(r"[^A-Za-z0-9._-]+", "_", settings.damage_authoring_filename.strip() or "humanoid_damage_v001")
     glb_path = os.path.join(output_dir, base + ".glb")
     manifest_path = os.path.join(output_dir, base + ".json")
     validation_path = os.path.join(output_dir, base + "_validation.json")
