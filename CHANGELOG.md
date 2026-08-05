@@ -1,5 +1,31 @@
 # Changelog
 
+## 5.1.2
+
+- Fixed Approved Animation Pack export rejecting visually correct local
+  Actions that retained pre-canonical `-Y` or unversioned anatomy metadata.
+  Export now refreshes approved Action provenance from the selected exact Skin
+  & Bones Y+ rig before validation, without changing curves, timing, or poses.
+- Approval metadata errors are no longer silently ignored.
+
+## 5.1.1
+
+- Extended animation-only Draft Base Poses to Flank Hurt and Mace Guard.
+  One shared Hurt base drives both left/right drafts; one shared Mace Guard
+  base drives all three guard variants. Capture and clear regenerate every
+  affected preview while preserving the rest rig, weights, and root.
+
+## 5.1.0
+
+- Reversed the canonical Walk thigh swing and heel/toe roll basis so the
+  airborne foot travels from rear `-Y` to forward `+Y` on
+  `SBF_HUMANOID_YPLUS_V1`, instead of visually walking backward.
+- Corrected the Walk **Elbow Bend** and optional elbow pose-polish signs.
+  Increasing positive bend now increases anatomical flexion by default;
+  **Invert Elbows** is again a true exceptional-direction override.
+- Added live Townsman trajectory and joint-angle acceptance proving forward
+  foot travel, increasing elbow flex, and unchanged grounded Death behavior.
+
 ## 5.0.0
 
 - Fixed the Humanoid Idle panel terminating at **Edit Idle Base Pose** in

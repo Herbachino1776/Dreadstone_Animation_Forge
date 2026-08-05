@@ -1303,6 +1303,40 @@ def _draw_walk_animation(layout, settings):
     approve.kind = "WALK"
 
 
+def _draw_animation_base_pose(layout, settings, kind, label, preview_label):
+    base_pose = layout.box()
+    base_pose.label(text="Draft Base Pose", icon='POSE_HLT')
+    base_pose.label(text=f"{label}: manual pose first; motion is added on top.")
+    row = base_pose.row(align=True)
+    edit = row.operator(
+        "daf.edit_animation_base_pose",
+        text=f"Edit {label} Base",
+        icon='POSE_HLT',
+    )
+    edit.kind = kind
+    capture = row.operator(
+        "daf.capture_animation_base_pose",
+        text=preview_label,
+        icon='REC',
+    )
+    capture.kind = kind
+    row = base_pose.row(align=True)
+    cancel = row.operator(
+        "daf.cancel_animation_base_pose",
+        text="Cancel Edit",
+        icon='X',
+    )
+    cancel.kind = kind
+    clear = row.operator(
+        "daf.clear_animation_base_pose",
+        text="Clear Base",
+        icon='TRASH',
+    )
+    clear.kind = kind
+    base_pose.label(text=settings.animation_base_pose_status, icon='INFO')
+    base_pose.label(text="Root excluded; rest rig and skinning stay unchanged.")
+
+
 def _draw_idle_animation(layout, settings):
     idle = _animation_foldout(
         layout,
@@ -1317,36 +1351,13 @@ def _draw_idle_animation(layout, settings):
     idle.prop(settings, "idle_breathing", slider=True)
     idle.prop(settings, "idle_weight_shift", slider=True)
     idle.prop(settings, "idle_arm_tuck", slider=True)
-    base_pose = idle.box()
-    base_pose.label(text="Draft Base Pose", icon='POSE_HLT')
-    base_pose.label(text="Pose the relaxed starting stance; Idle motion is added on top.")
-    edit = base_pose.operator(
-        "daf.edit_animation_base_pose",
-        text="Edit Idle Base Pose",
-        icon='POSE_HLT',
+    _draw_animation_base_pose(
+        idle,
+        settings,
+        "IDLE",
+        "Idle",
+        "Capture Base + Preview Idle",
     )
-    edit.kind = "IDLE"
-    capture = base_pose.operator(
-        "daf.capture_animation_base_pose",
-        text="Capture Base + Preview Idle",
-        icon='REC',
-    )
-    capture.kind = "IDLE"
-    row = base_pose.row(align=True)
-    cancel = row.operator(
-        "daf.cancel_animation_base_pose",
-        text="Cancel Edit",
-        icon='X',
-    )
-    cancel.kind = "IDLE"
-    clear = row.operator(
-        "daf.clear_animation_base_pose",
-        text="Clear Base",
-        icon='TRASH',
-    )
-    clear.kind = "IDLE"
-    base_pose.label(text=settings.animation_base_pose_status, icon='INFO')
-    base_pose.label(text="The root is excluded so the preview remains in place.")
     idle.operator("daf.idle", text="Generate / Refresh Idle Draft", icon='ACTION')
     approve = idle.operator(
         "daf.approve_draft",
@@ -1421,6 +1432,13 @@ def _draw_hurt_animation(layout, settings):
             "hurt_head_recoil", "hurt_recovery",
         ):
             advanced.prop(settings, name, slider=True)
+    _draw_animation_base_pose(
+        hurt,
+        settings,
+        "HURT",
+        "Flank Hurt",
+        "Capture + Preview Both",
+    )
     row = hurt.row(align=True)
     row.operator("daf.hurt_left", text="Generate / Refresh Left", icon='ACTION')
     row.operator("daf.hurt_right", text="Generate / Refresh Right", icon='ACTION')
@@ -1457,6 +1475,13 @@ def _draw_mace_guard_animation(layout, settings):
         "mace_guard_end_release",
     ):
         pose.prop(settings, name, slider=True)
+    _draw_animation_base_pose(
+        guard,
+        settings,
+        "MACE_GUARD",
+        "Mace Guard",
+        "Capture + Preview Guards",
+    )
     guard.operator(
         "daf.generate_mace_head_guards",
         text="Generate / Refresh Three Mace Head-Guard Drafts",

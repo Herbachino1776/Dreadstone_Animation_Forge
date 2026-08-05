@@ -201,7 +201,7 @@ def main():
 
     report = {
         "status": "PASS",
-        "forgeVersion": "5.0.0",
+        "forgeVersion": "5.1.2",
         "blenderVersion": bpy.app.version_string,
         "sourceBlend": source_blend,
         "rebuiltPreparedKeys": rebuilt,

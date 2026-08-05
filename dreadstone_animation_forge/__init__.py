@@ -1,7 +1,7 @@
 bl_info = {
     "name": "Dreadstone Animation Forge",
     "author": "Dreadstone Black",
-    "version": (5, 0, 0),
+    "version": (5, 1, 2),
     "blender": (3, 6, 0),
     "location": "3D Viewport > Sidebar > Dreadstone",
     "description": "Animation authoring, protected damage assets, and registered-region trauma-field shape-key authoring.",
@@ -515,7 +515,7 @@ def apply_arm_hand_pose_polish(arm, mapping, settings, side_axis):
     # Independent elbow flex is applied around the same character-space axis
     # used by generated limb bends. This keeps the control useful on rigs whose
     # local forearm axes differ while still respecting Invert Elbows.
-    elbow_sign = -1.0 if settings.invert_elbows else 1.0
+    elbow_sign = 1.0 if settings.invert_elbows else -1.0
     rotate(
         arm,
         mapping,
@@ -972,19 +972,16 @@ def approve_draft_action(context, kind):
         action["dsb_guard_action_id"] = final_name
     action.use_fake_user = True
 
-    try:
-        armature = find_armature(context)
-        if not armature.animation_data:
-            armature.animation_data_create()
-        armature.animation_data.action = action
-        animation_library.mark_approved(
-            action,
-            armature,
-            settings,
-            kind,
-        )
-    except Exception:
-        pass
+    armature = find_armature(context)
+    if not armature.animation_data:
+        armature.animation_data_create()
+    armature.animation_data.action = action
+    animation_library.mark_approved(
+        action,
+        armature,
+        settings,
+        kind,
+    )
 
     return action
 
@@ -1892,7 +1889,7 @@ class DAFSettings(PropertyGroup):
     last_damage_manifest_path: StringProperty(default="", options={'HIDDEN'})
     last_damage_validation_path: StringProperty(default="", options={'HIDDEN'})
 
-    # Trauma Field Authoring v5.0.0.
+    # Trauma Field Authoring v5.1.2.
     deformation_region: EnumProperty(
         name="Active Region",
         items=_deformation_region_items,
@@ -3670,6 +3667,42 @@ def clear_animation_base_pose(armature, kind):
     return removed
 
 
+def stamp_action_base_pose(action, armature, kind):
+    payload = animation_base_pose(armature, kind)
+    if payload:
+        action["dsb_animation_base_pose_kind"] = str(kind)
+        action["dsb_animation_base_pose_json"] = json.dumps(
+            payload,
+            sort_keys=True,
+            separators=(",", ":"),
+        )
+    else:
+        for key in (
+            "dsb_animation_base_pose_kind",
+            "dsb_animation_base_pose_json",
+        ):
+            if key in action:
+                del action[key]
+
+
+def regenerate_animation_base_pose_preview(kind):
+    """Refresh every draft that consumes the selected shared base pose."""
+
+    operations = {
+        "IDLE": ("idle",),
+        "HURT": ("hurt_left", "hurt_right"),
+        "MACE_GUARD": ("generate_mace_head_guards",),
+    }.get(str(kind))
+    if operations is None:
+        raise RuntimeError(f"Unsupported Draft Base Pose kind: {kind}.")
+    for identifier in operations:
+        result = getattr(bpy.ops.daf, identifier)()
+        if 'FINISHED' not in result:
+            raise RuntimeError(
+                f"{kind} preview regeneration failed at daf.{identifier}."
+            )
+
+
 def _begin_animation_base_pose_session(context, armature, mapping, kind):
     if context.mode != 'OBJECT':
         bpy.ops.object.mode_set(mode='OBJECT')
@@ -3801,10 +3834,7 @@ class DAF_OT_capture_animation_base_pose(Operator):
             bpy.ops.object.select_all(action='DESELECT')
             armature.select_set(True)
             context.view_layer.objects.active = armature
-            if self.kind == "IDLE":
-                result = bpy.ops.daf.idle()
-                if 'FINISHED' not in result:
-                    raise RuntimeError("Idle preview regeneration failed.")
+            regenerate_animation_base_pose_preview(self.kind)
             settings.animation_base_pose_status = (
                 f"{self.kind} BASE CAPTURED - {len(payload['bones'])} bones"
             )
@@ -3870,10 +3900,7 @@ class DAF_OT_clear_animation_base_pose(Operator):
             bpy.ops.object.select_all(action='DESELECT')
             armature.select_set(True)
             context.view_layer.objects.active = armature
-            if self.kind == "IDLE":
-                result = bpy.ops.daf.idle()
-                if 'FINISHED' not in result:
-                    raise RuntimeError("Idle preview regeneration failed.")
+            regenerate_animation_base_pose_preview(self.kind)
             settings.animation_base_pose_status = (
                 f"{self.kind} Base Pose cleared"
             )
@@ -3980,21 +4007,7 @@ class DAF_OT_idle(Operator):
                 settings,
                 "IDLE",
             )
-            base_pose = animation_base_pose(armature, "IDLE")
-            if base_pose:
-                action["dsb_animation_base_pose_kind"] = "IDLE"
-                action["dsb_animation_base_pose_json"] = json.dumps(
-                    base_pose,
-                    sort_keys=True,
-                    separators=(",", ":"),
-                )
-            else:
-                for key in (
-                    "dsb_animation_base_pose_kind",
-                    "dsb_animation_base_pose_json",
-                ):
-                    if key in action:
-                        del action[key]
+            stamp_action_base_pose(action, armature, "IDLE")
             context.scene.frame_set(start)
             self.report(
                 {'INFO'},
@@ -4037,7 +4050,7 @@ class DAF_OT_walk(Operator):
 
             fwd, side, up = vectors(s, arm)
             knee_sign = -1.0 if s.invert_knees else 1.0
-            elbow_sign = -1.0 if s.invert_elbows else 1.0
+            elbow_sign = 1.0 if s.invert_elbows else -1.0
             values = style_walk_values(s)
 
             # Contact, down, passing, up, opposite contact, then close the loop.
@@ -4058,8 +4071,12 @@ class DAF_OT_walk(Operator):
                 context.scene.frame_set(frame)
                 reset_pose(arm, m)
 
-                left_thigh = values["stride_l"] * lt_r
-                right_thigh = values["stride_r"] * rt_r
+                # Skin & Bones faces +Y. The canonical thigh basis needs the
+                # opposite swing sign from the retired Y- generator so the
+                # airborne foot travels from rear to front instead of front
+                # to rear.
+                left_thigh = -values["stride_l"] * lt_r
+                right_thigh = -values["stride_r"] * rt_r
                 left_knee = values["knee_l"] * lk_r
                 right_knee = values["knee_r"] * rk_r
 
@@ -4077,11 +4094,11 @@ class DAF_OT_walk(Operator):
 
                 rotate(
                     arm, m, "foot_l", side,
-                    s.foot_roll * lf_r - left_knee * knee_sign * .20 - left_thigh * .08
+                    -s.foot_roll * lf_r - left_knee * knee_sign * .20 - left_thigh * .08
                 )
                 rotate(
                     arm, m, "foot_r", side,
-                    s.foot_roll * rf_r - right_knee * knee_sign * .20 - right_thigh * .08
+                    -s.foot_roll * rf_r - right_knee * knee_sign * .20 - right_thigh * .08
                 )
 
                 arm_left = -(left_thigh / max(abs(values["stride_l"]), 1.0)) * values["arms"]
@@ -4524,6 +4541,7 @@ def generate_flank_hurt(context, operator, pain_side):
         frame = start + round((end - start) * time_ratio)
         context.scene.frame_set(frame)
         reset_pose(arm, m)
+        apply_animation_base_pose(arm, m, "HURT")
 
         severity = s.hurt_severity * intensity
         torso = s.hurt_torso_bend * severity
@@ -4605,6 +4623,7 @@ def generate_flank_hurt(context, operator, pain_side):
         s,
         "HURT_LEFT" if pain_side == "LEFT" else "HURT_RIGHT",
     )
+    stamp_action_base_pose(action, arm, "HURT")
     context.scene.frame_set(start)
     operator.report({'INFO'}, f"Refreshed {action.name}. Approve it only when finished.")
     return {'FINISHED'}
@@ -5011,6 +5030,7 @@ def generate_mace_guard_action(context, kind):
     for frame, intensity in stages:
         context.scene.frame_set(frame)
         reset_pose(arm, mapping)
+        apply_animation_base_pose(arm, mapping, "MACE_GUARD")
         _apply_mace_guard_pose(arm, mapping, settings, variant, intensity)
         apply_arm_hand_pose_polish(arm, mapping, settings, side_axis)
         key_pose(arm, mapping, frame)
@@ -5041,6 +5061,7 @@ def generate_mace_guard_action(context, kind):
         settings,
         kind,
     )
+    stamp_action_base_pose(action, arm, "MACE_GUARD")
     validation = validate_mace_guard_action(context, action, arm, mapping)
     action["dsb_guard_validation_status"] = validation["status"]
     action["dsb_guard_validation_json"] = json.dumps(validation, sort_keys=True)
@@ -6146,6 +6167,21 @@ class DAF_OT_build_approved_pack(Operator):
                 armature,
                 label="Animation pack export",
             )
+            # Approved Actions can predate the Skin & Bones Y+ metadata
+            # contract even when their curves were authored and visually
+            # verified on this exact canonical rig. Refresh provenance from
+            # the selected rig before compatibility validation. This mutates
+            # Action metadata only; keyframes, timing, and poses are untouched.
+            for action in actions:
+                kind = str(action.get("dsb_approved_kind", "")) or infer_approved_kind(
+                    action.name
+                )
+                animation_library.mark_approved(
+                    action,
+                    armature,
+                    settings,
+                    kind,
+                )
             compatibility = [
                 animation_library.compatibility_report(action, armature)
                 for action in actions
@@ -6617,7 +6653,7 @@ class DAF_PT_legacy_panel(Panel):
             layout,
             s,
             "ui_deformation_authoring_open",
-            "Trauma Field Authoring v5.0.0",
+            "Trauma Field Authoring v5.1.2",
         )
         if opened:
             configure_property_box(box)

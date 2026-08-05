@@ -169,7 +169,7 @@ def main():
 
     report = {
         "status": "PASS",
-        "forgeVersion": "5.0.0",
+        "forgeVersion": "5.1.2",
         "guardCount": len(guards),
         "protectedHoldSeconds": protected_hold,
         "coverageWarnings": len(record["warnings"]),

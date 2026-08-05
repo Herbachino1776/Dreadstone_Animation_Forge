@@ -209,6 +209,15 @@ def main():
         settings,
         "WALK",
     )
+    stale_anatomy = json.loads(
+        str(walk[animation_library.CLIP_ANATOMY_PROFILE_PROPERTY])
+    )
+    stale_anatomy["orientation"]["forwardAxis"] = "-Y"
+    stale_anatomy.pop("canonicalRigVersion", None)
+    walk[animation_library.CLIP_ANATOMY_PROFILE_PROPERTY] = json.dumps(
+        stale_anatomy,
+        sort_keys=True,
+    )
 
     # Prove the armature-only selection can discover a sibling skinned mesh and
     # does not create or require a DSB safe-size wrapper.
@@ -234,6 +243,18 @@ def main():
         require(
             "FINISHED" in build_result,
             f"Wrapperless pack build failed: {sorted(build_result)}",
+        )
+        refreshed_anatomy = json.loads(
+            str(walk[animation_library.CLIP_ANATOMY_PROFILE_PROPERTY])
+        )
+        require(
+            refreshed_anatomy["orientation"]["forwardAxis"] == "+Y",
+            refreshed_anatomy,
+        )
+        require(
+            refreshed_anatomy["canonicalRigVersion"]
+            == skin_and_bones.SBF_CANONICAL_RIG_VERSION,
+            refreshed_anatomy,
         )
         glb_path = Path(output_directory) / "native_rig_animation_pack.glb"
         manifest_path = glb_path.with_suffix(".json")

@@ -20,7 +20,7 @@
 
 ## Documentation definition of done
 
-- [ ] Version and `Dreadstone_Animation_Forge_v5_0_0.zip` match everywhere.
+- [ ] Version and `Dreadstone_Animation_Forge_v5_1_2.zip` match everywhere.
 - [ ] Creature Anatomy Profile schema/detection/orientation/persistence tests,
       the exact humanoid mapping comparison, malformed quadruped cases, and
       extracted-ZIP Blender registration pass.

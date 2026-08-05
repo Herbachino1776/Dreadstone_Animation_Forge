@@ -82,6 +82,12 @@ def quaternion_gap(first, second):
     )
 
 
+def joint_bend_angle(first, joint, last):
+    upper = (joint - first).normalized()
+    lower = (last - joint).normalized()
+    return float(upper.angle(lower))
+
+
 def main():
     args = arguments()
     bpy.ops.import_scene.gltf(filepath=str(Path(args.source_glb).resolve()))
@@ -206,14 +212,82 @@ def main():
     root = armature.pose.bones[mapping["root"]]
     idle_root_drift = float(root.location.length)
     require(idle_root_drift <= 1.0e-7, f"Idle root drift: {root.location[:]}.")
-    settings.pose_polish_enabled = True
 
+    shared_base_pose_actions = {
+        "HURT": ("HURT_LEFT", "HURT_RIGHT"),
+        "MACE_GUARD": (
+            "MACE_GUARD_TWO_ARM",
+            "MACE_GUARD_LEFT_ARM",
+            "MACE_GUARD_RIGHT_ARM",
+        ),
+    }
+    for kind, action_kinds in shared_base_pose_actions.items():
+        edit_result = bpy.ops.daf.edit_animation_base_pose(kind=kind)
+        require("FINISHED" in edit_result, edit_result)
+        addon.rotate(
+            armature,
+            mapping,
+            "chest",
+            Vector((0.0, 1.0, 0.0)),
+            2.0,
+        )
+        capture_result = bpy.ops.daf.capture_animation_base_pose(kind=kind)
+        require("FINISHED" in capture_result, capture_result)
+        for action_kind in action_kinds:
+            generated = bpy.data.actions.get(addon.DRAFT_ACTION_NAMES[action_kind])
+            require(generated is not None, f"{kind} did not generate {action_kind}.")
+            require(
+                str(generated.get("dsb_animation_base_pose_kind", "")) == kind,
+                dict(generated.items()),
+            )
+        clear_result = bpy.ops.daf.clear_animation_base_pose(kind=kind)
+        require("FINISHED" in clear_result, clear_result)
+
+    # The default Y+ elbow direction must increase anatomical flexion, and the
+    # airborne right foot must travel from rear (-Y) toward front (+Y).
+    settings.pose_polish_enabled = False
+    settings.invert_elbows = False
+    settings.elbow_bend = 0.0
     walk_result = bpy.ops.daf.walk()
     require("FINISHED" in walk_result, walk_result)
     walk = bpy.data.actions.get(addon.DRAFT_ACTION_NAMES["WALK"])
     require(walk is not None, "Walk Action was not generated.")
     walk_start, walk_end = addon.action_frame_bounds(walk)
     passing_frame = int(round(walk_start + (walk_end - walk_start) * 0.25))
+    bpy.context.scene.frame_set(passing_frame)
+    straight_shoulder = pose_point(armature, mapping["upper_arm_r"], "head")
+    straight_elbow = pose_point(armature, mapping["lower_arm_r"], "head")
+    straight_wrist = pose_point(armature, mapping["hand_r"], "head")
+    straight_elbow_angle = joint_bend_angle(
+        straight_shoulder,
+        straight_elbow,
+        straight_wrist,
+    )
+
+    settings.elbow_bend = 30.0
+    walk_result = bpy.ops.daf.walk()
+    require("FINISHED" in walk_result, walk_result)
+    walk = bpy.data.actions.get(addon.DRAFT_ACTION_NAMES["WALK"])
+    require(walk is not None, "Bent-elbow Walk Action was not generated.")
+    walk_start, walk_end = addon.action_frame_bounds(walk)
+    passing_frame = int(round(walk_start + (walk_end - walk_start) * 0.25))
+    opposite_contact_frame = int(round(
+        walk_start + (walk_end - walk_start) * 0.5
+    ))
+    right_foot_y = {}
+    for label, frame in (
+        ("rear", int(round(walk_start))),
+        ("passing", passing_frame),
+        ("front", opposite_contact_frame),
+    ):
+        bpy.context.scene.frame_set(frame)
+        right_foot_y[label] = float(
+            pose_point(armature, mapping["foot_r"], "head").y
+        )
+    require(
+        right_foot_y["rear"] < right_foot_y["passing"] < right_foot_y["front"],
+        f"Y+ swing foot did not travel rear-to-front: {right_foot_y}",
+    )
     bpy.context.scene.frame_set(passing_frame)
     hip = pose_point(armature, mapping["thigh_r"], "head")
     knee = pose_point(armature, mapping["shin_r"], "head")
@@ -222,7 +296,13 @@ def main():
     shoulder = pose_point(armature, mapping["upper_arm_r"], "head")
     elbow = pose_point(armature, mapping["lower_arm_r"], "head")
     wrist = pose_point(armature, mapping["hand_r"], "head")
-    elbow_backward_offset = float(((shoulder.y + wrist.y) * 0.5) - elbow.y)
+    bent_elbow_angle = joint_bend_angle(shoulder, elbow, wrist)
+    elbow_flex_gain = bent_elbow_angle - straight_elbow_angle
+    require(
+        elbow_flex_gain > math.radians(15.0),
+        f"Elbow Bend did not increase natural flexion: {elbow_flex_gain}",
+    )
+    settings.pose_polish_enabled = True
 
     hurt_result = bpy.ops.daf.hurt_left()
     require("FINISHED" in hurt_result, hurt_result)
@@ -282,11 +362,15 @@ def main():
             "basePoseBones": len(base_payload["bones"]),
             "armDropHandRestZ": hand_rest_z,
             "armDropHandTuckedZ": hand_tucked_z,
+            "sharedBasePoseConsumers": sorted(shared_base_pose_actions),
         },
         "walk": {
             "action": walk.name,
             "rightKneeForwardOffsetAtPassingM": knee_forward_offset,
-            "rightElbowBackwardOffsetAtPassingM": elbow_backward_offset,
+            "rightFootY": right_foot_y,
+            "straightElbowAngleDegrees": math.degrees(straight_elbow_angle),
+            "bentElbowAngleDegrees": math.degrees(bent_elbow_angle),
+            "elbowFlexGainDegrees": math.degrees(elbow_flex_gain),
             "rightArmY": {
                 "shoulder": float(shoulder.y),
                 "elbow": float(elbow.y),
@@ -302,7 +386,6 @@ def main():
     output.write_text(json.dumps(report, indent=2, sort_keys=True) + "\n", encoding="utf-8")
     print("SBF_YPLUS_ANIMATION_ACCEPTANCE=" + json.dumps(report, sort_keys=True))
     require(knee_forward_offset > 0.02, report["walk"])
-    require(elbow_backward_offset > 0.005, report["walk"])
     require(not death_failures, death_failures)
     for record in deaths.values():
         require(record["groundCarrierBone"] == mapping["root"], record)

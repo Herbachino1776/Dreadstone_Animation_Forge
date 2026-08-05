@@ -124,7 +124,13 @@ class AnimationLibraryContractTests(unittest.TestCase):
             'bl_idname = "daf.cancel_animation_base_pose"',
             'bl_idname = "daf.clear_animation_base_pose"',
             'apply_animation_base_pose(armature, mapping, "IDLE")',
-            'action["dsb_animation_base_pose_kind"] = "IDLE"',
+            'apply_animation_base_pose(arm, m, "HURT")',
+            'apply_animation_base_pose(arm, mapping, "MACE_GUARD")',
+            'stamp_action_base_pose(action, armature, "IDLE")',
+            'stamp_action_base_pose(action, arm, "HURT")',
+            'stamp_action_base_pose(action, arm, "MACE_GUARD")',
+            '"HURT": ("hurt_left", "hurt_right")',
+            '"MACE_GUARD": ("generate_mace_head_guards",)',
         ):
             self.assertIn(marker, self.addon)
         for marker in (
@@ -134,6 +140,10 @@ class AnimationLibraryContractTests(unittest.TestCase):
             '"daf.cancel_animation_base_pose"',
             '"daf.clear_animation_base_pose"',
             "Capture Base + Preview Idle",
+            '"HURT"',
+            '"MACE_GUARD"',
+            "Capture + Preview Both",
+            "Capture + Preview Guards",
         ):
             self.assertIn(marker, self.panels)
         self.assertIn("icon='POSE_HLT'", self.panels)
@@ -146,6 +156,16 @@ class AnimationLibraryContractTests(unittest.TestCase):
             and node.name == "store_animation_base_pose"
         )
         self.assertIn("role == 'root'", ast.unparse(store))
+
+    def test_yplus_walk_moves_forward_and_positive_elbow_bend_flexes(self):
+        for marker in (
+            '-values["stride_l"] * lt_r',
+            '-values["stride_r"] * rt_r',
+            '-s.foot_roll * lf_r',
+            '-s.foot_roll * rf_r',
+            "elbow_sign = 1.0 if s.invert_elbows else -1.0",
+        ):
+            self.assertIn(marker, self.addon)
 
     def test_vip_panel_reuses_one_compatibility_inventory(self):
         self.assertIn("available_actions=actions", self.panels)

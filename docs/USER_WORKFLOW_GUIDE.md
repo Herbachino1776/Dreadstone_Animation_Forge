@@ -1,14 +1,14 @@
-# Dreadstone Animation Forge 5.0.0 — User Workflow Guide
+# Dreadstone Animation Forge 5.1.2 — User Workflow Guide
 
-- Release archive: `Dreadstone_Animation_Forge_v5_0_0.zip`
+- Release archive: `Dreadstone_Animation_Forge_v5_1_2.zip`
 - Supported release runtime: Blender 5.1.2
 - Damage authoring model: Damage Keys → child Stamp alternatives → strong macros
 - Reuse model: topology-independent Damage Blueprints
 
-## 1. Install Dreadstone Animation Forge 5.0.0
+## 1. Install Dreadstone Animation Forge 5.1.2
 
 In Blender choose **Edit > Preferences > Add-ons > Install from Disk**, select
-`Dreadstone_Animation_Forge_v5_0_0.zip` without extracting it, and enable
+`Dreadstone_Animation_Forge_v5_1_2.zip` without extracting it, and enable
 **Dreadstone Animation Forge**.
 
 ## 2. Open the Dreadstone panel
@@ -253,6 +253,13 @@ Use **Generate Humanoid Idle** for a seamless in-place breathing and
 weight-shift loop. Idle and Walk use `+Y` consistently, with no hidden 180° yaw
 or legacy knee/elbow inversion.
 
+The Walk cycle treats rear as Blender `-Y` and forward as Blender `+Y`: each
+airborne foot travels rear-to-front before contact. Positive **Elbow Bend**
+increases natural anatomical flexion on the Skin & Bones canonical rig. Leave
+**Invert Elbows** off unless deliberately authoring an exceptional rig or
+stylized reverse hinge. **Torso Lean** and every Death travel direction retain
+their existing `+Y` behavior.
+
 Keep the Skin & Bones high A-pose as the canonical rigging/rest pose. To give
 an animation a more natural stance without changing skinning, use Idle's
 **Draft Base Pose**:
@@ -271,8 +278,12 @@ an animation a more natural stance without changing skinning, use Idle's
 both complete arm chains toward the torso from the captured base pose. Editing
 a manual Idle base resets this slider to zero to prevent an accidental double
 drop. The rest armature and weights are never changed. The same stored-pose
-contract is designed for later weapon-ready, guard, and attack generators,
-while Idle is its first exposed consumer.
+contract is also exposed in **Flank Hurt Drafts** and **Mace Head-Guard
+Drafts**. Hurt uses one shared base for both left/right reactions. Mace Guard
+uses one shared base for its Two-Arm, Left-Arm, and Right-Arm variants. Their
+Capture buttons regenerate every affected preview; Clear returns that family
+to the canonical rest pose. Future weapon-ready and attack generators can use
+the same contract.
 
 Every death style bakes signed floor alignment through the top-level `root` and
 ends in a validated low-profile torso-contact pose. Pelvis, lower spine, middle
