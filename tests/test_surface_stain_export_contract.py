@@ -121,6 +121,17 @@ def fixture():
         meshes.append({"primitives": [{"material": 0}]})
         nodes.append({"name": raised_name, "mesh": raised_mesh_index})
         generated.append({"nodeName": raised_name})
+    rig_index = len(nodes)
+    root_bone_index = rig_index + 1
+    nodes.extend([
+        {
+            "name": "DSB_DAMAGE_RIG",
+            "children": [root_bone_index],
+            "extras": {"dsb_damage_role": "authoring_rig"},
+        },
+        {"name": "root"},
+    ])
+    nodes[0]["skin"] = 0
     gltf = {
         "asset": {"version": "2.0"},
         "nodes": nodes,
@@ -128,8 +139,21 @@ def fixture():
         "materials": materials,
         "images": images,
         "textures": textures,
+        "skins": [{"name": "DSB_DAMAGE_RIG", "joints": [root_bone_index]}],
     }
     manifest = {
+        "source": {
+            "object": "SBF_CLEAN_CHARACTER",
+            "armature": "SBF_ProductionRig",
+        },
+        "runtimeSkeleton": {
+            "armature": "DSB_DAMAGE_RIG",
+            "protectedSourceObject": "DSB_SOURCE_MODEL_PROTECTED",
+            "requiredBones": ["root"],
+        },
+        "runtimeAnimations": {"clips": [], "rejectedSourceActionCount": 0},
+        "intact": {"bodyCore": "ATTACHED_HOST", "attachedSegments": []},
+        "segments": [{"detachedObject": "DETACHED_HOST"}],
         "deformations": {
             "keys": keys,
             "generatedGoreMeshes": generated,

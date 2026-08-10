@@ -1,14 +1,14 @@
-# Dreadstone Animation Forge 5.1.2 — User Workflow Guide
+# Dreadstone Animation Forge 5.1.3 — User Workflow Guide
 
-- Release archive: `Dreadstone_Animation_Forge_v5_1_2.zip`
+- Release archive: `Dreadstone_Animation_Forge_v5_1_3.zip`
 - Supported release runtime: Blender 5.1.2
 - Damage authoring model: Damage Keys → child Stamp alternatives → strong macros
 - Reuse model: topology-independent Damage Blueprints
 
-## 1. Install Dreadstone Animation Forge 5.1.2
+## 1. Install Dreadstone Animation Forge 5.1.3
 
 In Blender choose **Edit > Preferences > Add-ons > Install from Disk**, select
-`Dreadstone_Animation_Forge_v5_1_2.zip` without extracting it, and enable
+`Dreadstone_Animation_Forge_v5_1_3.zip` without extracting it, and enable
 **Dreadstone Animation Forge**.
 
 ## 2. Open the Dreadstone panel
@@ -375,10 +375,26 @@ RGBA `COLOR_0` mask, PBR material, matching deformation morph, and explicit
 attached/detached/core binding. Forge parses the completed GLB and fails export
 if the portable stain, base material, or required raised/inlay node is missing.
 
+Complete Damage Asset ships `DSB_DAMAGE_RIG` as the runtime skeleton.
+`SBF_ProductionRig` remains source-authoring provenance and is not included in
+the runtime GLB. Approved source Actions are never gathered merely because
+Blender sees them in `bpy.data.actions`: Forge resolves owner/kind metadata,
+mirrors only provably compatible source-only clips, stages runtime-owned copies
+on `DSB_DAMAGE_RIG`, and applies an exact glTF Action filter. Drafts,
+unapproved clips, source duplicates, and source NLA are excluded. An
+incompatible approved source clip is an actionable export failure.
+
 ## 13. Clean reimport and verification
 
 Reimport the exported GLB into a clean Blender file. Confirm:
 
+- exactly one intended armature hierarchy exists and it is `DSB_DAMAGE_RIG`;
+- `SBF_ProductionRig`, `SBF_CLEAN_CHARACTER`, and
+  `DSB_SOURCE_MODEL_PROTECTED` are absent;
+- all intact skinned meshes resolve to `DSB_DAMAGE_RIG`, while detached rigid
+  pieces remain unskinned;
+- the exact approved runtime Action inventory plays and every channel targets
+  the damage rig or one of its bones;
 - the intact character is visible;
 - each Damage Key morph is present;
 - hybrid recipes have both `_RAISED` and `_INLAY` nodes for every required role;
@@ -433,6 +449,10 @@ authoring asset.
   validation but intentionally does not ship production quadruped motion.
 - An old humanoid Action package is rejected: regenerate it for the Skin &
   Bones `SBF_HUMANOID_YPLUS_V1` rig. Forge does not maintain a `-Y` import path.
+- Runtime animation audit fails: inspect the Action's `dsb_approved_kind`,
+  `dsb_animation_owner_rig`, anatomy, and active/NLA owner. Do not rename a
+  `_v001`/`_v002` suffix to force selection; repair approval/ownership metadata
+  or approve a compatible Action on `DSB_DAMAGE_RIG`.
 
 ## Complete public button inventory
 

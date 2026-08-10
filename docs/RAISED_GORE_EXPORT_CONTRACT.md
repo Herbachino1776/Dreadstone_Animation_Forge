@@ -152,6 +152,11 @@ material existed: every required node, material, RGBA `COLOR_0` accessor, morph
 target, ownership role, and explicit progressive-stage binding must resolve in
 the finished GLB.
 
+The same `dreadstone.final_glb_validation.v2` pass also validates the runtime
+skeleton/skin graph and exact approved animation inventory. Gore or stain
+skinning may reference only joints under `DSB_DAMAGE_RIG`; detached rigid gore
+remains unskinned according to its owning segment.
+
 **Rebuild All Generated Gore** recreates only Forge-owned final nodes from the
 saved recipe, current capture, and current deformation. It does not alter source
 topology, source materials, Damage Key weights, or Source Readiness.

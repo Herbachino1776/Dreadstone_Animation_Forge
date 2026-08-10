@@ -31,3 +31,8 @@ An exported package never embeds AnyTop files, checkpoints, datasets, Python
 environments, or model output provenance. External candidate motion must enter
 through a separately reviewed BVH/import process before it becomes a Forge
 draft or protected Action.
+
+This portable clip/package contract is distinct from Complete Damage export.
+For a Complete Damage GLB, approved clips are ownership-audited and staged only
+on `DSB_DAMAGE_RIG`; source-rig Actions cannot enter through Blender's global
+Action inventory. See `RUNTIME_DAMAGE_EXPORT_CONTRACT.md`.

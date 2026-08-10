@@ -1,5 +1,27 @@
 # Changelog
 
+## 5.1.3
+
+- Fixed Complete Damage export allowing Blender 5.1.2 `ACTIONS` mode to scan
+  every bone Action when a single armature was selected. Source-owned
+  Idle/Walk families could therefore appear beside intended damage-rig clips.
+- Added an explicit role-validated runtime graph. Complete Damage Asset ships
+  `DSB_DAMAGE_RIG` as the only intended runtime skeleton;
+  `SBF_ProductionRig`, `SBF_CLEAN_CHARACTER`, and
+  `DSB_SOURCE_MODEL_PROTECTED` remain authoring/provenance data.
+- Added non-destructive approved-Action auditing and temporary
+  `DSB_DAMAGE_RIG` Action/NLA staging. Runtime-owned kinds supersede matching
+  source families; compatible source-only clips may be mirrored after exact
+  skeleton checks. Blender's Action allow-list is mandatory and global
+  single-armature Action discovery is disabled.
+- Upgraded completed-GLB diagnostics to
+  `dreadstone.final_glb_validation.v2`, validating skeleton/joint ancestry,
+  intact and rigid bindings, required bones, exact animation inventory,
+  channel targets, owner/kind extras, and sampler duration.
+- Added a self-contained Blender 5.1.2 regression with duplicate source/runtime
+  Idle and Walk Actions, morphs, rigid pieces, raised gore, portable stains,
+  transactional rollback, source sidecar provenance, and clean reimport.
+
 ## 5.1.2
 
 - Fixed Approved Animation Pack export rejecting visually correct local

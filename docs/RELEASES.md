@@ -20,7 +20,7 @@
 
 ## Documentation definition of done
 
-- [ ] Version and `Dreadstone_Animation_Forge_v5_1_2.zip` match everywhere.
+- [ ] Version and `Dreadstone_Animation_Forge_v5_1_3.zip` match everywhere.
 - [ ] Creature Anatomy Profile schema/detection/orientation/persistence tests,
       the exact humanoid mapping comparison, malformed quadruped cases, and
       extracted-ZIP Blender registration pass.
@@ -41,5 +41,8 @@
       requirement are documented.
 - [ ] Source Readiness, validation, export, and clean-reimport procedures are
       current.
+- [ ] Complete Damage runtime membership, `DSB_DAMAGE_RIG`-only skeleton,
+      Action owner/filter staging, source provenance, GLB v2 diagnostics, and
+      clean-reimport regression pass.
 - [ ] No stale button label, version, archive name, or superseded workflow
       remains.

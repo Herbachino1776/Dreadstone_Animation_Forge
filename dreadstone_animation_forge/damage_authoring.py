@@ -17,13 +17,13 @@ from mathutils import Matrix, Vector
 from mathutils.kdtree import KDTree
 from bpy.types import Operator
 
-from . import damage_readiness, trauma_field
+from . import damage_readiness, runtime_export, trauma_field
 from .anatomy import persistence as anatomy_persistence
 from .deformation import gltf_validation
 
 AUTHORING_SCHEMA = "dreadstone.damage_authoring.v1"
 AUTHORING_VERSION = (3, 9, 1)
-AUTHORING_BUILD_ID = "2026-07-18.source-contract.1"
+AUTHORING_BUILD_ID = "2026-08-09.runtime-skeleton-export.1"
 READINESS_SCHEMA = "dreadstone.damage_readiness.v1"
 READINESS_REVISION_REQUIRED = "hierarchical_weight_partition_v3.16.3"
 STATE_TEXT_NAME = "DSB_DAMAGE_AUTHORING_STATE.json"
@@ -1397,6 +1397,15 @@ def _all_generated_objects(state):
     return [obj for name in names if name and (obj := bpy.data.objects.get(name))]
 
 
+def resolve_runtime_export_objects(state, *, stain_objects=()):
+    """Answer exactly which role-validated objects may ship in the Damage GLB."""
+
+    return runtime_export.resolve_runtime_objects(
+        state,
+        stain_objects=stain_objects,
+    )
+
+
 def _preview_intact(state):
     for obj in _all_generated_objects(state):
         _set_hidden(obj, True)
@@ -1718,6 +1727,7 @@ def _manifest(
     glb_filename,
     *,
     deformation_manifest=None,
+    runtime_animation=None,
 ):
     segments = []
     for seam_id, spec in SEAM_SPECS.items():
@@ -1748,6 +1758,15 @@ def _manifest(
             "distalSourceFaceSha256": seam["distal_face_sha256"],
             "proximalSourceFaceSha256": seam["proximal_face_sha256"],
         })
+    runtime_animation = runtime_animation or {
+        "status": "PASS",
+        "runtimeArmature": AUTHORING_RIG_NAME,
+        "clips": [],
+        "rejectedSourceActions": [],
+        "rejectedSourceActionCount": 0,
+        "mirroredSourceActionCount": 0,
+    }
+    runtime_rig = bpy.data.objects.get(state.get("authoring_rig", ""))
     return {
         "schema": AUTHORING_SCHEMA,
         "authoringVersion": _version_string(),
@@ -1789,6 +1808,48 @@ def _manifest(
         "anatomy": state.get("anatomy") or anatomy_persistence.export_metadata(
             anatomy_persistence.legacy_humanoid_metadata()
         ),
+        "runtimeSkeleton": {
+            "schema": "dreadstone.runtime_skeleton.v1",
+            "status": "PENDING_FINAL_GLB_VALIDATION",
+            "armature": AUTHORING_RIG_NAME,
+            "sourceArmature": state["source_armature_name"],
+            "protectedSourceObject": state.get("protected_source_mesh"),
+            "skeletonCount": 1,
+            "requiredBones": sorted(
+                runtime_rig.data.bones.keys()
+                if runtime_rig is not None and runtime_rig.type == 'ARMATURE'
+                else []
+            ),
+        },
+        "runtimeAnimations": {
+            "schema": "dreadstone.runtime_animations.v1",
+            "status": runtime_animation.get("status", "PASS"),
+            "runtimeArmature": AUTHORING_RIG_NAME,
+            "exportedCount": len(runtime_animation.get("clips", [])),
+            "clips": [
+                {
+                    "name": clip["name"],
+                    "approvedKind": clip["approvedKind"],
+                    "runtimeArmature": AUTHORING_RIG_NAME,
+                    "sourceOwnership": clip.get("ownership", ""),
+                    "sourceOwner": clip.get("metadataOwner", ""),
+                    "frameStart": clip.get("frameStart"),
+                    "frameEnd": clip.get("frameEnd"),
+                    "curveCount": clip.get("curveCount", 0),
+                    "boneCount": clip.get("boneCount", 0),
+                }
+                for clip in runtime_animation.get("clips", [])
+            ],
+            "rejectedSourceActions": list(
+                runtime_animation.get("rejectedSourceActions", [])
+            ),
+            "rejectedSourceActionCount": int(
+                runtime_animation.get("rejectedSourceActionCount", 0)
+            ),
+            "mirroredSourceActionCount": int(
+                runtime_animation.get("mirroredSourceActionCount", 0)
+            ),
+        },
         "intact": {
             "bodyCore": BODY_CORE_NAME,
             "attachedSegments": [
@@ -1817,6 +1878,7 @@ def _export_asset_inactive(context, settings, state):
         raise RuntimeError("Switch Blender to Object Mode before exporting the Damage GLB.")
     from . import deformation_authoring
     stain_objects = []
+    runtime_animation_audit = None
     try:
         _validate_current_source(state)
         deformation_authoring.prepare_for_export()
@@ -1840,13 +1902,10 @@ def _export_asset_inactive(context, settings, state):
         )
         selected_before = list(context.selected_objects)
         active_before = context.view_layer.objects.active
-        export_objects = [
-            obj
-            for obj in _all_generated_objects(state)
-            if obj.name != state.get("protected_source_mesh")
-        ]
-        export_objects.extend(stain_objects)
-        export_objects = list(dict.fromkeys(export_objects))
+        export_objects = resolve_runtime_export_objects(
+            state,
+            stain_objects=stain_objects,
+        )
         visibility = {}
         try:
             bpy.ops.object.select_all(action='DESELECT')
@@ -1862,38 +1921,66 @@ def _export_asset_inactive(context, settings, state):
                 bpy.data.objects.get(state.get("authoring_rig", ""))
                 or export_objects[0]
             )
-            supported = _exporter_property_names()
-            kwargs = {"filepath": glb_path}
-            selection_property = (
-                "use_selection"
-                if "use_selection" in supported
-                else "export_selected"
-                if "export_selected" in supported
-                else None
-            )
-            if selection_property is None:
-                raise RuntimeError(
-                    "The installed glTF exporter exposes no selected-object "
-                    "export option."
+            with runtime_export.RuntimeAnimationStaging(state) as staging:
+                runtime_animation_audit = staging.audit
+                action_filter_cleanup = runtime_export.configure_action_filter(
+                    staging.actions
                 )
-            kwargs[selection_property] = True
-            for key, value in {
-                "export_format": "GLB",
-                "export_animations": True,
-                "export_force_sampling": True,
-                "export_extras": True,
-                "export_apply": False,
-                "export_morph": True,
-                "export_morph_normal": True,
-                "export_morph_tangent": False,
-            }.items():
-                if key in supported:
-                    kwargs[key] = value
-            result = bpy.ops.export_scene.gltf(**kwargs)
-            if 'FINISHED' not in result:
-                raise RuntimeError(
-                    "Blender did not finish exporting the Damage GLB."
-                )
+                try:
+                    supported = _exporter_property_names()
+                    kwargs = {"filepath": glb_path}
+                    selection_property = (
+                        "use_selection"
+                        if "use_selection" in supported
+                        else "export_selected"
+                        if "export_selected" in supported
+                        else None
+                    )
+                    if selection_property is None:
+                        raise RuntimeError(
+                            "The installed glTF exporter exposes no selected-object "
+                            "export option."
+                        )
+                    required_animation_properties = {
+                        "export_action_filter",
+                        "export_animation_mode",
+                        "export_anim_single_armature",
+                    }
+                    missing_animation_properties = sorted(
+                        required_animation_properties - supported
+                    )
+                    if missing_animation_properties:
+                        raise RuntimeError(
+                            "Blender's glTF exporter cannot isolate runtime Actions; "
+                            "missing: " + ", ".join(missing_animation_properties) + "."
+                        )
+                    kwargs[selection_property] = True
+                    for key, value in {
+                        "export_format": "GLB",
+                        "export_animations": True,
+                        "export_animation_mode": "ACTIONS",
+                        "export_action_filter": True,
+                        "export_anim_single_armature": False,
+                        "export_merge_animation": "ACTION",
+                        "export_extra_animations": False,
+                        "export_force_sampling": True,
+                        "export_current_frame": False,
+                        "export_extras": True,
+                        "export_apply": False,
+                        "export_morph": True,
+                        "export_morph_animation": True,
+                        "export_morph_normal": True,
+                        "export_morph_tangent": False,
+                    }.items():
+                        if key in supported:
+                            kwargs[key] = value
+                    result = bpy.ops.export_scene.gltf(**kwargs)
+                    if 'FINISHED' not in result:
+                        raise RuntimeError(
+                            "Blender did not finish exporting the Damage GLB."
+                        )
+                finally:
+                    action_filter_cleanup()
         finally:
             for obj in export_objects:
                 if obj.name in visibility:
@@ -1921,6 +2008,7 @@ def _export_asset_inactive(context, settings, state):
             validation,
             os.path.basename(glb_path),
             deformation_manifest=deformation_manifest,
+            runtime_animation=runtime_animation_audit,
         )
         try:
             final_glb_validation = (
@@ -1932,7 +2020,22 @@ def _export_asset_inactive(context, settings, state):
         except Exception as exc:
             final_glb_validation = {
                 "status": "FAIL",
-                "schema": "dreadstone.final_glb_validation.v1",
+                "schema": gltf_validation.FINAL_GLB_VALIDATION_SCHEMA,
+                "runtimeSkeleton": {
+                    "status": "FAIL",
+                    "armature": AUTHORING_RIG_NAME,
+                    "errors": [
+                        "Completed GLB could not be inspected: " + str(exc)
+                    ],
+                },
+                "runtimeAnimations": {
+                    "status": "FAIL",
+                    "exportedCount": 0,
+                    "clips": [],
+                    "errors": [
+                        "Completed GLB could not be inspected: " + str(exc)
+                    ],
+                },
                 "surfaceStains": {
                     "status": "FAIL",
                     "errors": [
@@ -1952,6 +2055,12 @@ def _export_asset_inactive(context, settings, state):
                 ],
             }
         validation["finalGlb"] = final_glb_validation
+        validation["runtimeSkeleton"] = final_glb_validation[
+            "runtimeSkeleton"
+        ]
+        validation["runtimeAnimations"] = final_glb_validation[
+            "runtimeAnimations"
+        ]
         validation["surfaceStains"] = final_glb_validation[
             "surfaceStains"
         ]

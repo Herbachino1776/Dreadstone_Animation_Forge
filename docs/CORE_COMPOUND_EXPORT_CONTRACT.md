@@ -83,3 +83,10 @@ milestone and do not create geometry or weaken Source Readiness.
 ## Reimport verification
 
 A clean reimport must contain every declared mesh-local morph, every non-empty generated gore node and its material roles, and the expected inactive/default object state. The separately imported Approved Animation Pack must contain each approved guard Action. Compare imported inventory with both manifests; do not infer success from export completion alone.
+
+Complete Damage GLBs additionally use the explicit runtime boundary documented
+in `RUNTIME_DAMAGE_EXPORT_CONTRACT.md`. They contain `DSB_DAMAGE_RIG` as the
+only intended runtime skeleton hierarchy. The original source mesh/rig and
+`DSB_SOURCE_MODEL_PROTECTED` remain authoring/provenance data and cannot ship.
+All legitimate glTF skins must reference joints in that one hierarchy; rigid
+detached segments remain rigid.

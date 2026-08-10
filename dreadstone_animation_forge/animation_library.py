@@ -17,7 +17,7 @@ from .anatomy.profiles import HUMANOID_PROFILE_ID
 
 
 ANIMATION_CLIP_SCHEMA = "dreadstone.animation_clip.v1"
-ANIMATION_LIBRARY_BUILD_ID = "2026-08-03.pack-provenance-refresh-5.1.2"
+ANIMATION_LIBRARY_BUILD_ID = "2026-08-09.runtime-damage-export-5.1.3"
 
 CLIP_ID_PROPERTY = "dsb_animation_clip_id"
 CLIP_SCHEMA_PROPERTY = "dsb_animation_clip_schema"

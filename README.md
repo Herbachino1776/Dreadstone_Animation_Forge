@@ -1,6 +1,6 @@
 # Dreadstone Animation Forge
 
-Dreadstone Animation Forge `5.1.2` is a proprietary Blender add-on for
+Dreadstone Animation Forge `5.1.3` is a proprietary Blender add-on for
 animation drafting and compatibility-preserving damage authoring. The supported
 release runtime is Blender `5.1.2`.
 
@@ -59,7 +59,7 @@ anatomy metadata.
 
 ## Install and open
 
-1. Download `Dreadstone_Animation_Forge_v5_1_2.zip`.
+1. Download `Dreadstone_Animation_Forge_v5_1_3.zip`.
 2. In Blender choose **Edit > Preferences > Add-ons > Install from Disk**.
 3. Select the ZIP without extracting it and enable the add-on.
 4. In the 3D Viewport press `N`, open **Dreadstone**, then choose
@@ -99,11 +99,18 @@ The authoritative procedure and complete button inventory are in the
 [user workflow guide](docs/USER_WORKFLOW_GUIDE.md). Runtime consumers should
 also read the [core/compound export contract](docs/CORE_COMPOUND_EXPORT_CONTRACT.md)
 and [gore geometry export contract](docs/RAISED_GORE_EXPORT_CONTRACT.md).
+The [Complete Damage runtime export contract](docs/RUNTIME_DAMAGE_EXPORT_CONTRACT.md)
+defines the shipping skeleton and animation boundary.
 Progressive runtime consumers must also follow the
 [Progressive Damage Site contract](docs/PROGRESSIVE_DAMAGE_SITE_CONTRACT.md).
 Animation and retargeting consumers should read the
 [Creature Anatomy Profile contract](docs/CREATURE_ANATOMY_PROFILE_CONTRACT.md)
 and [native Action package contract](docs/ANIMATION_PACKAGE_CONTRACT.md).
+
+Complete Damage Asset ships `DSB_DAMAGE_RIG` as the runtime skeleton.
+`SBF_ProductionRig` remains source-authoring provenance and is not included in
+the runtime GLB. The source object and protected source copy likewise remain in
+the `.blend` and sidecar provenance, not in the game asset.
 
 ## Persistence and compatibility
 

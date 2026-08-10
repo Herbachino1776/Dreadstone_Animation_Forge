@@ -162,6 +162,18 @@ def export_and_reimport(
     manifest = {
         "schema": "dreadstone.damage_authoring.v1",
         "glb": glb_path.name,
+        "source": {
+            "object": "SYNTHETIC_SOURCE_NOT_EXPORTED",
+            "armature": "SYNTHETIC_SOURCE_RIG_NOT_EXPORTED",
+        },
+        "runtimeSkeleton": {
+            "armature": armature.name,
+            "protectedSourceObject": "SYNTHETIC_PROTECTED_NOT_EXPORTED",
+            "requiredBones": sorted(armature.data.bones.keys()),
+        },
+        "runtimeAnimations": {"clips": [], "rejectedSourceActionCount": 0},
+        "intact": {"bodyCore": target.name, "attachedSegments": []},
+        "segments": [],
         "deformations": deformation_manifest,
     }
     manifest_path.write_text(
@@ -185,7 +197,7 @@ def export_and_reimport(
         use_selection=True,
         export_extras=True,
         export_morph=True,
-        export_animations=True,
+        export_animations=False,
     )
     require("FINISHED" in result, "Progressive mechanical GLB export failed.")
     final_glb = gltf_validation.validate_exported_damage_glb(
@@ -565,8 +577,19 @@ def main():
     armature_data = bpy.data.armatures.new("PROGRESSION_RIG_DATA")
     armature = bpy.data.objects.new("PROGRESSION_RIG", armature_data)
     context.scene.collection.objects.link(armature)
+    bpy.ops.object.select_all(action="DESELECT")
+    armature.select_set(True)
+    context.view_layer.objects.active = armature
+    bpy.ops.object.mode_set(mode="EDIT")
+    root_bone = armature.data.edit_bones.new("root")
+    root_bone.head = (0.0, 0.0, 0.0)
+    root_bone.tail = (0.0, 0.0, 1.0)
+    bpy.ops.object.mode_set(mode="OBJECT")
     modifier = target.modifiers.new("Armature", "ARMATURE")
     modifier.object = armature
+    target.parent = armature
+    root_group = target.vertex_groups.new(name="root")
+    root_group.add(range(len(target.data.vertices)), 1.0, "REPLACE")
     armature.animation_data_create()
     pose_actions = [
         action("Forge_Walk_Test"),

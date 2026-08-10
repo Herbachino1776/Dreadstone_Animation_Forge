@@ -37,47 +37,84 @@ def make_guard_rig():
     edit_bones = armature.data.edit_bones
     edit_bones.remove(edit_bones[0])
 
-    hips = make_bone(edit_bones, "hips", (0, 0, 0.8), (0, 0, 1.1))
-    spine = make_bone(edit_bones, "spine", (0, 0, 1.1), (0, 0, 1.55), hips)
-    chest = make_bone(edit_bones, "chest", (0, 0, 1.55), (0, 0, 1.95), spine)
+    root = make_bone(edit_bones, "root", (0, 0, 0.0), (0, 0, 0.8))
+    hips = make_bone(edit_bones, "body", (0, 0, 0.8), (0, 0, 1.1), root)
+    spine = make_bone(edit_bones, "body_top0", (0, 0, 1.1), (0, 0, 1.55), hips)
+    spine_mid = make_bone(
+        edit_bones, "body_top1", (0, 0, 1.55), (0, 0, 1.75), spine
+    )
+    chest = make_bone(edit_bones, "body_top2", (0, 0, 1.75), (0, 0, 1.95), spine_mid)
     neck = make_bone(edit_bones, "neck", (0, 0, 1.95), (0, 0, 2.15), chest)
     make_bone(edit_bones, "head", (0, 0, 2.15), (0, 0, 2.48), neck)
 
-    thigh_l = make_bone(edit_bones, "thigh_l", (-0.16, 0, 0.88), (-0.16, 0, 0.34), hips)
-    make_bone(edit_bones, "shin_l", (-0.16, 0, 0.34), (-0.16, 0, -0.22), thigh_l)
-    thigh_r = make_bone(edit_bones, "thigh_r", (0.16, 0, 0.88), (0.16, 0, 0.34), hips)
-    make_bone(edit_bones, "shin_r", (0.16, 0, 0.34), (0.16, 0, -0.22), thigh_r)
+    thigh_l = make_bone(edit_bones, "leg_left_top", (-0.16, 0, 0.88), (-0.16, 0, 0.34), hips)
+    shin_l = make_bone(edit_bones, "leg_left_bot", (-0.16, 0, 0.34), (-0.16, 0, -0.22), thigh_l)
+    make_bone(edit_bones, "leg_left_foot", (-0.16, 0, -0.22), (-0.16, 0.28, -0.22), shin_l)
+    thigh_r = make_bone(edit_bones, "leg_right_top", (0.16, 0, 0.88), (0.16, 0, 0.34), hips)
+    shin_r = make_bone(edit_bones, "leg_right_bot", (0.16, 0, 0.34), (0.16, 0, -0.22), thigh_r)
+    make_bone(edit_bones, "leg_right_foot", (0.16, 0, -0.22), (0.16, 0.28, -0.22), shin_r)
 
     shoulder_l = make_bone(
-        edit_bones, "shoulder_l", (0, 0, 1.88), (-0.28, 0, 1.88), chest
+        edit_bones, "shoulder_left", (0, 0, 1.88), (-0.28, 0, 1.88), chest
     )
     upper_l = make_bone(
-        edit_bones, "upper_arm_l", (-0.28, 0, 1.88), (-0.78, 0, 1.78), shoulder_l
+        edit_bones, "arm_left_top", (-0.28, 0, 1.88), (-0.78, 0, 1.78), shoulder_l
     )
     lower_l = make_bone(
-        edit_bones, "lower_arm_l", (-0.78, 0, 1.78), (-1.20, 0, 1.70), upper_l
+        edit_bones, "arm_left_bot", (-0.78, 0, 1.78), (-1.20, 0, 1.70), upper_l
     )
     make_bone(
-        edit_bones, "hand_l", (-1.20, 0, 1.70), (-1.42, 0, 1.67), lower_l
+        edit_bones, "arm_left_hand", (-1.20, 0, 1.70), (-1.42, 0, 1.67), lower_l
     )
 
     shoulder_r = make_bone(
-        edit_bones, "shoulder_r", (0, 0, 1.88), (0.28, 0, 1.88), chest
+        edit_bones, "shoulder_right", (0, 0, 1.88), (0.28, 0, 1.88), chest
     )
     upper_r = make_bone(
-        edit_bones, "upper_arm_r", (0.28, 0, 1.88), (0.78, 0, 1.78), shoulder_r
+        edit_bones, "arm_right_top", (0.28, 0, 1.88), (0.78, 0, 1.78), shoulder_r
     )
     lower_r = make_bone(
-        edit_bones, "lower_arm_r", (0.78, 0, 1.78), (1.20, 0, 1.70), upper_r
+        edit_bones, "arm_right_bot", (0.78, 0, 1.78), (1.20, 0, 1.70), upper_r
     )
     make_bone(
-        edit_bones, "hand_r", (1.20, 0, 1.70), (1.42, 0, 1.67), lower_r
+        edit_bones, "arm_right_hand", (1.20, 0, 1.70), (1.42, 0, 1.67), lower_r
     )
 
     bpy.ops.object.mode_set(mode="POSE")
     for pose_bone in armature.pose.bones:
         pose_bone.rotation_mode = "QUATERNION"
     bpy.ops.object.mode_set(mode="OBJECT")
+    armature["sbf_canonical_rig_version"] = "SBF_HUMANOID_YPLUS_V1"
+    armature["sbf_forward_axis"] = "+Y"
+    armature["sbf_up_axis"] = "+Z"
+    armature["sbf_root_bone"] = "root"
+    armature["sbf_rig_contract_version"] = 1
+    armature["sbf_unit_scale_meters"] = 1.0
+    armature["sbf_orientation_revision"] = 1
+    armature["sbf_orientation_state"] = "CANONICAL_Y_PLUS"
+    armature["sbf_bone_mapping"] = json.dumps({
+        "root": "root",
+        "pelvis": "body",
+        "spine_lower": "body_top0",
+        "spine_middle": "body_top1",
+        "chest": "body_top2",
+        "neck": "neck",
+        "head": "head",
+        "shoulder_left": "shoulder_left",
+        "upper_arm_left": "arm_left_top",
+        "lower_arm_left": "arm_left_bot",
+        "hand_left": "arm_left_hand",
+        "shoulder_right": "shoulder_right",
+        "upper_arm_right": "arm_right_top",
+        "lower_arm_right": "arm_right_bot",
+        "hand_right": "arm_right_hand",
+        "upper_leg_left": "leg_left_top",
+        "lower_leg_left": "leg_left_bot",
+        "foot_left": "leg_left_foot",
+        "upper_leg_right": "leg_right_top",
+        "lower_leg_right": "leg_right_bot",
+        "foot_right": "leg_right_foot",
+    }, sort_keys=True)
     armature.select_set(True)
     bpy.context.view_layer.objects.active = armature
     return armature
@@ -169,7 +206,7 @@ def main():
 
     report = {
         "status": "PASS",
-        "forgeVersion": "5.1.2",
+        "forgeVersion": "5.1.3",
         "guardCount": len(guards),
         "protectedHoldSeconds": protected_hold,
         "coverageWarnings": len(record["warnings"]),

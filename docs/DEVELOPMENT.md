@@ -34,6 +34,12 @@ Forge 4.1 includes:
 - one master-randomize transaction and one managed preview request;
 - a cached, disk-free panel draw path for Blueprint inventory.
 
+Forge 5.1.3 adds an explicit Complete Damage shipping boundary in
+`runtime_export.py`: property-driven object membership, strict source/damage
+rig compatibility, approved Action owner/kind resolution, temporary
+`DSB_DAMAGE_RIG` Action/NLA staging, Blender 5.1 Action filtering, exact
+rollback, and completed-GLB skeleton/animation validation.
+
 Panel draw and property callbacks must remain lightweight. Blender RNA stays on
 the main thread. Caches are bounded and invalidated on file load, unregister,
 topology/source changes, region removal, and explicit rebuild.
@@ -102,6 +108,18 @@ an NLA strip, export and import a native clip on a proportionally different
 compatible rig, reject a missing-bone target, and delete without leaking Action
 datablocks.
 
+Run the Complete Damage runtime-skeleton regression:
+
+```text
+blender --background --factory-startup --python tests/blender_runtime_skeleton_export_acceptance.py
+```
+
+It must reject source-owned Idle/Walk duplicates by actual owner and approved
+kind, mirror one compatible source-only clip without modifying it, export only
+`DSB_DAMAGE_RIG`, validate every skin/joint/channel relationship, retain rigid
+pieces and Light/Medium/Heavy morphs, clean-reimport one armature hierarchy,
+and remove every temporary Action/NLA staging record.
+
 The Blender-free cavity suite exercises all six Gore identities, each macro at
 0/25/50/75/100, and the exact reported head-macro regression. Every generated
 internal layer must remain ordered between the measured rim and liner before a
@@ -134,7 +152,7 @@ should be performed only when requested.
 ## Release archive
 
 `python scripts/build_release.py` validates first and writes
-`dist/Dreadstone_Animation_Forge_v5_1_2.zip`. Every package Python file is
+`dist/Dreadstone_Animation_Forge_v5_1_3.zip`. Every package Python file is
 discovered recursively, so new service/operator modules must appear in the
 archive automatically. `dist/`, bytecode, caches, Blender backups, and
 temporary extraction directories are generated artifacts and are not
