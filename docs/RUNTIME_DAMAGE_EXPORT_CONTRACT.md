@@ -79,3 +79,14 @@ rejected source Action count, and all errors.
 Clean reimport remains mandatory. It must produce one armature hierarchy,
 `DSB_DAMAGE_RIG`, correct intact skinning, rigid detached props, approved
 Actions, morph targets, gore, stains, and materials, with no source-only node.
+
+## Runtime armament capabilities
+
+Complete Damage sidecars may additionally contain versioned
+`runtimeAttachmentSockets` and offensive Action metadata. Socket helpers are
+excluded from the GLB node and skin-joint inventories; their hand-bone-local
+position and quaternion are data for the game-side resolver. Approved attack
+clips ship only when their stable combat ID is unique, their declared clip
+duration matches the Action and emitted glTF sampler, their WINDUP / ACTIVE /
+RECOVERY intervals are finite and contiguous, and every required socket role
+exists. See `RUNTIME_ATTACHMENT_AND_OFFENSIVE_CONTRACT.md`.

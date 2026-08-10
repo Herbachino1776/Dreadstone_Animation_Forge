@@ -34,11 +34,20 @@ Forge 4.1 includes:
 - one master-randomize transaction and one managed preview request;
 - a cached, disk-free panel draw path for Blueprint inventory.
 
-Forge 5.1.3 adds an explicit Complete Damage shipping boundary in
+Forge 5.2.0 retains the explicit Complete Damage shipping boundary in
 `runtime_export.py`: property-driven object membership, strict source/damage
 rig compatibility, approved Action owner/kind resolution, temporary
 `DSB_DAMAGE_RIG` Action/NLA staging, Blender 5.1 Action filtering, exact
 rollback, and completed-GLB skeleton/animation validation.
+
+The same boundary now exports `dreadstone.attachment_sockets.v1` and
+`dreadstone.offensive_action.v1`. Socket helpers are managed Empty objects,
+not deform bones: creation/repair must preserve the exact 21-bone canonical
+inventory and rest matrices. Offensive metadata must remain attached to its
+Action, use seconds derived from the rounded frame schedule, and pass strict
+approval, uniqueness, duration, phase, and socket compatibility checks before
+shipping. The authoritative details are in
+[RUNTIME_ATTACHMENT_AND_OFFENSIVE_CONTRACT.md](RUNTIME_ATTACHMENT_AND_OFFENSIVE_CONTRACT.md).
 
 Panel draw and property callbacks must remain lightweight. Blender RNA stays on
 the main thread. Caches are bounded and invalidated on file load, unregister,
@@ -120,6 +129,17 @@ kind, mirror one compatible source-only clip without modifying it, export only
 pieces and Light/Medium/Heavy morphs, clean-reimport one armature hierarchy,
 and remove every temporary Action/NLA staging record.
 
+Run the M6 offensive Action/socket regression as part of the same release gate:
+
+```text
+blender --background --factory-startup --python tests/blender_offensive_animation_acceptance.py
+```
+
+It must generate and explicitly approve eight phase-valid offensive Actions,
+prove that none animates scale, preserve the exact 21-bone rest skeleton, keep
+socket ensure idempotent, persist an artist-adjusted grip through save/reload,
+and emit the two canonical hand socket records.
+
 The Blender-free cavity suite exercises all six Gore identities, each macro at
 0/25/50/75/100, and the exact reported head-macro regression. Every generated
 internal layer must remain ordered between the measured rim and liner before a
@@ -152,7 +172,7 @@ should be performed only when requested.
 ## Release archive
 
 `python scripts/build_release.py` validates first and writes
-`dist/Dreadstone_Animation_Forge_v5_1_3.zip`. Every package Python file is
+`dist/Dreadstone_Animation_Forge_v5_2_0.zip`. Every package Python file is
 discovered recursively, so new service/operator modules must appear in the
 archive automatically. `dist/`, bytecode, caches, Blender backups, and
 temporary extraction directories are generated artifacts and are not

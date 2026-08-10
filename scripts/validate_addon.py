@@ -26,6 +26,9 @@ MODULE_NAMES = (
     "damage_authoring.py",
     "deformation_authoring.py",
     "progressive_authoring.py",
+    "attachment_socket_contract.py",
+    "attachment_sockets.py",
+    "offensive_actions.py",
     "parameter_schema.py",
     "trauma_field.py",
 )
@@ -35,13 +38,13 @@ ALL_MODULE_PATHS = tuple(sorted(
     if "__pycache__" not in path.parts
 ))
 
-EXPECTED_VERSION = (5, 1, 3)
+EXPECTED_VERSION = (5, 2, 0)
 EXPECTED_READINESS_BUILD = "2026-07-18.source-contract.1"
-EXPECTED_AUTHORING_BUILD = "2026-08-09.runtime-skeleton-export.1"
+EXPECTED_AUTHORING_BUILD = "2026-08-10.runtime-armament-contract.1"
 EXPECTED_DEFORMATION_BUILD = "2026-07-29.portable-surface-stains.1"
 
 REQUIRED_GUIDE_HEADINGS = (
-    "## 1. Install Dreadstone Animation Forge 5.1.3",
+    "## 1. Install Dreadstone Animation Forge 5.2.0",
     "## 2. Open the Dreadstone panel",
     "## 3. Import and prepare a source GLB",
     "## 4. Use the VIP Damage workflow",
@@ -127,6 +130,9 @@ REQUIRED_GUIDE_UI_LABELS = {
     "**Generate Three Mace Head-Guard Drafts**",
     "**Preview Guard_Active**",
     "**Validate Mace Head-Guard Drafts**",
+    "**Generate / Refresh Offensive Suite**",
+    "**Validate Humanoid Offensive Suite**",
+    "**Create / Repair Runtime Hand Sockets**",
     "**REBUILD ACTIVE DEFORMATION**",
     "**REPAIR LEGACY PAIR SYNC**",
     "**Validate Morph Targets**",
@@ -150,6 +156,8 @@ REQUIRED_SCHEMAS = {
     "dreadstone.surface_stain_binding.v1",
     "dreadstone.runtime_skeleton.v1",
     "dreadstone.runtime_animations.v1",
+    "dreadstone.attachment_sockets.v1",
+    "dreadstone.offensive_action.v1",
     "dreadstone.final_glb_validation.v2",
     "dreadstone.trauma_stamp_library.v1",
     "dreadstone.compound_trauma_event.v1",
@@ -254,6 +262,9 @@ REQUIRED_OPERATORS = {
     "daf.generate_mace_head_guards": "Generate Three Mace Head-Guard Drafts",
     "daf.preview_mace_guard_active": "Preview Guard_Active",
     "daf.validate_mace_head_guards": "Validate Mace Head-Guard Drafts",
+    "daf.generate_humanoid_offensive_suite": "Generate Humanoid Offensive Suite",
+    "daf.validate_humanoid_offensive_suite": "Validate Humanoid Offensive Suite",
+    "daf.ensure_runtime_attachment_sockets": "Create / Repair Runtime Hand Sockets",
     "daf.toggle_damage_key_preview": "Toggle Damage Key Preview",
     "daf.rename_damage_key": "Rename Damage Key",
     "daf.select_damage_stamp": "Select Damage Stamp",
@@ -284,7 +295,7 @@ REQUIRED_OPERATORS = {
 REQUIRED_UI_TEXT = {
     "Source Damage Readiness",
     "Damage Segment & Stump Authoring v3.9",
-    "Trauma Field Authoring v5.1.3",
+    "Trauma Field Authoring v5.2.0",
     "Generate Humanoid Idle",
     "Draft Base Pose",
     "Capture Base + Preview Idle",
@@ -303,6 +314,9 @@ REQUIRED_UI_TEXT = {
     "4 · ADAPTIVE BLUEPRINT LIBRARY",
     "Restore Reimported GLB Intact Preview",
     "Validate Complete Damage Asset",
+    "Humanoid Offensive Actions",
+    "Generate / Refresh Offensive Suite",
+    "Create / Repair Runtime Hand Sockets",
 }
 
 REQUIRED_TRAUMA_FAMILIES = {
@@ -486,7 +500,7 @@ def check_extension_manifest() -> None:
         (
             'schema_version = "1.0.0"',
             'id = "dreadstone_animation_forge"',
-            'version = "5.1.3"',
+            'version = "5.2.0"',
             'name = "Dreadstone Animation Forge"',
             'type = "add-on"',
             'blender_version_min = "4.2.0"',
@@ -992,14 +1006,14 @@ def check_repository_hygiene() -> None:
 
 
 def main() -> int:
-    print("DREADSTONE ANIMATION FORGE v5.1.3 STATIC VALIDATION")
+    print("DREADSTONE ANIMATION FORGE v5.2.0 STATIC VALIDATION")
     print("Blender is not imported; runtime acceptance remains separate.")
 
     sources: dict[str, str] = {}
     trees: dict[str, ast.Module] = {}
     checks: list[tuple[str, Callable[[], None]]] = [
         ("all contract package modules exist", check_module_files),
-        ("Blender extension manifest exists and matches v5.1.3", check_extension_manifest),
+        ("Blender extension manifest exists and matches v5.2.0", check_extension_manifest),
         ("all Python modules parse with ast.parse", lambda: check_parse(sources)),
         ("all Python modules compile with py_compile", check_compile),
         ("add-on/deformation version and build contracts", lambda: check_versions(trees)),

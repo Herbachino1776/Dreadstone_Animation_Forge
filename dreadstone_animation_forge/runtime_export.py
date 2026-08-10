@@ -13,7 +13,7 @@ from collections import defaultdict
 
 import bpy
 
-from . import animation_library
+from . import animation_library, attachment_sockets, offensive_actions
 
 
 RUNTIME_ARMATURE_ROLE = "authoring_rig"
@@ -30,6 +30,7 @@ AUTHORING_ONLY_ROLES = {
     "deformation_preview",
     "diagnostic",
     "export_staging",
+    "attachment_socket_helper",
 }
 RUNTIME_GENERATED_VISUAL_ROLES = {"raised_gore", "surface_stain_export"}
 RUNTIME_EXPORT_MARKER = "dsb_runtime_export_staging"
@@ -249,6 +250,13 @@ def audit_runtime_actions(state):
     candidates = []
     errors = []
     ignored = []
+    socket_contract = attachment_sockets.runtime_socket_contract(state)
+    available_socket_roles = {
+        socket["semanticRole"] for socket in socket_contract.get("sockets", [])
+    }
+    fps = bpy.context.scene.render.fps / max(
+        bpy.context.scene.render.fps_base, 0.001
+    )
     for action in bpy.data.actions:
         if not bool(action.get("dsb_approved", False)) or bool(action.get("dsb_draft", False)):
             continue
@@ -295,6 +303,21 @@ def audit_runtime_actions(state):
         start, end = animation_library.action_frame_bounds(action)
         if not all(math.isfinite(value) for value in (start, end)) or end < start:
             errors.append(f"Approved Action {action.name!r} has invalid frame bounds.")
+        duration_seconds = max(0.0, float(end) - float(start)) / max(fps, 0.001)
+        offensive = None
+        try:
+            offensive = offensive_actions.validated_action_metadata(
+                action,
+                clip_duration_seconds=duration_seconds,
+                require_approved=True,
+                available_socket_roles=available_socket_roles,
+            )
+        except ValueError as exc:
+            errors.append(f"Action {action.name!r}: {exc}")
+        if kind.startswith("ATTACK") and offensive is None:
+            errors.append(
+                f"Offensive Action {action.name!r} has no valid explicit combat metadata."
+            )
         candidates.append(
             {
                 "action": action,
@@ -306,10 +329,12 @@ def audit_runtime_actions(state):
                 "clipId": str(action.get(animation_library.CLIP_ID_PROPERTY, "")),
                 "frameStart": float(start),
                 "frameEnd": float(end),
+                "clipDurationSeconds": duration_seconds,
                 "curveCount": len(curves),
                 "boneCount": len(bones),
                 "boneOnly": not curve_errors,
                 "compatibility": compatibility,
+                "offensiveAction": offensive,
             }
         )
     if errors:
@@ -337,6 +362,22 @@ def audit_runtime_actions(state):
             f"{clip_id}: {', '.join(names)}" for clip_id, names in sorted(duplicate_ids.items())
         )
         raise RuntimeError("Runtime animation audit found duplicate clip identities: " + detail)
+    combat_id_owners = defaultdict(list)
+    for record in selected:
+        offensive = record.get("offensiveAction")
+        if offensive:
+            combat_id_owners[offensive["combatActionId"]].append(record["name"])
+    duplicate_combat_ids = {
+        action_id: names
+        for action_id, names in combat_id_owners.items()
+        if len(names) > 1
+    }
+    if duplicate_combat_ids:
+        detail = "; ".join(
+            f"{action_id}: {', '.join(names)}"
+            for action_id, names in sorted(duplicate_combat_ids.items())
+        )
+        raise RuntimeError("Runtime animation audit found ambiguous combat Action IDs: " + detail)
     selected.sort(key=lambda record: record["name"].lower())
     rejected_source.sort(key=lambda record: record["name"].lower())
     return {
@@ -353,6 +394,12 @@ def audit_runtime_actions(state):
             record["ownership"] == "SOURCE" for record in selected
         ),
         "ignoredUnrelatedApprovedActions": sorted(ignored),
+        "offensiveActionSchema": offensive_actions.OFFENSIVE_ACTION_SCHEMA,
+        "offensiveActions": [
+            {"actionName": record["name"], **record["offensiveAction"]}
+            for record in selected
+            if record.get("offensiveAction")
+        ],
     }
 
 

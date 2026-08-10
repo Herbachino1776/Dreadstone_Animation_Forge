@@ -217,6 +217,7 @@ def require_generator_capability(armature, capability: str, label: str) -> None:
             store_metadata(armature, metadata)
     elif capability in {
         "idle", "walk", "collapse", "hurt", "mace_head_guard",
+        "offensive_humanoid",
     }:
         raise RuntimeError(
             f"{label} requires {SBF_CANONICAL_RIG_VERSION}. Rig or re-rig "

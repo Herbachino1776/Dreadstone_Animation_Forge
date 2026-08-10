@@ -14,10 +14,11 @@ import bpy
 from .anatomy import persistence as anatomy_persistence
 from .anatomy import skin_and_bones as sbf_handoff
 from .anatomy.profiles import HUMANOID_PROFILE_ID
+from . import offensive_actions
 
 
 ANIMATION_CLIP_SCHEMA = "dreadstone.animation_clip.v1"
-ANIMATION_LIBRARY_BUILD_ID = "2026-08-09.runtime-damage-export-5.1.3"
+ANIMATION_LIBRARY_BUILD_ID = "2026-08-10.offensive-actions-5.2.0"
 
 CLIP_ID_PROPERTY = "dsb_animation_clip_id"
 CLIP_SCHEMA_PROPERTY = "dsb_animation_clip_schema"
@@ -42,6 +43,10 @@ DRAFT_ACTION_NAMES = {
     "MACE_GUARD_TWO_ARM": "DSB_DRAFT_Mace_Brace_Head_TwoArm",
     "MACE_GUARD_LEFT_ARM": "DSB_DRAFT_Mace_Brace_Head_LeftArm",
     "MACE_GUARD_RIGHT_ARM": "DSB_DRAFT_Mace_Brace_Head_RightArm",
+    **{
+        kind: record["draftName"]
+        for kind, record in offensive_actions.OFFENSIVE_ACTION_VARIANTS.items()
+    },
 }
 
 _POSE_BONE_PATH = re.compile(
@@ -306,7 +311,7 @@ def action_category(action):
         return "LOCOMOTION"
     if kind in {"DEATH", "HURT_LEFT", "HURT_RIGHT"}:
         return "REACTIONS"
-    if kind.startswith("MACE_GUARD") or kind == "ATTACK":
+    if kind.startswith("MACE_GUARD") or kind.startswith("ATTACK"):
         return "COMBAT"
     return "OTHER"
 
@@ -463,6 +468,15 @@ def stamp_action_metadata(
     if approved is not None:
         action["dsb_approved"] = bool(approved)
         action["dsb_draft"] = not bool(approved)
+    if action.get(offensive_actions.OFFENSIVE_ACTION_PROPERTY):
+        fps = bpy.context.scene.render.fps / max(
+            bpy.context.scene.render.fps_base, 0.001
+        )
+        offensive_actions.validated_action_metadata(
+            action,
+            clip_duration_seconds=max(0.0, end - start) / max(fps, 0.001),
+            require_approved=bool(approved),
+        )
     return action
 
 

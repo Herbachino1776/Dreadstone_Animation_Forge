@@ -1,7 +1,7 @@
 bl_info = {
     "name": "Dreadstone Animation Forge",
     "author": "Dreadstone Black",
-    "version": (5, 1, 3),
+    "version": (5, 2, 0),
     "blender": (3, 6, 0),
     "location": "3D Viewport > Sidebar > Dreadstone",
     "description": "Animation authoring, protected damage assets, and registered-region trauma-field shape-key authoring.",
@@ -14,6 +14,7 @@ from mathutils import Vector, Quaternion
 from bpy.props import BoolProperty, EnumProperty, FloatProperty, FloatVectorProperty, IntProperty, PointerProperty, StringProperty
 from bpy.types import Operator, Panel, PropertyGroup
 from . import animation_library
+from . import offensive_actions
 from . import parameter_schema
 from .anatomy import blender_adapter as anatomy_blender
 from .anatomy import persistence as anatomy_persistence
@@ -848,6 +849,10 @@ DRAFT_ACTION_NAMES = {
     "MACE_GUARD_TWO_ARM": "DSB_DRAFT_Mace_Brace_Head_TwoArm",
     "MACE_GUARD_LEFT_ARM": "DSB_DRAFT_Mace_Brace_Head_LeftArm",
     "MACE_GUARD_RIGHT_ARM": "DSB_DRAFT_Mace_Brace_Head_RightArm",
+    **{
+        kind: record["draftName"]
+        for kind, record in offensive_actions.OFFENSIVE_ACTION_VARIANTS.items()
+    },
 }
 
 
@@ -940,6 +945,9 @@ def approval_base_name(settings, kind):
     if kind == "MACE_GUARD_RIGHT_ARM":
         return "DSB_Mace_Brace_Head_RightArm"
 
+    if kind in offensive_actions.OFFENSIVE_ACTION_VARIANTS:
+        return offensive_actions.OFFENSIVE_ACTION_VARIANTS[kind]["baseName"]
+
     raise RuntimeError(f"Unknown Action kind: {kind}")
 
 
@@ -959,6 +967,15 @@ def approve_draft_action(context, kind):
             f"No {draft_name} exists. Generate the draft first."
         )
 
+    if action.get(offensive_actions.OFFENSIVE_ACTION_PROPERTY):
+        start, end = action_frame_bounds(action)
+        fps = context.scene.render.fps / max(context.scene.render.fps_base, 0.001)
+        offensive_actions.validated_action_metadata(
+            action,
+            clip_duration_seconds=max(0.0, end - start) / max(fps, 0.001),
+            require_approved=False,
+        )
+
     final_base = approval_base_name(settings, kind)
     final_name = next_approved_version_name(final_base)
 
@@ -966,8 +983,9 @@ def approve_draft_action(context, kind):
     action["dsb_draft"] = False
     action["dsb_approved"] = True
     action["dsb_approved_kind"] = kind
-    action["dsb_approved_frame_start"] = int(context.scene.frame_start)
-    action["dsb_approved_frame_end"] = int(context.scene.frame_end)
+    approved_start, approved_end = action_frame_bounds(action)
+    action["dsb_approved_frame_start"] = int(approved_start)
+    action["dsb_approved_frame_end"] = int(approved_end)
     if action.get("dsb_guard_variant"):
         action["dsb_guard_action_id"] = final_name
     action.use_fake_user = True
@@ -982,6 +1000,12 @@ def approve_draft_action(context, kind):
         settings,
         kind,
     )
+    if action.get(offensive_actions.OFFENSIVE_ACTION_PROPERTY):
+        offensive_actions.validated_action_metadata(
+            action,
+            clip_duration_seconds=max(0.0, action_frame_bounds(action)[1] - action_frame_bounds(action)[0]) / max(fps, 0.001),
+            require_approved=True,
+        )
 
     return action
 
@@ -1192,6 +1216,7 @@ class DAFSettings(PropertyGroup):
     ui_surface_gore_open: BoolProperty(default=True)
     ui_body_arm_trauma_open: BoolProperty(default=False)
     ui_compound_trauma_open: BoolProperty(default=False)
+    ui_offensive_open: BoolProperty(default=True)
     ui_mace_guard_open: BoolProperty(default=False)
 
     target_height: FloatProperty(
@@ -1889,7 +1914,7 @@ class DAFSettings(PropertyGroup):
     last_damage_manifest_path: StringProperty(default="", options={'HIDDEN'})
     last_damage_validation_path: StringProperty(default="", options={'HIDDEN'})
 
-    # Trauma Field Authoring v5.1.3.
+    # Trauma Field Authoring v5.2.0.
     deformation_region: EnumProperty(
         name="Active Region",
         items=_deformation_region_items,
@@ -5242,6 +5267,260 @@ class DAF_OT_validate_mace_head_guards(Operator):
             self.report({'ERROR'}, str(exc))
             return {'CANCELLED'}
 
+
+def _apply_offensive_pose(arm, mapping, settings, variant, swing):
+    """Apply one readable rotation-only attack pose across torso and arms."""
+
+    fwd, side, up = vectors(settings, arm)
+    motion = variant["motion"]
+    two_hand = bool(variant.get("secondarySocketRole"))
+    elbow_sign = -1.0 if settings.invert_elbows else 1.0
+
+    if motion in {"SLASH_RTL", "SLASH_LTR", "TWO_HAND_SLASH", "HEAVY"}:
+        direction = -1.0 if motion == "SLASH_LTR" else 1.0
+        weight = 1.28 if motion == "HEAVY" else 1.12 if two_hand else 1.0
+        rotate(arm, mapping, "hips", up, direction * swing * 8.0 * weight)
+        rotate(arm, mapping, "spine", up, direction * swing * 14.0 * weight)
+        rotate(arm, mapping, "chest", up, direction * swing * 25.0 * weight)
+        rotate(arm, mapping, "chest", side, -abs(swing) * 5.0 * weight)
+        rotate(arm, mapping, "shoulder_r", side, -14.0 * abs(swing))
+        rotate(arm, mapping, "upper_arm_r", up, direction * swing * 68.0)
+        rotate(arm, mapping, "upper_arm_r", side, -42.0 - abs(swing) * 22.0)
+        rotate(arm, mapping, "lower_arm_r", side, (58.0 - swing * 24.0) * elbow_sign)
+        rotate_local(arm, mapping, "lower_arm_r", (0.0, 1.0, 0.0), direction * swing * 34.0)
+        rotate_local(arm, mapping, "hand_r", (0.0, 0.0, 1.0), -direction * swing * 18.0)
+        if two_hand:
+            rotate(arm, mapping, "shoulder_l", side, -12.0 * abs(swing))
+            rotate(arm, mapping, "upper_arm_l", up, direction * swing * 52.0)
+            rotate(arm, mapping, "upper_arm_l", side, -36.0 - abs(swing) * 18.0)
+            rotate(arm, mapping, "lower_arm_l", side, (76.0 - swing * 18.0) * elbow_sign)
+            rotate_local(arm, mapping, "hand_l", (0.0, 0.0, 1.0), direction * swing * 14.0)
+    elif motion in {"OVERHEAD", "TWO_HAND_OVERHEAD"}:
+        weight = 1.12 if two_hand else 1.0
+        lift = max(0.0, -swing)
+        descend = max(0.0, swing)
+        rotate(arm, mapping, "hips", side, (lift * 5.0 - descend * 8.0) * weight)
+        rotate(arm, mapping, "spine", side, (lift * 9.0 - descend * 15.0) * weight)
+        rotate(arm, mapping, "chest", side, (lift * 16.0 - descend * 28.0) * weight)
+        for suffix, lateral in (("r", 1.0), ("l", -1.0)):
+            if suffix == "l" and not two_hand:
+                continue
+            rotate(arm, mapping, f"shoulder_{suffix}", side, -18.0 * lift)
+            rotate(arm, mapping, f"upper_arm_{suffix}", side, -72.0 * lift + 58.0 * descend)
+            rotate(arm, mapping, f"upper_arm_{suffix}", fwd, lateral * (18.0 if two_hand else 7.0))
+            rotate(arm, mapping, f"lower_arm_{suffix}", side, (54.0 + lift * 38.0 - descend * 28.0) * elbow_sign)
+            rotate_local(arm, mapping, f"hand_{suffix}", (1.0, 0.0, 0.0), -swing * 16.0)
+    elif motion in {"THRUST", "TWO_HAND_THRUST"}:
+        extension = max(-1.0, min(1.0, swing))
+        rotate(arm, mapping, "hips", up, -extension * 5.0)
+        rotate(arm, mapping, "spine", side, -extension * 7.0)
+        rotate(arm, mapping, "chest", side, -extension * 13.0)
+        rotate(arm, mapping, "chest", up, -extension * 8.0)
+        for suffix, lateral in (("r", 1.0), ("l", -1.0)):
+            if suffix == "l" and not two_hand:
+                continue
+            rotate(arm, mapping, f"shoulder_{suffix}", side, -10.0 * abs(extension))
+            rotate(arm, mapping, f"upper_arm_{suffix}", side, -54.0 - extension * 24.0)
+            rotate(arm, mapping, f"upper_arm_{suffix}", fwd, lateral * (16.0 if two_hand else 6.0))
+            elbow = 92.0 - (extension + 1.0) * 36.0
+            rotate(arm, mapping, f"lower_arm_{suffix}", side, elbow * elbow_sign)
+            rotate_local(arm, mapping, f"hand_{suffix}", (1.0, 0.0, 0.0), extension * 9.0)
+        offset(arm, mapping, "hips", fwd * (0.026 * max(0.0, extension)))
+
+    rotate(arm, mapping, "thigh_l", side, -4.0 * abs(swing))
+    rotate(arm, mapping, "thigh_r", side, -4.0 * abs(swing))
+    rotate(arm, mapping, "shin_l", side, 7.0 * abs(swing))
+    rotate(arm, mapping, "shin_r", side, 7.0 * abs(swing))
+
+
+def validate_offensive_action(context, action, *, require_approved=None, available_socket_roles=None):
+    start, end = action_frame_bounds(action)
+    fps = context.scene.render.fps / max(context.scene.render.fps_base, 0.001)
+    require_approved = bool(action.get("dsb_approved", False)) if require_approved is None else bool(require_approved)
+    errors = []
+    try:
+        metadata = offensive_actions.validated_action_metadata(
+            action,
+            clip_duration_seconds=max(0.0, end - start) / max(fps, 0.001),
+            require_approved=require_approved,
+            available_socket_roles=available_socket_roles,
+        )
+    except ValueError as exc:
+        metadata = None
+        errors.append(str(exc))
+    if metadata is None:
+        errors.append("Action has no offensive metadata.")
+    curves = iter_action_fcurves(action)
+    if not curves:
+        errors.append("Offensive Action contains no animation curves.")
+    if any(str(getattr(curve, "data_path", "")).endswith(".scale") for curve in curves):
+        errors.append("Offensive Action contains forbidden bone-scale animation.")
+    kind = str(action.get("dsb_approved_kind", action.get("dsb_draft_kind", "")))
+    if not kind.startswith("ATTACK_"):
+        errors.append("Offensive Action kind must use the ATTACK_ namespace.")
+    markers = {marker.name: int(marker.frame) for marker in action.pose_markers}
+    for name in ("Attack_Start", "Active_Start", "Active_End", "Attack_End"):
+        if name not in markers:
+            errors.append(f"Offensive Action is missing {name} marker.")
+    return {
+        "status": "FAIL" if errors else "PASS",
+        "action": action.name,
+        "combatActionId": metadata.get("combatActionId") if metadata else None,
+        "metadata": metadata,
+        "markers": markers,
+        "errors": errors,
+    }
+
+
+def generate_offensive_action(context, kind):
+    variant = offensive_actions.OFFENSIVE_ACTION_VARIANTS.get(kind)
+    if variant is None:
+        raise RuntimeError(f"Unknown offensive Action kind {kind!r}.")
+    settings = context.scene.daf_settings
+    arm = find_armature(context)
+    anatomy_blender.require_generator_capability(arm, "offensive_humanoid", "Humanoid offensive generator")
+    mapping = map_bones(arm, settings)
+    required = [
+        "hips", "spine", "chest", "shoulder_r", "upper_arm_r", "lower_arm_r", "hand_r",
+        "thigh_l", "shin_l", "thigh_r", "shin_r",
+    ]
+    if variant.get("secondarySocketRole"):
+        required.extend(("shoulder_l", "upper_arm_l", "lower_arm_l", "hand_l"))
+    missing = [role for role in required if role not in mapping]
+    if missing:
+        raise RuntimeError("Missing mapped bones for humanoid offense: " + ", ".join(missing) + ".")
+    action = ensure_draft_action(arm, variant["draftName"])
+    fps = context.scene.render.fps / max(context.scene.render.fps_base, 0.001)
+    metadata, schedule = offensive_actions.phase_metadata(variant, fps)
+    context.scene.frame_start = schedule["start"]
+    context.scene.frame_end = schedule["end"]
+    stages = (
+        (schedule["start"], 0.0),
+        (schedule["anticipation"], -1.0),
+        (schedule["activeStart"], -0.64),
+        (schedule["contact"], 0.56),
+        (schedule["activeEnd"], 1.0),
+        (schedule["end"], 0.0),
+    )
+    for frame, swing in stages:
+        context.scene.frame_set(frame)
+        reset_pose(arm, mapping)
+        apply_animation_base_pose(arm, mapping, "IDLE")
+        _apply_offensive_pose(arm, mapping, settings, variant, swing)
+        key_pose(arm, mapping, frame)
+    for marker_name, frame in (
+        ("Attack_Start", schedule["start"]),
+        ("Windup_Anticipation", schedule["anticipation"]),
+        ("Active_Start", schedule["activeStart"]),
+        ("Contact", schedule["contact"]),
+        ("Active_End", schedule["activeEnd"]),
+        ("Attack_End", schedule["end"]),
+    ):
+        _set_action_marker(action, marker_name, frame)
+    action["dsb_draft_kind"] = kind
+    action["dsb_root_motion_policy"] = "IN_PLACE"
+    offensive_actions.stamp_offensive_metadata(action, metadata)
+    set_bezier(action, cycles=False)
+    animation_library.mark_draft(action, arm, settings, kind)
+    validation = validate_offensive_action(context, action, require_approved=False)
+    action["dsb_offensive_validation_status"] = validation["status"]
+    action["dsb_offensive_validation_json"] = json.dumps(validation, sort_keys=True)
+    if validation["status"] != "PASS":
+        raise RuntimeError("Generated offensive Action failed validation: " + "; ".join(validation["errors"][:4]))
+    context.scene.frame_set(schedule["activeStart"])
+    return action
+
+
+def generate_humanoid_offensive_suite(context):
+    """Regenerate the compact eight-Action suite with rollback on failure."""
+
+    arm = find_armature(context)
+    if not arm.animation_data:
+        arm.animation_data_create()
+    original_action = arm.animation_data.action
+    backups = {}
+    for variant in offensive_actions.OFFENSIVE_ACTION_VARIANTS.values():
+        draft_name = variant["draftName"]
+        existing = bpy.data.actions.get(draft_name)
+        if existing is None:
+            continue
+        unlink_action_everywhere(existing)
+        backup = existing.copy()
+        backup.name = "__DSB_OFFENSE_BACKUP_" + draft_name
+        backup.use_fake_user = True
+        backups[draft_name] = (backup, bool(existing.use_fake_user))
+    try:
+        actions = [generate_offensive_action(context, kind) for kind in offensive_actions.OFFENSIVE_ACTION_VARIANTS]
+    except Exception:
+        for variant in offensive_actions.OFFENSIVE_ACTION_VARIANTS.values():
+            draft_name = variant["draftName"]
+            current = bpy.data.actions.get(draft_name)
+            if current is not None:
+                unlink_action_everywhere(current)
+                bpy.data.actions.remove(current, do_unlink=True)
+            if draft_name in backups:
+                backup, fake_user = backups[draft_name]
+                backup.name = draft_name
+                backup.use_fake_user = fake_user
+        arm.animation_data.action = original_action if original_action and original_action.name in bpy.data.actions else None
+        raise
+    for backup, _fake_user in backups.values():
+        bpy.data.actions.remove(backup, do_unlink=True)
+    return actions
+
+
+def validate_all_offensive_actions(context, *, require_approved=None, available_socket_roles=None):
+    records = []
+    identities = {}
+    for action in bpy.data.actions:
+        if not action.get(offensive_actions.OFFENSIVE_ACTION_PROPERTY):
+            continue
+        record = validate_offensive_action(
+            context,
+            action,
+            require_approved=require_approved,
+            available_socket_roles=available_socket_roles,
+        )
+        records.append(record)
+        identities.setdefault(record.get("combatActionId"), []).append(action.name)
+    errors = [f"{record['action']}: {message}" for record in records for message in record["errors"]]
+    errors.extend(
+        f"Ambiguous combatActionId {action_id!r}: {', '.join(names)}."
+        for action_id, names in identities.items()
+        if not action_id or len(names) > 1
+    )
+    return {"status": "FAIL" if errors else "PASS", "actions": records, "errors": errors}
+
+
+class DAF_OT_generate_humanoid_offensive_suite(Operator):
+    bl_idname = "daf.generate_humanoid_offensive_suite"
+    bl_label = "Generate Humanoid Offensive Suite"
+    bl_options = {'REGISTER', 'UNDO'}
+
+    def execute(self, context):
+        try:
+            actions = generate_humanoid_offensive_suite(context)
+            self.report({'INFO'}, f"Generated {len(actions)} reviewed offensive drafts.")
+            return {'FINISHED'}
+        except Exception as exc:
+            self.report({'ERROR'}, str(exc))
+            return {'CANCELLED'}
+
+
+class DAF_OT_validate_humanoid_offensive_suite(Operator):
+    bl_idname = "daf.validate_humanoid_offensive_suite"
+    bl_label = "Validate Humanoid Offensive Suite"
+    bl_options = {'REGISTER'}
+
+    def execute(self, context):
+        validation = validate_all_offensive_actions(context, require_approved=None)
+        if validation["status"] != "PASS":
+            self.report({'ERROR'}, "; ".join(validation["errors"][:4]))
+            return {'CANCELLED'}
+        self.report({'INFO'}, f"Validated {len(validation['actions'])} offensive Actions.")
+        return {'FINISHED'}
+
+
 class DAF_OT_approve_draft(Operator):
     bl_idname = "daf.approve_draft"
     bl_label = "Version / Approve Draft"
@@ -5420,6 +5699,7 @@ def action_pack_metadata(action, fps):
     loop = kind in {"IDLE", "WALK"} or "walk" in lower or "idle" in lower
     death = kind == "DEATH" or any(word in lower for word in ("death", "collapse", "faceplant"))
     hurt = kind in {"HURT_LEFT", "HURT_RIGHT"} or "hurt" in lower
+    offensive = action.get(offensive_actions.OFFENSIVE_ACTION_PROPERTY)
     try:
         torso_contact_regions = json.loads(
             str(action.get("dsb_torso_contact_regions_json", "{}"))
@@ -5440,7 +5720,7 @@ def action_pack_metadata(action, fps):
         "loop": bool(loop),
         "play_once": bool(not loop),
         "hold_final_pose": bool(death),
-        "return_to_previous_state": bool(hurt),
+        "return_to_previous_state": bool(hurt or offensive),
     }
     if death:
         result["floor_grounding"] = {
@@ -5533,6 +5813,12 @@ def action_pack_metadata(action, fps):
             "root_motion_policy": str(action.get("dsb_root_motion_policy", "IN_PLACE")),
             "guard_validation_status": str(action.get("dsb_guard_validation_status", "NOT_VALIDATED")),
         })
+    if offensive:
+        result["offensive_action"] = offensive_actions.validated_action_metadata(
+            action,
+            clip_duration_seconds=result["duration_seconds"],
+            require_approved=True,
+        )
     return result
 
 
@@ -6206,6 +6492,22 @@ class DAF_OT_build_approved_pack(Operator):
             invalid = [item['name'] for item in metadata if item['non_finite_keyframes'] > 0]
             if invalid:
                 raise RuntimeError('Non-finite keyframes found in: ' + ', '.join(invalid))
+            offensive_metadata = [
+                item for item in metadata if item.get("offensive_action") is not None
+            ]
+            offensive_ids = [
+                item["offensive_action"]["combatActionId"]
+                for item in offensive_metadata
+            ]
+            duplicate_offensive_ids = sorted({
+                value for value in offensive_ids if offensive_ids.count(value) > 1
+            })
+            if duplicate_offensive_ids:
+                raise RuntimeError(
+                    "Animation pack contains ambiguous combat Action IDs: "
+                    + ", ".join(duplicate_offensive_ids)
+                    + "."
+                )
             guard_actions = [action for action in actions if action.get("dsb_guard_variant")]
             guard_validation = []
             if guard_actions:
@@ -6300,6 +6602,8 @@ class DAF_OT_build_approved_pack(Operator):
                     infer_legacy=False,
                 ),
                 'animations': metadata,
+                'offensive_action_schema': offensive_actions.OFFENSIVE_ACTION_SCHEMA,
+                'approved_offensive_action_count': len(offensive_metadata),
                 'mace_head_guard_validation': guard_validation,
                 'death_floor_validation': death_floor_validation,
                 'validation_report': os.path.basename(validation_path),
@@ -6653,7 +6957,7 @@ class DAF_PT_legacy_panel(Panel):
             layout,
             s,
             "ui_deformation_authoring_open",
-            "Trauma Field Authoring v5.1.3",
+            "Trauma Field Authoring v5.2.0",
         )
         if opened:
             configure_property_box(box)
@@ -6989,7 +7293,11 @@ DAMAGE_READINESS_CLASSES = damage_readiness.CLASSES
 
 _DAMAGE_AUTHORING_MODULE_NAME = f"{__package__}.damage_authoring"
 sys.modules.pop(_DAMAGE_AUTHORING_MODULE_NAME, None)
+_ATTACHMENT_SOCKETS_MODULE_NAME = f"{__package__}.attachment_sockets"
+sys.modules.pop(_ATTACHMENT_SOCKETS_MODULE_NAME, None)
 importlib.invalidate_caches()
+attachment_sockets = importlib.import_module(".attachment_sockets", __package__)
+ATTACHMENT_SOCKET_CLASSES = attachment_sockets.CLASSES
 damage_authoring = importlib.import_module(".damage_authoring", __package__)
 DAMAGE_AUTHORING_CLASSES = damage_authoring.CLASSES
 
@@ -7043,6 +7351,8 @@ CLASSES = (
     DAF_OT_collapse,
     DAF_OT_hurt_left,
     DAF_OT_hurt_right,
+    DAF_OT_generate_humanoid_offensive_suite,
+    DAF_OT_validate_humanoid_offensive_suite,
     DAF_OT_generate_mace_head_guards,
     DAF_OT_preview_mace_guard_active,
     DAF_OT_validate_mace_head_guards,
@@ -7053,6 +7363,7 @@ CLASSES = (
     DAF_OT_validate_last_pack,
     *DAMAGE_READINESS_CLASSES,
     *DAMAGE_AUTHORING_CLASSES,
+    *ATTACHMENT_SOCKET_CLASSES,
     *DEFORMATION_AUTHORING_CLASSES,
     *TASK_UI_CLASSES,
     DAF_PT_panel,

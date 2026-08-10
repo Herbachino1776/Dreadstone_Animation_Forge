@@ -36,3 +36,11 @@ This portable clip/package contract is distinct from Complete Damage export.
 For a Complete Damage GLB, approved clips are ownership-audited and staged only
 on `DSB_DAMAGE_RIG`; source-rig Actions cannot enter through Blender's global
 Action inventory. See `RUNTIME_DAMAGE_EXPORT_CONTRACT.md`.
+
+An offensive Action additionally carries `dreadstone.offensive_action.v1` in
+`dsb_offensive_action_json`. The record preserves its stable combat ID,
+attack family, compatible weapon classes, primary/secondary hand roles,
+in-place/root-motion policy, commitment point, exact clip duration, and
+contiguous WINDUP / ACTIVE / RECOVERY intervals in seconds. Draft or
+unapproved metadata may remain in an authoring `.blend`, but it cannot enter an
+approved animation pack or Complete Damage runtime export.

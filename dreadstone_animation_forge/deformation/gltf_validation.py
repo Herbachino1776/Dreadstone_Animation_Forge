@@ -19,6 +19,8 @@ GLB_JSON_CHUNK = 0x4E4F534A
 SURFACE_STAIN_BINDING_SCHEMA = "dreadstone.surface_stain_binding.v1"
 STAIN_MODES = {"SURFACE_STAIN", "STAIN_AND_RAISED"}
 FINAL_GLB_VALIDATION_SCHEMA = "dreadstone.final_glb_validation.v2"
+ATTACHMENT_SOCKET_SCHEMA = "dreadstone.attachment_sockets.v1"
+OFFENSIVE_ACTION_SCHEMA = "dreadstone.offensive_action.v1"
 
 
 def load_glb_json(filepath):
@@ -279,6 +281,21 @@ def _runtime_contract_validation(gltf, manifest, nodes_by_name):
         for clip in animation_contract.get("clips", [])
         if str(clip.get("name", ""))
     }
+    expected_offensive_ids = [
+        str((clip.get("offensiveAction") or {}).get("combatActionId", ""))
+        for clip in expected_clips.values()
+        if clip.get("offensiveAction") is not None
+    ]
+    duplicate_offensive_ids = sorted({
+        value for value in expected_offensive_ids
+        if value and expected_offensive_ids.count(value) > 1
+    })
+    if duplicate_offensive_ids:
+        animation_errors.append(
+            "Runtime animation contract contains ambiguous combat Action IDs: "
+            + ", ".join(duplicate_offensive_ids)
+            + "."
+        )
     actual_names = [str(animation.get("name", "")) for animation in animations]
     duplicate_animation_names = sorted(
         {name for name in actual_names if name and actual_names.count(name) > 1}
@@ -318,6 +335,21 @@ def _runtime_contract_validation(gltf, manifest, nodes_by_name):
             clip_errors.append("does not retain approved/non-draft metadata")
         if str(extras.get("dsb_runtime_armature", "")) != runtime_name:
             clip_errors.append(f"does not declare runtime owner {runtime_name!r}")
+        expected_offensive = expected.get("offensiveAction")
+        raw_offensive = extras.get("dsb_offensive_action_json")
+        embedded_offensive = None
+        if raw_offensive:
+            try:
+                embedded_offensive = json.loads(str(raw_offensive))
+            except (TypeError, ValueError, json.JSONDecodeError):
+                clip_errors.append("contains malformed offensive Action metadata")
+        if expected_offensive is not None:
+            if embedded_offensive != expected_offensive:
+                clip_errors.append("embedded offensive Action metadata does not match the technical sidecar")
+            if str((expected_offensive or {}).get("schema", "")) != OFFENSIVE_ACTION_SCHEMA:
+                clip_errors.append("technical sidecar uses an unsupported offensive Action schema")
+        elif embedded_offensive is not None:
+            clip_errors.append("contains offensive metadata absent from the approved technical sidecar")
         target_indices = []
         for channel_index, channel in enumerate(channels):
             target_index = (channel.get("target", {}) or {}).get("node")
@@ -334,6 +366,14 @@ def _runtime_contract_validation(gltf, manifest, nodes_by_name):
                 clip_errors.append(f"channel {channel_index} targets an authoring-only node")
         time_start, time_end, time_errors = _accessor_time_bounds(gltf, animation)
         clip_errors.extend(time_errors)
+        expected_duration = expected.get("clipDurationSeconds")
+        if (
+            expected_duration is not None
+            and time_start is not None
+            and time_end is not None
+            and abs((time_end - time_start) - float(expected_duration)) > 1.0e-4
+        ):
+            clip_errors.append("exported duration does not match authored offensive timing")
         if clip_errors:
             animation_errors.append(
                 f"Runtime animation {name or animation_index!r}: " + "; ".join(clip_errors) + "."
@@ -350,6 +390,11 @@ def _runtime_contract_validation(gltf, manifest, nodes_by_name):
                 "durationSeconds": (
                     time_end - time_start
                     if time_start is not None and time_end is not None
+                    else None
+                ),
+                "combatActionId": (
+                    (expected_offensive or {}).get("combatActionId")
+                    if expected_offensive is not None
                     else None
                 ),
                 "status": "PASS" if not clip_errors else "FAIL",
@@ -390,6 +435,119 @@ def _runtime_contract_validation(gltf, manifest, nodes_by_name):
     return runtime_skeleton, runtime_animations, skeleton_errors + animation_errors
 
 
+def _attachment_socket_validation(gltf, manifest, nodes_by_name):
+    if "runtimeAttachmentSockets" not in manifest:
+        return {
+            "status": "PASS",
+            "schema": ATTACHMENT_SOCKET_SCHEMA,
+            "available": False,
+            "runtimeArmature": "DSB_DAMAGE_RIG",
+            "socketCount": 0,
+            "runtimeBoneCount": len((manifest.get("runtimeSkeleton", {}) or {}).get("requiredBones", [])),
+            "skinJointCount": 0,
+            "helperNodeLeakCount": 0,
+            "socketJointLeakCount": 0,
+            "sockets": [],
+            "errors": [],
+        }
+    contract = manifest.get("runtimeAttachmentSockets", {})
+    errors = []
+    nodes = gltf.get("nodes", [])
+    runtime_name = str(contract.get("runtimeArmature", "DSB_DAMAGE_RIG"))
+    runtime_record = nodes_by_name.get(runtime_name)
+    runtime_hierarchy = (
+        _node_descendants(nodes, runtime_record[0])
+        if runtime_record is not None
+        else set()
+    )
+    runtime_names = {
+        str(nodes[index].get("name", "")) for index in runtime_hierarchy
+    }
+    if contract.get("schema") != ATTACHMENT_SOCKET_SCHEMA:
+        errors.append(f"Attachment socket schema must be {ATTACHMENT_SOCKET_SCHEMA}.")
+    if runtime_name != "DSB_DAMAGE_RIG":
+        errors.append("Attachment sockets must target DSB_DAMAGE_RIG.")
+    sockets = contract.get("sockets")
+    if not isinstance(sockets, list):
+        sockets = []
+        errors.append("Attachment socket contract has no sockets array.")
+    ids = []
+    roles = []
+    for index, socket in enumerate(sockets):
+        if not isinstance(socket, Mapping):
+            errors.append(f"Attachment socket {index} is not an object.")
+            continue
+        socket_id = str(socket.get("socketId", ""))
+        ids.append(socket_id)
+        role = str(socket.get("semanticRole", ""))
+        roles.append(role)
+        parent = str(socket.get("parentRuntimeBone", ""))
+        if not socket_id:
+            errors.append(f"Attachment socket {index} has no stable ID.")
+        if parent not in runtime_names:
+            errors.append(f"Attachment socket {socket_id!r} parent {parent!r} is outside DSB_DAMAGE_RIG.")
+        position = socket.get("localPosition")
+        quaternion = socket.get("localQuaternion")
+        if not isinstance(position, list) or len(position) != 3 or not all(isinstance(value, (int, float)) and math.isfinite(float(value)) for value in position):
+            errors.append(f"Attachment socket {socket_id!r} has a non-finite local position.")
+        if not isinstance(quaternion, list) or len(quaternion) != 4 or not all(isinstance(value, (int, float)) and math.isfinite(float(value)) for value in quaternion):
+            errors.append(f"Attachment socket {socket_id!r} has an invalid local quaternion.")
+        elif abs(math.sqrt(sum(float(value) ** 2 for value in quaternion)) - 1.0) > 1.0e-4:
+            errors.append(f"Attachment socket {socket_id!r} quaternion is not normalized.")
+    duplicates = sorted({value for value in ids if value and ids.count(value) > 1})
+    if duplicates:
+        errors.append("Attachment socket IDs are duplicated: " + ", ".join(duplicates) + ".")
+    duplicate_roles = sorted({value for value in roles if value and roles.count(value) > 1})
+    if duplicate_roles:
+        errors.append("Attachment socket semantic roles are duplicated: " + ", ".join(duplicate_roles) + ".")
+    if contract.get("socketCount") != len(sockets):
+        errors.append("Attachment socketCount does not match the socket inventory.")
+    helper_nodes = [
+        str(node.get("name", ""))
+        for node in nodes
+        if str(node.get("name", "")).startswith("DSB_ATTACHMENT_SOCKET_")
+        or bool((node.get("extras", {}) or {}).get("dsb_attachment_socket_owned", False))
+    ]
+    if helper_nodes:
+        errors.append("Authoring socket helpers leaked into the runtime GLB: " + ", ".join(sorted(helper_nodes)) + ".")
+    joint_names = {
+        str(nodes[joint].get("name", ""))
+        for skin in gltf.get("skins", [])
+        for joint in skin.get("joints", [])
+        if isinstance(joint, int) and 0 <= joint < len(nodes)
+    }
+    socket_joint_leaks = sorted(set(helper_nodes) & joint_names)
+    if socket_joint_leaks:
+        errors.append("Attachment socket helpers became skin joints: " + ", ".join(socket_joint_leaks) + ".")
+    required_bones = set((manifest.get("runtimeSkeleton", {}) or {}).get("requiredBones", []))
+    declared_bone_count = contract.get("runtimeBoneCount")
+    if declared_bone_count != len(required_bones):
+        errors.append("Attachment socket authoring changed the declared runtime bone count.")
+    if len(joint_names) != declared_bone_count:
+        errors.append("Completed GLB skin-joint count differs from the declared runtime bone count.")
+    return {
+        "status": "PASS" if not errors else "FAIL",
+        "schema": ATTACHMENT_SOCKET_SCHEMA,
+        "available": bool(sockets),
+        "runtimeArmature": runtime_name,
+        "socketCount": len(sockets),
+        "runtimeBoneCount": len(required_bones),
+        "skinJointCount": len(joint_names),
+        "helperNodeLeakCount": len(helper_nodes),
+        "socketJointLeakCount": len(socket_joint_leaks),
+        "sockets": [
+            {
+                "socketId": socket.get("socketId"),
+                "semanticRole": socket.get("semanticRole"),
+                "parentRuntimeBone": socket.get("parentRuntimeBone"),
+            }
+            for socket in sockets
+            if isinstance(socket, Mapping)
+        ],
+        "errors": errors,
+    }
+
+
 def validate_damage_gltf(gltf, manifest):
     """Validate runtime skeleton, animation, and portable damage contracts."""
 
@@ -418,6 +576,10 @@ def validate_damage_gltf(gltf, manifest):
         _runtime_contract_validation(gltf, manifest, nodes_by_name)
     )
     errors.extend(runtime_errors)
+    runtime_attachment_sockets = _attachment_socket_validation(
+        gltf, manifest, nodes_by_name
+    )
+    errors.extend(runtime_attachment_sockets["errors"])
 
     required_by_key = {}
     for key in enabled_keys:
@@ -664,6 +826,7 @@ def validate_damage_gltf(gltf, manifest):
         "schema": FINAL_GLB_VALIDATION_SCHEMA,
         "runtimeSkeleton": runtime_skeleton,
         "runtimeAnimations": runtime_animations,
+        "runtimeAttachmentSockets": runtime_attachment_sockets,
         "surfaceStains": {
             "status": surface_status,
             "schema": SURFACE_STAIN_BINDING_SCHEMA,

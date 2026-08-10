@@ -1,6 +1,6 @@
 # Dreadstone Animation Forge
 
-Dreadstone Animation Forge `5.1.3` is a proprietary Blender add-on for
+Dreadstone Animation Forge `5.2.0` is a proprietary Blender add-on for
 animation drafting and compatibility-preserving damage authoring. The supported
 release runtime is Blender `5.1.2`.
 
@@ -57,9 +57,17 @@ coverage is advisory and never blocks approval or export. Portable humanoid
 Action clips must carry the current Skin & Bones canonical rig and `+Y`
 anatomy metadata.
 
+Forge 5.2 adds a reviewed humanoid offensive suite and a runtime armament
+handoff. Eight attack drafts carry explicit weapon classes, hand socket roles,
+stable combat IDs, and contiguous WINDUP / ACTIVE / RECOVERY timing in seconds.
+Managed right/left hand socket helpers remain editable in the authoring file
+but export only as versioned sidecar transforms; they do not become runtime
+bones or GLB nodes. See
+[the runtime attachment and offensive contract](docs/RUNTIME_ATTACHMENT_AND_OFFENSIVE_CONTRACT.md).
+
 ## Install and open
 
-1. Download `Dreadstone_Animation_Forge_v5_1_3.zip`.
+1. Download `Dreadstone_Animation_Forge_v5_2_0.zip`.
 2. In Blender choose **Edit > Preferences > Add-ons > Install from Disk**.
 3. Select the ZIP without extracting it and enable the add-on.
 4. In the 3D Viewport press `N`, open **Dreadstone**, then choose

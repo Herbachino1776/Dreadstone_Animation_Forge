@@ -23,9 +23,14 @@ if str(ROOT) not in sys.path:
 import dreadstone_animation_forge as addon  # noqa: E402
 from dreadstone_animation_forge import (  # noqa: E402
     animation_library,
+    attachment_sockets,
     damage_authoring,
     deformation_authoring,
+    offensive_actions,
     runtime_export,
+)
+from dreadstone_animation_forge.anatomy.skin_and_bones import (  # noqa: E402
+    CANONICAL_HUMANOID_PARENTS,
 )
 from dreadstone_animation_forge.deformation import gltf_validation  # noqa: E402
 
@@ -39,20 +44,36 @@ def make_armature(name):
     bpy.ops.object.armature_add(enter_editmode=True, location=(0.0, 0.0, 0.0))
     armature = bpy.context.active_object
     armature.name = name
-    root = armature.data.edit_bones[0]
-    root.name = "root"
-    root.head = (0.0, 0.0, 0.0)
-    root.tail = (0.0, 0.0, 0.25)
-    body = armature.data.edit_bones.new("body")
-    body.parent = root
-    body.use_connect = True
-    body.head = root.tail
-    body.tail = (0.0, 0.0, 0.75)
-    head = armature.data.edit_bones.new("head")
-    head.parent = body
-    head.use_connect = True
-    head.head = body.tail
-    head.tail = (0.0, 0.0, 1.05)
+    first = armature.data.edit_bones[0]
+    armature.data.edit_bones.remove(first)
+    positions = {
+        "root": ((0.0, 0.0, 0.0), (0.0, 0.0, 0.15)),
+        "body": ((0.0, 0.0, 0.15), (0.0, 0.0, 0.55)),
+        "body_top0": ((0.0, 0.0, 0.55), (0.0, 0.0, 0.82)),
+        "body_top1": ((0.0, 0.0, 0.82), (0.0, 0.0, 1.08)),
+        "body_top2": ((0.0, 0.0, 1.08), (0.0, 0.0, 1.34)),
+        "neck": ((0.0, 0.0, 1.34), (0.0, 0.0, 1.50)),
+        "head": ((0.0, 0.0, 1.50), (0.0, 0.0, 1.78)),
+        "shoulder_left": ((-0.02, 0.0, 1.30), (-0.22, 0.0, 1.30)),
+        "arm_left_top": ((-0.22, 0.0, 1.30), (-0.55, 0.0, 1.22)),
+        "arm_left_bot": ((-0.55, 0.0, 1.22), (-0.83, 0.0, 1.10)),
+        "arm_left_hand": ((-0.83, 0.0, 1.10), (-0.99, 0.0, 1.06)),
+        "shoulder_right": ((0.02, 0.0, 1.30), (0.22, 0.0, 1.30)),
+        "arm_right_top": ((0.22, 0.0, 1.30), (0.55, 0.0, 1.22)),
+        "arm_right_bot": ((0.55, 0.0, 1.22), (0.83, 0.0, 1.10)),
+        "arm_right_hand": ((0.83, 0.0, 1.10), (0.99, 0.0, 1.06)),
+        "leg_left_top": ((-0.14, 0.0, 0.50), (-0.15, 0.0, 0.08)),
+        "leg_left_bot": ((-0.15, 0.0, 0.08), (-0.15, 0.02, -0.36)),
+        "leg_left_foot": ((-0.15, 0.02, -0.36), (-0.15, 0.28, -0.40)),
+        "leg_right_top": ((0.14, 0.0, 0.50), (0.15, 0.0, 0.08)),
+        "leg_right_bot": ((0.15, 0.0, 0.08), (0.15, 0.02, -0.36)),
+        "leg_right_foot": ((0.15, 0.02, -0.36), (0.15, 0.28, -0.40)),
+    }
+    for bone_name, parent_name in CANONICAL_HUMANOID_PARENTS.items():
+        bone = armature.data.edit_bones.new(bone_name)
+        bone.head, bone.tail = positions[bone_name]
+        if parent_name:
+            bone.parent = armature.data.edit_bones[parent_name]
     bpy.ops.object.mode_set(mode="OBJECT")
     for pose_bone in armature.pose.bones:
         pose_bone.rotation_mode = "QUATERNION"
@@ -127,8 +148,16 @@ def create_action(owner, name, kind, *, approved=True, draft=False, clip_id=""):
         owner.animation_data_create()
     action = bpy.data.actions.new(name)
     owner.animation_data.action = action
+    offensive_metadata = None
+    frames = (1, 7, 13)
+    if kind in offensive_actions.OFFENSIVE_ACTION_VARIANTS:
+        offensive_metadata, schedule = offensive_actions.phase_metadata(
+            offensive_actions.OFFENSIVE_ACTION_VARIANTS[kind],
+            bpy.context.scene.render.fps / max(bpy.context.scene.render.fps_base, 0.001),
+        )
+        frames = (schedule["start"], schedule["activeStart"], schedule["end"])
     body = owner.pose.bones["body"]
-    for frame, offset in ((1, 0.0), (7, 0.08), (13, 0.0)):
+    for frame, offset in zip(frames, (0.0, 0.08, 0.0)):
         body.location = (offset, 0.0, 0.0)
         body.keyframe_insert("location", frame=frame, group="body")
     action["dsb_approved"] = bool(approved)
@@ -136,9 +165,11 @@ def create_action(owner, name, kind, *, approved=True, draft=False, clip_id=""):
     action["dsb_approved_kind"] = kind
     action[animation_library.CLIP_OWNER_PROPERTY] = owner.name
     action[animation_library.CLIP_ID_PROPERTY] = clip_id or ("clip_" + name)
-    action["dsb_approved_frame_start"] = 1
-    action["dsb_approved_frame_end"] = 13
+    action["dsb_approved_frame_start"] = frames[0]
+    action["dsb_approved_frame_end"] = frames[-1]
     action["dsb_root_motion_policy"] = "IN_PLACE"
+    if offensive_metadata is not None:
+        offensive_actions.stamp_offensive_metadata(action, offensive_metadata)
     track = owner.animation_data.nla_tracks.new()
     track.name = "OWNER_" + name
     track.strips.new(name, 1, action)
@@ -287,7 +318,12 @@ def main():
     source_actions = [
         create_action(source_rig, "DSB_Idle_Humanoid_v001", "IDLE", clip_id="source_idle"),
         create_action(source_rig, "DSB_Walk_NORMAL_v001", "WALK", clip_id="source_walk"),
-        create_action(source_rig, "DSB_Attack_SourceOnly_v001", "ATTACK", clip_id="source_attack"),
+        create_action(
+            source_rig,
+            "DSB_Attack_SourceOnly_v001",
+            "ATTACK_SLASH_RTL_ONE_HAND",
+            clip_id="source_attack",
+        ),
         create_action(
             source_rig,
             "DSB_DRAFT_Unapproved",
@@ -305,6 +341,28 @@ def main():
     ]
     source_rig.animation_data.action = source_actions[0]
     runtime_rig.animation_data.action = runtime_actions[0]
+
+    bone_count_before_sockets = len(runtime_rig.data.bones)
+    rest_before_sockets = rig_snapshot(runtime_rig)["bones"]
+    action_count_before_sockets = len(bpy.data.actions)
+    helpers = attachment_sockets.ensure_standard_sockets(runtime_rig)
+    right_helper = next(
+        helper for helper in helpers
+        if helper["dsb_attachment_socket_role"] == "MAIN_HAND_R"
+    )
+    authored_world = right_helper.matrix_world.copy()
+    authored_world.translation.x += 0.031
+    right_helper.matrix_world = authored_world
+    preserved_world = right_helper.matrix_world.copy()
+    helpers_after = attachment_sockets.ensure_standard_sockets(runtime_rig)
+    require(len(helpers_after) == 2, "Socket ensure is not idempotent.")
+    require(
+        max(abs(a - b) for row_a, row_b in zip(right_helper.matrix_world, preserved_world) for a, b in zip(row_a, row_b)) < 1.0e-7,
+        "Socket repair reset the artist-authored helper transform.",
+    )
+    require(len(runtime_rig.data.bones) == bone_count_before_sockets, "Socket ensure added a bone.")
+    require(rig_snapshot(runtime_rig)["bones"] == rest_before_sockets, "Socket ensure changed rest matrices.")
+    require(len(bpy.data.actions) == action_count_before_sockets, "Socket ensure changed Actions.")
 
     state = {
         "schema": damage_authoring.AUTHORING_SCHEMA,
@@ -419,6 +477,7 @@ def main():
     require(validation["status"] == "PASS", "; ".join(validation["errors"]))
     require(validation["runtimeSkeleton"]["status"] == "PASS", "Runtime skeleton validation failed.")
     require(validation["runtimeAnimations"]["status"] == "PASS", "Runtime animation validation failed.")
+    require(validation["runtimeAttachmentSockets"]["status"] == "PASS", "Runtime socket validation failed.")
     require(set(animation_names) == expected_animations, f"Unexpected animation inventory: {animation_names}")
     require("DSB_Idle_Humanoid_v001" not in animation_names, "Source Idle leaked into the GLB.")
     require("DSB_Walk_NORMAL_v001" not in animation_names, "Source Walk leaked into the GLB.")
@@ -426,10 +485,26 @@ def main():
     require("SBF_CLEAN_CHARACTER" not in node_names, "Source mesh leaked into the GLB.")
     require("DSB_SOURCE_MODEL_PROTECTED" not in node_names, "Protected source leaked into the GLB.")
     require("DSB_DAMAGE_RIG" in node_names, "Runtime rig is missing from the GLB.")
+    require(
+        not any(name.startswith(attachment_sockets.ATTACHMENT_SOCKET_HELPER_PREFIX) for name in node_names),
+        "An authoring socket helper leaked into the GLB.",
+    )
     require(manifest["source"]["armature"] == "SBF_ProductionRig", "Source provenance changed.")
     require(manifest["source"]["object"] == "SBF_CLEAN_CHARACTER", "Source object provenance changed.")
     require(manifest["runtimeAnimations"]["rejectedSourceActionCount"] == 2, "Duplicate source family rejection count is wrong.")
     require(manifest["runtimeAnimations"]["mirroredSourceActionCount"] == 1, "Compatible source-only mirror count is wrong.")
+    require(manifest["runtimeAttachmentSockets"]["socketCount"] == 2, "Runtime socket count is wrong.")
+    require(
+        {socket["parentRuntimeBone"] for socket in manifest["runtimeAttachmentSockets"]["sockets"]}
+        == {"arm_left_hand", "arm_right_hand"},
+        "Runtime socket parents are not canonical hand bones.",
+    )
+    offensive_records = manifest["runtimeAnimations"]["offensiveActions"]
+    require(len(offensive_records) == 1, "Exactly one offensive capability should export.")
+    require(
+        offensive_records[0]["combatActionId"] == "humanoid_one_hand_slash_rtl",
+        "Offensive combat Action identity changed.",
+    )
 
     action_after = {
         action.name: action_snapshot(action)
@@ -462,6 +537,10 @@ def main():
     require("SBF_ProductionRig" not in imported_names, "Clean import recreated the source rig.")
     require("SBF_CLEAN_CHARACTER" not in imported_names, "Clean import recreated the source mesh.")
     require("DSB_SOURCE_MODEL_PROTECTED" not in imported_names, "Clean import recreated protected source.")
+    require(
+        not any(name.startswith(attachment_sockets.ATTACHMENT_SOCKET_HELPER_PREFIX) for name in imported_names),
+        "Clean import recreated an authoring socket helper.",
+    )
     imported_armatures = [obj for obj in bpy.data.objects if obj.type == 'ARMATURE']
     require(len(imported_armatures) == 1, "Clean import contains more than one armature hierarchy.")
     imported_body = bpy.data.objects[damage_authoring.BODY_CORE_NAME]
@@ -490,6 +569,7 @@ def main():
         "rejectedSourceAnimations": manifest["runtimeAnimations"]["rejectedSourceActions"],
         "runtimeSkeleton": validation["runtimeSkeleton"],
         "runtimeAnimations": validation["runtimeAnimations"],
+        "runtimeAttachmentSockets": validation["runtimeAttachmentSockets"],
         "sourceProvenancePreserved": True,
         "sourceActionsPreserved": True,
         "sourceRigPreserved": True,

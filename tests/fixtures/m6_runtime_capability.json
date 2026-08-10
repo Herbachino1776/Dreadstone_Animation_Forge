@@ -1,0 +1,115 @@
+{
+  "schema": "dreadstone.damage_authoring.v1",
+  "authoringVersion": "5.2.0",
+  "authoringBuildId": "2026-08-10.runtime-armament-contract.1",
+  "runtimeSkeleton": {
+    "schema": "dreadstone.runtime_skeleton.v1",
+    "status": "PASS",
+    "armature": "DSB_DAMAGE_RIG",
+    "skeletonCount": 1,
+    "requiredBones": [
+      "arm_left_bot",
+      "arm_left_hand",
+      "arm_left_top",
+      "arm_right_bot",
+      "arm_right_hand",
+      "arm_right_top",
+      "body",
+      "body_top0",
+      "body_top1",
+      "body_top2",
+      "head",
+      "leg_left_bot",
+      "leg_left_foot",
+      "leg_left_top",
+      "leg_right_bot",
+      "leg_right_foot",
+      "leg_right_top",
+      "neck",
+      "root",
+      "shoulder_left",
+      "shoulder_right"
+    ]
+  },
+  "runtimeAttachmentSockets": {
+    "schema": "dreadstone.attachment_sockets.v1",
+    "runtimeArmature": "DSB_DAMAGE_RIG",
+    "runtimeBoneCount": 21,
+    "socketCount": 2,
+    "sockets": [
+      {
+        "socketId": "hand_left_weapon",
+        "semanticRole": "MAIN_HAND_L",
+        "parentRuntimeBone": "arm_left_hand",
+        "localPosition": [0.0, 0.08, 0.0],
+        "localQuaternion": [0.0, 0.0, 0.0, 1.0],
+        "enabled": true,
+        "exportable": true
+      },
+      {
+        "socketId": "hand_right_weapon",
+        "semanticRole": "MAIN_HAND_R",
+        "parentRuntimeBone": "arm_right_hand",
+        "localPosition": [0.0, 0.08, 0.0],
+        "localQuaternion": [0.0, 0.0, 0.0, 1.0],
+        "enabled": true,
+        "exportable": true
+      }
+    ]
+  },
+  "runtimeAnimations": {
+    "schema": "dreadstone.runtime_animations.v1",
+    "status": "PASS",
+    "runtimeArmature": "DSB_DAMAGE_RIG",
+    "exportedCount": 1,
+    "offensiveActionSchema": "dreadstone.offensive_action.v1",
+    "clips": [
+      {
+        "name": "DSB_Attack_Slash_RTL_OneHand_v001",
+        "approvedKind": "ATTACK_SLASH_RTL_ONE_HAND",
+        "clipDurationSeconds": 1.333333,
+        "offensiveAction": {
+          "schema": "dreadstone.offensive_action.v1",
+          "combatActionId": "humanoid_one_hand_slash_rtl",
+          "attackFamily": "SLASH_RIGHT_TO_LEFT",
+          "socketRole": "MAIN_HAND_R",
+          "compatibleWeaponClasses": ["ONE_HAND_BLADE", "ONE_HAND_BLUNT"],
+          "attackSourceRole": "EQUIPPED_MAIN_HAND",
+          "rootMotionPolicy": "IN_PLACE",
+          "clipDurationSeconds": 1.333333,
+          "phases": {
+            "windup": {"startSeconds": 0.0, "endSeconds": 0.458333},
+            "active": {"startSeconds": 0.458333, "endSeconds": 0.75},
+            "recovery": {"startSeconds": 0.75, "endSeconds": 1.333333}
+          },
+          "commitment": {
+            "timeSeconds": 0.458333,
+            "lockOrientationThroughActive": true
+          }
+        }
+      }
+    ],
+    "offensiveActions": [
+      {
+        "actionName": "DSB_Attack_Slash_RTL_OneHand_v001",
+        "schema": "dreadstone.offensive_action.v1",
+        "combatActionId": "humanoid_one_hand_slash_rtl",
+        "attackFamily": "SLASH_RIGHT_TO_LEFT",
+        "socketRole": "MAIN_HAND_R",
+        "compatibleWeaponClasses": ["ONE_HAND_BLADE", "ONE_HAND_BLUNT"],
+        "attackSourceRole": "EQUIPPED_MAIN_HAND",
+        "rootMotionPolicy": "IN_PLACE",
+        "clipDurationSeconds": 1.333333,
+        "phases": {
+          "windup": {"startSeconds": 0.0, "endSeconds": 0.458333},
+          "active": {"startSeconds": 0.458333, "endSeconds": 0.75},
+          "recovery": {"startSeconds": 0.75, "endSeconds": 1.333333}
+        },
+        "commitment": {
+          "timeSeconds": 0.458333,
+          "lockOrientationThroughActive": true
+        }
+      }
+    ]
+  }
+}

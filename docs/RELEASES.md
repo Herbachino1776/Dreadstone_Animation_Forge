@@ -20,7 +20,7 @@
 
 ## Documentation definition of done
 
-- [ ] Version and `Dreadstone_Animation_Forge_v5_1_3.zip` match everywhere.
+- [ ] Version and `Dreadstone_Animation_Forge_v5_2_0.zip` match everywhere.
 - [ ] Creature Anatomy Profile schema/detection/orientation/persistence tests,
       the exact humanoid mapping comparison, malformed quadruped cases, and
       extracted-ZIP Blender registration pass.
@@ -44,5 +44,10 @@
 - [ ] Complete Damage runtime membership, `DSB_DAMAGE_RIG`-only skeleton,
       Action owner/filter staging, source provenance, GLB v2 diagnostics, and
       clean-reimport regression pass.
+- [ ] Runtime hand sockets preserve the exact 21-bone rest skeleton, persist
+      artist grip offsets, remain absent from GLB nodes/joints, and export
+      finite canonical-hand-local transforms.
+- [ ] Eight offensive Actions pass approval, identity, phase, duration, socket,
+      GLB inventory, sidecar, and clean-reimport regressions.
 - [ ] No stale button label, version, archive name, or superseded workflow
       remains.

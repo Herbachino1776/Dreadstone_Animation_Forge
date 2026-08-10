@@ -1503,6 +1503,45 @@ def _draw_mace_guard_animation(layout, settings):
     guard.label(text="Shape-key damage preview remains independent", icon='INFO')
 
 
+def _draw_offensive_animation(layout, settings):
+    offense = _animation_foldout(
+        layout, settings, "ui_offensive_open", "Humanoid Offensive Actions", icon='ACTION'
+    )
+    if offense is None:
+        return
+    offense.label(text="Eight reviewed one-hand and two-hand attack drafts", icon='INFO')
+    offense.label(text="Timing exports as WINDUP / ACTIVE / RECOVERY seconds", icon='TIME')
+    row = offense.row(align=True)
+    row.operator(
+        "daf.generate_humanoid_offensive_suite",
+        text="Generate / Refresh Offensive Suite",
+        icon='ACTION',
+    )
+    row.operator(
+        "daf.validate_humanoid_offensive_suite",
+        text="Validate Suite",
+        icon='CHECKMARK',
+    )
+    for kind, label in (
+        ("ATTACK_SLASH_RTL_ONE_HAND", "Approve 1H Slash R-L"),
+        ("ATTACK_SLASH_LTR_ONE_HAND", "Approve 1H Slash L-R"),
+        ("ATTACK_OVERHEAD_ONE_HAND", "Approve 1H Overhead"),
+        ("ATTACK_THRUST_ONE_HAND", "Approve 1H Thrust"),
+        ("ATTACK_HEAVY_ONE_HAND", "Approve 1H Heavy"),
+        ("ATTACK_SLASH_TWO_HAND", "Approve 2H Slash"),
+        ("ATTACK_OVERHEAD_TWO_HAND", "Approve 2H Overhead"),
+        ("ATTACK_THRUST_TWO_HAND", "Approve 2H Thrust"),
+    ):
+        approve = offense.operator("daf.approve_draft", text=label, icon='FAKE_USER_ON')
+        approve.kind = kind
+    offense.operator(
+        "daf.ensure_runtime_attachment_sockets",
+        text="Create / Repair Runtime Hand Sockets",
+        icon='CONSTRAINT_BONE',
+    )
+    offense.label(text="Socket helper offsets remain artist-adjustable and idempotent", icon='ORIENTATION_LOCAL')
+
+
 def _draw_animation_pack(layout, settings):
     pack = _animation_foldout(
         layout, settings, "ui_pack_open", "Approved Animation Pack", icon='PACKAGE'
@@ -1553,6 +1592,7 @@ def _draw_animation(layout, context, settings):
     _draw_walk_animation(layout, settings)
     _draw_death_animation(layout, settings)
     _draw_hurt_animation(layout, settings)
+    _draw_offensive_animation(layout, settings)
     _draw_mace_guard_animation(layout, settings)
     _draw_animation_pack(layout, settings)
 
@@ -1565,12 +1605,15 @@ def _draw_export(layout, settings):
     row.operator("daf.validate_gore_geometry", text="Validate Gore Geometry")
     validation.operator("daf.validate_compound_trauma_event", text="Validate Compound Event")
     validation.operator("daf.validate_mace_head_guards", text="Validate Mace Head-Guard Drafts")
+    validation.operator("daf.validate_humanoid_offensive_suite", text="Validate Humanoid Offensive Suite")
     validation.operator("daf.validate_damage_authoring_asset", text="Validate Complete Damage Asset")
     export = layout.box()
     export.label(text="Damage Export", icon='EXPORT')
     export.prop(settings, "damage_authoring_output_directory")
     export.prop(settings, "damage_authoring_filename")
+    export.operator("daf.ensure_runtime_attachment_sockets", text="Create / Repair Runtime Hand Sockets")
     export.operator("daf.export_damage_asset", text="Export Damage GLB + Manifest")
+    export.label(text="Approved offensive metadata and runtime sockets are emitted in the sidecar", icon='INFO')
     export.operator("daf.restore_imported_damage_intact_preview", text="Restore Reimported GLB Intact Preview")
 
 

@@ -1,5 +1,19 @@
 # Changelog
 
+## 5.2.0
+
+- Added eight reviewed humanoid offensive Action generators covering one-hand
+  and two-hand slash, overhead, thrust, and committed heavy motion families.
+- Added strict `dreadstone.offensive_action.v1` clip metadata with stable
+  combat IDs, weapon compatibility, socket roles, commitment, and contiguous
+  WINDUP / ACTIVE / RECOVERY intervals expressed in seconds.
+- Added artist-adjustable, idempotent right/left hand attachment helpers and
+  `dreadstone.attachment_sockets.v1` runtime sidecar export. Helpers remain
+  authoring-only and never alter the canonical rest skeleton or skin joints.
+- Complete Damage export now rejects malformed, duplicate, draft, unapproved,
+  socket-incompatible, or duration-inconsistent offensive capabilities and
+  validates the completed GLB without leaking helper nodes.
+
 ## 5.1.3
 
 - Fixed Complete Damage export allowing Blender 5.1.2 `ACTIONS` mode to scan

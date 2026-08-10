@@ -17,13 +17,17 @@ from mathutils import Matrix, Vector
 from mathutils.kdtree import KDTree
 from bpy.types import Operator
 
-from . import damage_readiness, runtime_export, trauma_field
+from . import attachment_sockets
+from . import damage_readiness
+from . import offensive_actions
+from . import runtime_export
+from . import trauma_field
 from .anatomy import persistence as anatomy_persistence
 from .deformation import gltf_validation
 
 AUTHORING_SCHEMA = "dreadstone.damage_authoring.v1"
 AUTHORING_VERSION = (3, 9, 1)
-AUTHORING_BUILD_ID = "2026-08-09.runtime-skeleton-export.1"
+AUTHORING_BUILD_ID = "2026-08-10.runtime-armament-contract.1"
 READINESS_SCHEMA = "dreadstone.damage_readiness.v1"
 READINESS_REVISION_REQUIRED = "hierarchical_weight_partition_v3.16.3"
 STATE_TEXT_NAME = "DSB_DAMAGE_AUTHORING_STATE.json"
@@ -1767,6 +1771,10 @@ def _manifest(
         "mirroredSourceActionCount": 0,
     }
     runtime_rig = bpy.data.objects.get(state.get("authoring_rig", ""))
+    runtime_attachment_sockets = attachment_sockets.runtime_socket_contract(
+        state,
+        runtime_rig=runtime_rig,
+    )
     return {
         "schema": AUTHORING_SCHEMA,
         "authoringVersion": _version_string(),
@@ -1821,11 +1829,13 @@ def _manifest(
                 else []
             ),
         },
+        "runtimeAttachmentSockets": runtime_attachment_sockets,
         "runtimeAnimations": {
             "schema": "dreadstone.runtime_animations.v1",
             "status": runtime_animation.get("status", "PASS"),
             "runtimeArmature": AUTHORING_RIG_NAME,
             "exportedCount": len(runtime_animation.get("clips", [])),
+            "offensiveActionSchema": offensive_actions.OFFENSIVE_ACTION_SCHEMA,
             "clips": [
                 {
                     "name": clip["name"],
@@ -1835,11 +1845,18 @@ def _manifest(
                     "sourceOwner": clip.get("metadataOwner", ""),
                     "frameStart": clip.get("frameStart"),
                     "frameEnd": clip.get("frameEnd"),
+                    "clipDurationSeconds": clip.get("clipDurationSeconds"),
                     "curveCount": clip.get("curveCount", 0),
                     "boneCount": clip.get("boneCount", 0),
+                    **(
+                        {"offensiveAction": clip["offensiveAction"]}
+                        if clip.get("offensiveAction") is not None
+                        else {}
+                    ),
                 }
                 for clip in runtime_animation.get("clips", [])
             ],
+            "offensiveActions": list(runtime_animation.get("offensiveActions", [])),
             "rejectedSourceActions": list(
                 runtime_animation.get("rejectedSourceActions", [])
             ),
@@ -2036,6 +2053,14 @@ def _export_asset_inactive(context, settings, state):
                         "Completed GLB could not be inspected: " + str(exc)
                     ],
                 },
+                "runtimeAttachmentSockets": {
+                    "status": "FAIL",
+                    "schema": attachment_sockets.ATTACHMENT_SOCKET_SCHEMA,
+                    "socketCount": 0,
+                    "errors": [
+                        "Completed GLB could not be inspected: " + str(exc)
+                    ],
+                },
                 "surfaceStains": {
                     "status": "FAIL",
                     "errors": [
@@ -2060,6 +2085,9 @@ def _export_asset_inactive(context, settings, state):
         ]
         validation["runtimeAnimations"] = final_glb_validation[
             "runtimeAnimations"
+        ]
+        validation["runtimeAttachmentSockets"] = final_glb_validation[
+            "runtimeAttachmentSockets"
         ]
         validation["surfaceStains"] = final_glb_validation[
             "surfaceStains"

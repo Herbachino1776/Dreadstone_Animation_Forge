@@ -104,6 +104,15 @@ HUMANOID_PROFILE = AnatomyProfile(
         "collapse": _cap(True, True, ("hips", "spine", "head")),
         "hurt": _cap(True, True, ("hips", "spine", "upper_arm_l", "upper_arm_r")),
         "mace_head_guard": _cap(True, True, ("head", "upper_arm_l", "upper_arm_r")),
+        "offensive_humanoid": _cap(
+            True,
+            True,
+            (
+                "hips", "spine", "chest", "shoulder_l", "upper_arm_l",
+                "lower_arm_l", "hand_l", "shoulder_r", "upper_arm_r",
+                "lower_arm_r", "hand_r",
+            ),
+        ),
         "jaw_motion": _cap(False, False),
         "tail_motion": _cap(False, False),
         "ear_motion": _cap(False, False),

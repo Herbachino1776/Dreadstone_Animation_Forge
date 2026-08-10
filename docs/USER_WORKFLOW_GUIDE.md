@@ -1,14 +1,14 @@
-# Dreadstone Animation Forge 5.1.3 — User Workflow Guide
+# Dreadstone Animation Forge 5.2.0 — User Workflow Guide
 
-- Release archive: `Dreadstone_Animation_Forge_v5_1_3.zip`
+- Release archive: `Dreadstone_Animation_Forge_v5_2_0.zip`
 - Supported release runtime: Blender 5.1.2
 - Damage authoring model: Damage Keys → child Stamp alternatives → strong macros
 - Reuse model: topology-independent Damage Blueprints
 
-## 1. Install Dreadstone Animation Forge 5.1.3
+## 1. Install Dreadstone Animation Forge 5.2.0
 
 In Blender choose **Edit > Preferences > Add-ons > Install from Disk**, select
-`Dreadstone_Animation_Forge_v5_1_3.zip` without extracting it, and enable
+`Dreadstone_Animation_Forge_v5_2_0.zip` without extracting it, and enable
 **Dreadstone Animation Forge**.
 
 ## 2. Open the Dreadstone panel
@@ -249,6 +249,23 @@ Analyze the rig, draft idle/walk/collapse/hurt or mace head-guard Actions,
 inspect them, and use the explicit Version/Approve controls. Generated Actions
 do not animate bone scale. Approved Actions and NLA-used Actions are protected.
 
+For combat motion, open **Humanoid Offensive Actions** and click
+**Generate / Refresh Offensive Suite**. Forge creates eight disposable drafts:
+one-hand right-to-left slash, left-to-right slash, overhead, thrust, and heavy;
+plus two-hand slash, overhead, and thrust. Click **Validate Humanoid Offensive
+Suite**, inspect the motion, then approve each intended Action explicitly. Each
+approved clip preserves a stable combat ID, compatible weapon classes, its
+primary (and when required secondary) hand role, commitment point, and
+contiguous WINDUP / ACTIVE / RECOVERY intervals in seconds. Approval does not
+equip a weapon or create gameplay damage.
+
+Click **Create / Repair Runtime Hand Sockets** after `DSB_DAMAGE_RIG` exists.
+Forge creates managed artist-adjustable Empty helpers on `arm_right_hand` and
+`arm_left_hand`. Re-running the command repairs ownership/parenting without
+resetting an artist's local grip offset. The helpers never add bones, change
+rest matrices or weights, or ship as GLB nodes; their bone-local position and
+quaternion are written to the JSON sidecar for Dreadstone's runtime resolver.
+
 Use **Generate Humanoid Idle** for a seamless in-place breathing and
 weight-shift loop. Idle and Walk use `+Y` consistently, with no hidden 180° yaw
 or legacy knee/elbow inversion.
@@ -360,9 +377,11 @@ Before export:
 1. Run **Validate Morph Targets**.
 2. Run **Validate Gore Geometry**.
 3. Validate compound events when used.
-4. Run **Validate Complete Damage Asset**.
-5. Click **Export Damage GLB + Manifest**.
-6. For each intended runtime progression, run
+4. Run **Validate Humanoid Offensive Suite** when offensive Actions exist.
+5. Run **Create / Repair Runtime Hand Sockets** for an armed humanoid export.
+6. Run **Validate Complete Damage Asset**.
+7. Click **Export Damage GLB + Manifest**.
+8. For each intended runtime progression, run
    **VALIDATE ALL CROSSFADE STATES** and
    **VALIDATE + ENABLE SITE FOR EXPORT**.
 
@@ -384,6 +403,12 @@ on `DSB_DAMAGE_RIG`, and applies an exact glTF Action filter. Drafts,
 unapproved clips, source duplicates, and source NLA are excluded. An
 incompatible approved source clip is an actionable export failure.
 
+Approved offensive clips are held to an additional fail-closed contract.
+Duplicate combat IDs, absent hand roles, non-finite or overlapping timing,
+zero-length ACTIVE windows, draft/unapproved state, and sampler-duration drift
+all block export. The sidecar is the only attachment capability handoff;
+Dreadstone must report the capability unavailable when an older pack omits it.
+
 ## 13. Clean reimport and verification
 
 Reimport the exported GLB into a clean Blender file. Confirm:
@@ -395,6 +420,11 @@ Reimport the exported GLB into a clean Blender file. Confirm:
   pieces remain unskinned;
 - the exact approved runtime Action inventory plays and every channel targets
   the damage rig or one of its bones;
+- no `DSB_ATTACHMENT_SOCKET_*` helper is a GLB node or skin joint;
+- `runtimeAttachmentSockets` names the two canonical hand bones and contains
+  finite normalized local transforms;
+- each offensive clip's combat ID, compatible weapon classes, phases, and
+  duration match the runtime animation record;
 - the intact character is visible;
 - each Damage Key morph is present;
 - hybrid recipes have both `_RAISED` and `_INLAY` nodes for every required role;
@@ -497,6 +527,8 @@ authoring asset.
   **CLEAR BASE**,
   **Generate / Refresh Death Draft**, flank-hurt draft controls,
   **Generate Three Mace Head-Guard Drafts**, **Preview Guard_Active**,
-  **Validate Mace Head-Guard Drafts**, **VIP ANIMATION LIBRARY**, **PLAY**,
+  **Validate Mace Head-Guard Drafts**, **Generate / Refresh Offensive Suite**,
+  **Validate Humanoid Offensive Suite**, **Create / Repair Runtime Hand Sockets**,
+  **VIP ANIMATION LIBRARY**, **PLAY**,
   **EDIT**, **SAVE**, **DELETE**, **EXPORT SELECTED**, **IMPORT TO CHARACTER**,
   **Build Approved Animation Pack**, **Validate Last Built Pack**.
