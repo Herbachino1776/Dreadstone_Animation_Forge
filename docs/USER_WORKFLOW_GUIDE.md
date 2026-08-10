@@ -1,14 +1,14 @@
-# Dreadstone Animation Forge 5.2.1 — User Workflow Guide
+# Dreadstone Animation Forge 5.2.2 — User Workflow Guide
 
-- Release archive: `Dreadstone_Animation_Forge_v5_2_1.zip`
+- Release archive: `Dreadstone_Animation_Forge_v5_2_2.zip`
 - Supported release runtime: Blender 5.1.2
 - Damage authoring model: Damage Keys → child Stamp alternatives → strong macros
 - Reuse model: topology-independent Damage Blueprints
 
-## 1. Install Dreadstone Animation Forge 5.2.1
+## 1. Install Dreadstone Animation Forge 5.2.2
 
 In Blender choose **Edit > Preferences > Add-ons > Install from Disk**, select
-`Dreadstone_Animation_Forge_v5_2_1.zip` without extracting it, and enable
+`Dreadstone_Animation_Forge_v5_2_2.zip` without extracting it, and enable
 **Dreadstone Animation Forge**.
 
 ## 2. Open the Dreadstone panel
@@ -426,6 +426,13 @@ on `DSB_DAMAGE_RIG`, and applies an exact glTF Action filter. Drafts,
 unapproved clips, source duplicates, and source NLA are excluded. An
 incompatible approved source clip is an actionable export failure.
 
+Authored Actions may continue to start at frame 1 or another normal Blender
+frame. Complete Damage export shifts only its temporary Action copies: every
+runtime animation must have a first sample at `0.0` seconds and a final sample
+and span equal to the declared `clipDurationSeconds`. The approved Actions in
+the saved `.blend`, phase lengths, combat IDs, and commitment timing are not
+rewritten.
+
 Approved offensive clips are held to an additional fail-closed contract.
 Duplicate combat IDs, absent hand roles, non-finite or overlapping timing,
 zero-length ACTIVE windows, draft/unapproved state, and sampler-duration drift
@@ -443,6 +450,8 @@ Reimport the exported GLB into a clean Blender file. Confirm:
   pieces remain unskinned;
 - the exact approved runtime Action inventory plays and every channel targets
   the damage rig or one of its bones;
+- every runtime Action starts at `0.0` seconds and ends at its declared
+  `clipDurationSeconds`;
 - no `DSB_ATTACHMENT_SOCKET_*` helper is a GLB node or skin joint;
 - `runtimeAttachmentSockets` names the two canonical hand bones and contains
   finite normalized local transforms;

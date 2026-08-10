@@ -231,6 +231,20 @@ def animation_owner_snapshot(rig):
     }
 
 
+def socket_helper_snapshot(helpers):
+    return {
+        helper.name: {
+            "parent": helper.parent.name if helper.parent else "",
+            "parentType": str(helper.parent_type),
+            "parentBone": str(helper.parent_bone),
+            "matrixBasis": [list(row) for row in helper.matrix_basis],
+            "matrixParentInverse": [list(row) for row in helper.matrix_parent_inverse],
+            "properties": {key: helper[key] for key in sorted(helper.keys())},
+        }
+        for helper in helpers
+    }
+
+
 def dummy_seam(label):
     return {
         "label": label,
@@ -405,6 +419,21 @@ def main():
         },
     }
 
+    approved_actions = [
+        action
+        for action in source_actions + runtime_actions
+        if bool(action.get("dsb_approved", False)) and not bool(action.get("dsb_draft", False))
+    ]
+    authored_frame_bounds = {
+        action.name: tuple(float(value) for value in animation_library.action_frame_bounds(action))
+        for action in approved_actions
+    }
+    require(
+        all(abs(bounds[0] - 1.0) < 1.0e-7 for bounds in authored_frame_bounds.values()),
+        f"The zero-time regression requires frame-1 authored Actions: {authored_frame_bounds}",
+    )
+    offensive_metadata_before = offensive_actions.read_offensive_metadata(source_actions[2])
+    socket_helpers_before = socket_helper_snapshot(helpers_after)
     action_before = {
         action.name: action_snapshot(action)
         for action in source_actions + runtime_actions
@@ -479,6 +508,30 @@ def main():
     require(validation["runtimeAnimations"]["status"] == "PASS", "Runtime animation validation failed.")
     require(validation["runtimeAttachmentSockets"]["status"] == "PASS", "Runtime socket validation failed.")
     require(set(animation_names) == expected_animations, f"Unexpected animation inventory: {animation_names}")
+    manifest_clips = {
+        clip["name"]: clip for clip in manifest["runtimeAnimations"]["clips"]
+    }
+    timing_clips = {
+        clip["name"]: clip for clip in validation["runtimeAnimations"]["clips"]
+    }
+    require(set(manifest_clips) == expected_animations, "Runtime sidecar clip inventory differs.")
+    require(set(timing_clips) == expected_animations, "Runtime timing diagnostic inventory differs.")
+    for name in sorted(expected_animations):
+        declared = float(manifest_clips[name]["clipDurationSeconds"])
+        timing = timing_clips[name]
+        require(abs(float(timing["timeStartSeconds"])) < 1.0e-7, f"{name} did not export at time zero.")
+        require(
+            abs(float(timing["timeEndSeconds"]) - declared) < 1.0e-6,
+            f"{name} runtime end does not match its declared duration.",
+        )
+        require(
+            abs(float(timing["durationSeconds"]) - declared) < 1.0e-6,
+            f"{name} runtime span does not match its declared duration.",
+        )
+    require(
+        len({round(float(clip["clipDurationSeconds"]), 6) for clip in manifest_clips.values()}) >= 2,
+        "The multi-Action timing regression did not exercise independent durations.",
+    )
     require("DSB_Idle_Humanoid_v001" not in animation_names, "Source Idle leaked into the GLB.")
     require("DSB_Walk_NORMAL_v001" not in animation_names, "Source Walk leaked into the GLB.")
     require("SBF_ProductionRig" not in node_names, "Source armature leaked into the GLB.")
@@ -505,12 +558,37 @@ def main():
         offensive_records[0]["combatActionId"] == "humanoid_one_hand_slash_rtl",
         "Offensive combat Action identity changed.",
     )
+    exported_offensive = manifest_clips["DSB_Attack_SourceOnly_v001"]["offensiveAction"]
+    require(exported_offensive == offensive_metadata_before, "Offensive metadata changed during normalization.")
+    phases = exported_offensive["phases"]
+    declared_attack_duration = manifest_clips["DSB_Attack_SourceOnly_v001"]["clipDurationSeconds"]
+    require(abs(phases["windup"]["startSeconds"]) < 1.0e-7, "WINDUP no longer starts at clip zero.")
+    require(
+        abs(phases["windup"]["endSeconds"] - phases["active"]["startSeconds"]) < 1.0e-7,
+        "WINDUP and ACTIVE are no longer contiguous.",
+    )
+    require(
+        abs(phases["active"]["endSeconds"] - phases["recovery"]["startSeconds"]) < 1.0e-7,
+        "ACTIVE and RECOVERY are no longer contiguous.",
+    )
+    require(
+        abs(phases["recovery"]["endSeconds"] - declared_attack_duration) < 1.0e-6,
+        "RECOVERY no longer ends at the normalized runtime clip end.",
+    )
+    require(
+        exported_offensive["commitment"] == offensive_metadata_before["commitment"],
+        "Commitment timing changed during runtime normalization.",
+    )
 
     action_after = {
         action.name: action_snapshot(action)
         for action in source_actions + runtime_actions
     }
     require(action_before == action_after, "Source/runtime Actions changed during export staging.")
+    require(
+        socket_helpers_before == socket_helper_snapshot(helpers_after),
+        "Complete Damage export changed an authored hand socket helper.",
+    )
     require(source_rig_before == rig_snapshot(source_rig), "Source rig changed during export.")
     require(runtime_rig_before == rig_snapshot(runtime_rig), "Damage rig rest state changed during export.")
     require(source_owners_before == animation_owner_snapshot(source_rig), "Source animation ownership changed.")
@@ -570,6 +648,10 @@ def main():
         "runtimeSkeleton": validation["runtimeSkeleton"],
         "runtimeAnimations": validation["runtimeAnimations"],
         "runtimeAttachmentSockets": validation["runtimeAttachmentSockets"],
+        "authoredFrameBounds": authored_frame_bounds,
+        "exportedRuntimeTiming": timing_clips,
+        "offensivePhaseContractPreserved": True,
+        "runtimeSocketContractPreserved": True,
         "sourceProvenancePreserved": True,
         "sourceActionsPreserved": True,
         "sourceRigPreserved": True,

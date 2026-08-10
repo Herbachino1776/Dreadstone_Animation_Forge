@@ -124,10 +124,12 @@ blender --background --factory-startup --python tests/blender_runtime_skeleton_e
 ```
 
 It must reject source-owned Idle/Walk duplicates by actual owner and approved
-kind, mirror one compatible source-only clip without modifying it, export only
+kind, mirror one compatible source-only clip without modifying it, normalize
+multiple frame-1 temporary runtime copies to exact `0..clipDurationSeconds`
+sampler bounds, preserve offensive phases and authored Actions, export only
 `DSB_DAMAGE_RIG`, validate every skin/joint/channel relationship, retain rigid
-pieces and Light/Medium/Heavy morphs, clean-reimport one armature hierarchy,
-and remove every temporary Action/NLA staging record.
+pieces, hand sockets, and Light/Medium/Heavy morphs, clean-reimport one
+armature hierarchy, and remove every temporary Action/NLA staging record.
 
 Run the M6 offensive Action/socket regression as part of the same release gate:
 
@@ -175,7 +177,7 @@ should be performed only when requested.
 ## Release archive
 
 `python scripts/build_release.py` validates first and writes
-`dist/Dreadstone_Animation_Forge_v5_2_1.zip`. Every package Python file is
+`dist/Dreadstone_Animation_Forge_v5_2_2.zip`. Every package Python file is
 discovered recursively, so new service/operator modules must appear in the
 archive automatically. `dist/`, bytecode, caches, Blender backups, and
 temporary extraction directories are generated artifacts and are not

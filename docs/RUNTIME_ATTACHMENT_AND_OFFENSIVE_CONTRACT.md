@@ -1,6 +1,6 @@
 # Runtime attachment and offensive Action contract
 
-Forge release: `5.2.1`
+Forge release: `5.2.2`
 
 Schemas:
 
@@ -45,8 +45,11 @@ RECOVERY [activeEnd, clipDuration]
 
 They must be finite, contiguous, non-overlapping, inside the clip, and ACTIVE
 must have positive duration. The duration is derived from the actual rounded
-Action frame schedule at scene FPS, then checked against the Action and emitted
-glTF sampler. The eight generator identities are:
+Action frame schedule at scene FPS. Complete Damage export leaves that authored
+range intact and shifts only its temporary runtime copy so the emitted glTF
+sampler begins at zero and ends at the declared duration. Final validation
+checks sampler minimum, maximum, and span separately. The eight generator
+identities are:
 
 - `humanoid_one_hand_slash_rtl`
 - `humanoid_one_hand_slash_ltr`

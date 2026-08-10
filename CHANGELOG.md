@@ -1,5 +1,17 @@
 # Changelog
 
+## 5.2.2
+
+- Complete Damage export now shifts only temporary runtime Action clones to a
+  zero-based timeline, so authored frame-1 Actions export with their first glTF
+  sample at `0.0` and their last sample at `clipDurationSeconds`.
+- Final GLB validation now independently requires zero minimum time, declared
+  maximum time, declared duration, and a contiguous WINDUP / ACTIVE / RECOVERY
+  contract ending at the normalized offensive clip end.
+- Expanded the Complete Damage regression to prove multiple frame-1 Actions,
+  source Action immutability, exact runtime timing, the 21-bone
+  `DSB_DAMAGE_RIG`-only skeleton, and unchanged hand socket helpers.
+
 ## 5.2.1
 
 - Added visible per-attack timing and motion sliders for all eight humanoid

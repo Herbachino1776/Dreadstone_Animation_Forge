@@ -21,6 +21,7 @@ STAIN_MODES = {"SURFACE_STAIN", "STAIN_AND_RAISED"}
 FINAL_GLB_VALIDATION_SCHEMA = "dreadstone.final_glb_validation.v2"
 ATTACHMENT_SOCKET_SCHEMA = "dreadstone.attachment_sockets.v1"
 OFFENSIVE_ACTION_SCHEMA = "dreadstone.offensive_action.v1"
+RUNTIME_TIME_TOLERANCE_SECONDS = 1.0e-4
 
 
 def load_glb_json(filepath):
@@ -145,6 +146,75 @@ def _accessor_time_bounds(gltf, animation):
     if not bounds:
         return None, None, errors
     return min(value[0] for value in bounds), max(value[1] for value in bounds), errors
+
+
+def _finite_seconds(value):
+    return (
+        not isinstance(value, bool)
+        and isinstance(value, (int, float))
+        and math.isfinite(float(value))
+    )
+
+
+def _offensive_phase_timeline_errors(metadata, clip_end_seconds):
+    """Validate WINDUP -> ACTIVE -> RECOVERY against the exported clip end."""
+
+    if not isinstance(metadata, Mapping):
+        return ["offensive phase metadata is missing"]
+    phases = metadata.get("phases")
+    if not isinstance(phases, Mapping):
+        return ["offensive phases are missing"]
+    bounds = {}
+    errors = []
+    for name in ("windup", "active", "recovery"):
+        phase = phases.get(name)
+        if not isinstance(phase, Mapping):
+            errors.append(f"{name.upper()} phase is missing")
+            continue
+        start = phase.get("startSeconds")
+        end = phase.get("endSeconds")
+        if not _finite_seconds(start) or not _finite_seconds(end):
+            errors.append(f"{name.upper()} phase bounds are not finite")
+            continue
+        bounds[name] = (float(start), float(end))
+    if len(bounds) != 3:
+        return errors
+
+    windup = bounds["windup"]
+    active = bounds["active"]
+    recovery = bounds["recovery"]
+    tolerance = RUNTIME_TIME_TOLERANCE_SECONDS
+    if abs(windup[0]) > tolerance:
+        errors.append("WINDUP does not begin at normalized clip time zero")
+    if windup[1] < windup[0] - tolerance:
+        errors.append("WINDUP is reversed")
+    if active[1] <= active[0] + tolerance:
+        errors.append("ACTIVE does not have positive duration")
+    if recovery[1] < recovery[0] - tolerance:
+        errors.append("RECOVERY is reversed")
+    if (
+        abs(windup[1] - active[0]) > tolerance
+        or abs(active[1] - recovery[0]) > tolerance
+    ):
+        errors.append("WINDUP, ACTIVE, and RECOVERY are not contiguous")
+    if abs(recovery[1] - float(clip_end_seconds)) > tolerance:
+        errors.append("RECOVERY does not end at the exported clip end")
+    if any(
+        value < -tolerance or value > float(clip_end_seconds) + tolerance
+        for pair in bounds.values()
+        for value in pair
+    ):
+        errors.append("an offensive phase lies outside the exported clip")
+
+    commitment = metadata.get("commitment")
+    commitment_time = (
+        commitment.get("timeSeconds") if isinstance(commitment, Mapping) else None
+    )
+    if not _finite_seconds(commitment_time):
+        errors.append("commitment time is not finite")
+    elif not -tolerance <= float(commitment_time) <= float(clip_end_seconds) + tolerance:
+        errors.append("commitment time lies outside the exported clip")
+    return errors
 
 
 def _runtime_contract_validation(gltf, manifest, nodes_by_name):
@@ -367,13 +437,24 @@ def _runtime_contract_validation(gltf, manifest, nodes_by_name):
         time_start, time_end, time_errors = _accessor_time_bounds(gltf, animation)
         clip_errors.extend(time_errors)
         expected_duration = expected.get("clipDurationSeconds")
-        if (
-            expected_duration is not None
-            and time_start is not None
-            and time_end is not None
-            and abs((time_end - time_start) - float(expected_duration)) > 1.0e-4
-        ):
-            clip_errors.append("exported duration does not match authored offensive timing")
+        declared_duration = (
+            float(expected_duration) if _finite_seconds(expected_duration) else None
+        )
+        if declared_duration is None or declared_duration <= 0.0:
+            clip_errors.append("has no valid declared clip duration")
+        if time_start is not None and time_end is not None and declared_duration is not None:
+            exported_duration = time_end - time_start
+            tolerance = RUNTIME_TIME_TOLERANCE_SECONDS
+            if abs(time_start) > tolerance:
+                clip_errors.append("exported minimum time is not normalized to zero")
+            if abs(time_end - declared_duration) > tolerance:
+                clip_errors.append("exported maximum time does not match the declared clip duration")
+            if abs(exported_duration - declared_duration) > tolerance:
+                clip_errors.append("exported duration does not match the declared clip duration")
+            if expected_offensive is not None:
+                clip_errors.extend(
+                    _offensive_phase_timeline_errors(expected_offensive, time_end)
+                )
         if clip_errors:
             animation_errors.append(
                 f"Runtime animation {name or animation_index!r}: " + "; ".join(clip_errors) + "."
@@ -387,6 +468,7 @@ def _runtime_contract_validation(gltf, manifest, nodes_by_name):
                 "targetNodeCount": len(set(target_indices)),
                 "timeStartSeconds": time_start,
                 "timeEndSeconds": time_end,
+                "declaredClipDurationSeconds": declared_duration,
                 "durationSeconds": (
                     time_end - time_start
                     if time_start is not None and time_end is not None

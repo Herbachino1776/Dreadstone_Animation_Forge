@@ -43,6 +43,10 @@ For export, Forge makes temporary Action copies, records
 tracks, and enables Blender 5.1's exact Action filter. `ACTIONS` mode runs with
 `export_anim_single_armature = false`, preventing Blender's default
 single-armature scan from gathering every bone Action in `bpy.data.actions`.
+Each temporary copy is shifted by its authored minimum frame so its runtime
+keys span `0..(endFrame - startFrame)`. Key values, interpolation handles,
+phase durations, combat IDs, commitment timing, and approval metadata remain
+unchanged. The saved approved Action is never shifted.
 The source Actions, source rig, damage-rig rest pose, active Action, NLA state,
 selection, visibility, and frame state are restored on success and failure.
 Temporary Action copies and tracks are removed.
@@ -72,9 +76,14 @@ joint set belongs to the same runtime hierarchy.
 `runtimeAnimations` requires the exact staged clip inventory. Every clip must
 have a non-empty unique name, retained approved kind/runtime-owner extras,
 channels targeting only the damage rig or its bones, and finite sampler time
-bounds. Missing, duplicate, unexpected, draft, unapproved, or source-targeted
-clips fail validation. Diagnostics report each clip, channel count, duration,
-rejected source Action count, and all errors.
+bounds. The minimum sampler time must be zero, the maximum sampler time must
+equal `clipDurationSeconds`, and their span must independently equal
+`clipDurationSeconds`, within `1e-4` seconds. Offensive clips must additionally
+retain contiguous WINDUP → ACTIVE → RECOVERY intervals from zero through the
+exported clip end. Missing, duplicate, unexpected, draft, unapproved, or
+source-targeted clips fail validation. Diagnostics report each clip, channel
+count, declared duration, minimum time, maximum time, duration, rejected source
+Action count, and all errors.
 
 Clean reimport remains mandatory. It must produce one armature hierarchy,
 `DSB_DAMAGE_RIG`, correct intact skinning, rigid detached props, approved

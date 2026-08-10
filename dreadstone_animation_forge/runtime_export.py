@@ -37,6 +37,7 @@ RUNTIME_EXPORT_MARKER = "dsb_runtime_export_staging"
 RUNTIME_ARMATURE_PROPERTY = "dsb_runtime_armature"
 RUNTIME_SOURCE_ACTION_PROPERTY = "dsb_runtime_source_action"
 RUNTIME_SOURCE_OWNER_PROPERTY = "dsb_runtime_source_owner"
+RUNTIME_FRAME_TOLERANCE = 1.0e-5
 
 
 def _armature_modifiers(obj):
@@ -417,6 +418,57 @@ def _slot_identifier(slot):
     return str(getattr(slot, "identifier", "")) if slot is not None else ""
 
 
+def _normalize_runtime_action(action, source_start, source_end):
+    """Move only a temporary export clone onto a zero-based timeline."""
+
+    source_start = float(source_start)
+    source_end = float(source_end)
+    duration_frames = source_end - source_start
+    if (
+        not math.isfinite(source_start)
+        or not math.isfinite(source_end)
+        or duration_frames < 0.0
+    ):
+        raise RuntimeError(f"Runtime Action {action.name!r} has invalid source bounds.")
+
+    shifted_points = 0
+    for curve in animation_library.iter_action_fcurves(action):
+        for point in curve.keyframe_points:
+            point.co[0] = float(point.co[0]) - source_start
+            point.handle_left[0] = float(point.handle_left[0]) - source_start
+            point.handle_right[0] = float(point.handle_right[0]) - source_start
+            shifted_points += 1
+        for point in getattr(curve, "sampled_points", ()):
+            try:
+                point.co[0] = float(point.co[0]) - source_start
+            except (AttributeError, RuntimeError, TypeError, ValueError) as exc:
+                raise RuntimeError(
+                    f"Runtime Action {action.name!r} contains an unshiftable sampled point."
+                ) from exc
+            shifted_points += 1
+        curve.update()
+    if not shifted_points:
+        raise RuntimeError(f"Runtime Action {action.name!r} contains no timeline samples.")
+
+    try:
+        action.use_frame_range = True
+        action.frame_start = 0.0
+        action.frame_end = duration_frames
+    except (AttributeError, RuntimeError, TypeError, ValueError):
+        pass
+
+    normalized_start, normalized_end = animation_library.action_frame_bounds(action)
+    if (
+        abs(float(normalized_start)) > RUNTIME_FRAME_TOLERANCE
+        or abs(float(normalized_end) - duration_frames) > RUNTIME_FRAME_TOLERANCE
+    ):
+        raise RuntimeError(
+            f"Runtime Action {action.name!r} did not normalize to "
+            f"0..{duration_frames:g} frames."
+        )
+    return 0.0, duration_frames
+
+
 class RuntimeAnimationStaging:
     """Temporarily expose approved runtime-owned Action clones on one rig."""
 
@@ -457,37 +509,45 @@ class RuntimeAnimationStaging:
         data.use_tweak_mode = False
         data.use_nla = True
         data.action = None
-        for index, (action, clip) in enumerate(zip(self.audit["actions"], self.audit["clips"])):
-            export_name = action.name
-            temporary_name = _unique_temporary_action_name(index)
-            self.original_names.append((action, export_name))
-            action.name = temporary_name
-            clone = action.copy()
-            clone.name = export_name
-            clone.use_fake_user = False
-            clone[animation_library.CLIP_OWNER_PROPERTY] = self.runtime_rig.name
-            clone["dsb_approved"] = True
-            clone["dsb_draft"] = False
-            clone[RUNTIME_EXPORT_MARKER] = True
-            clone[RUNTIME_ARMATURE_PROPERTY] = self.runtime_rig.name
-            clone[RUNTIME_SOURCE_ACTION_PROPERTY] = export_name
-            clone[RUNTIME_SOURCE_OWNER_PROPERTY] = str(
-                clip.get("metadataOwner") or clip.get("ownership", "")
-            )
-            self.clones.append(clone)
-            start, end = animation_library.action_frame_bounds(clone)
-            track = data.nla_tracks.new()
-            track.name = f"__DSB_RUNTIME_EXPORT__{export_name}"
-            strip = track.strips.new(export_name, int(math.floor(start)), clone)
-            strip.name = export_name
-            try:
-                strip.action_frame_start = start
-                strip.action_frame_end = end
-                strip.frame_start = start
-                strip.frame_end = end
-            except (AttributeError, RuntimeError, TypeError, ValueError):
-                pass
-            self.temporary_tracks.append(track)
+        try:
+            for index, (action, clip) in enumerate(zip(self.audit["actions"], self.audit["clips"])):
+                export_name = action.name
+                temporary_name = _unique_temporary_action_name(index)
+                self.original_names.append((action, export_name))
+                action.name = temporary_name
+                clone = action.copy()
+                self.clones.append(clone)
+                clone.name = export_name
+                clone.use_fake_user = False
+                clone[animation_library.CLIP_OWNER_PROPERTY] = self.runtime_rig.name
+                clone["dsb_approved"] = True
+                clone["dsb_draft"] = False
+                clone[RUNTIME_EXPORT_MARKER] = True
+                clone[RUNTIME_ARMATURE_PROPERTY] = self.runtime_rig.name
+                clone[RUNTIME_SOURCE_ACTION_PROPERTY] = export_name
+                clone[RUNTIME_SOURCE_OWNER_PROPERTY] = str(
+                    clip.get("metadataOwner") or clip.get("ownership", "")
+                )
+                start, end = _normalize_runtime_action(
+                    clone,
+                    clip["frameStart"],
+                    clip["frameEnd"],
+                )
+                track = data.nla_tracks.new()
+                self.temporary_tracks.append(track)
+                track.name = f"__DSB_RUNTIME_EXPORT__{export_name}"
+                strip = track.strips.new(export_name, 0, clone)
+                strip.name = export_name
+                try:
+                    strip.action_frame_start = start
+                    strip.action_frame_end = end
+                    strip.frame_start = start
+                    strip.frame_end = end
+                except (AttributeError, RuntimeError, TypeError, ValueError):
+                    pass
+        except Exception:
+            self.__exit__(None, None, None)
+            raise
         return self
 
     @property

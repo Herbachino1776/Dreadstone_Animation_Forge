@@ -1,5 +1,6 @@
 import copy
 import importlib.util
+import json
 import unittest
 from pathlib import Path
 
@@ -72,6 +73,7 @@ def fixture():
                 {
                     "name": "DSB_Idle_Humanoid_v002",
                     "approvedKind": "IDLE",
+                    "clipDurationSeconds": 1.0,
                 }
             ],
             "rejectedSourceActionCount": 1,
@@ -147,6 +149,65 @@ class RuntimeSkeletonExportContractTests(unittest.TestCase):
         gltf["nodes"][2]["name"] = "renamed_body"
         result = GLTF_VALIDATION.validate_damage_gltf(gltf, manifest)
         self.assertEqual(result["runtimeSkeleton"]["missingBones"], ["body"])
+
+    def test_frame_one_runtime_timeline_is_rejected_even_when_span_matches(self):
+        gltf, manifest = fixture()
+        gltf["accessors"][1]["min"] = [1.0 / 24.0]
+        gltf["accessors"][1]["max"] = [2.0]
+        manifest["runtimeAnimations"]["clips"][0]["clipDurationSeconds"] = 47.0 / 24.0
+        result = GLTF_VALIDATION.validate_damage_gltf(gltf, manifest)
+        errors = " ".join(result["runtimeAnimations"]["errors"])
+        self.assertEqual(result["runtimeAnimations"]["status"], "FAIL")
+        self.assertIn("minimum time is not normalized to zero", errors)
+        self.assertIn("maximum time does not match", errors)
+        self.assertNotIn("exported duration does not match", errors)
+
+    def test_runtime_timeline_requires_declared_duration_end_and_span(self):
+        gltf, manifest = fixture()
+        manifest["runtimeAnimations"]["clips"][0].pop("clipDurationSeconds")
+        missing = GLTF_VALIDATION.validate_damage_gltf(gltf, manifest)
+        self.assertTrue(any(
+            "no valid declared clip duration" in error
+            for error in missing["runtimeAnimations"]["errors"]
+        ))
+
+        gltf, manifest = fixture()
+        gltf["accessors"][1]["max"] = [1.125]
+        drifted = GLTF_VALIDATION.validate_damage_gltf(gltf, manifest)
+        errors = " ".join(drifted["runtimeAnimations"]["errors"])
+        self.assertIn("maximum time does not match", errors)
+        self.assertIn("exported duration does not match", errors)
+
+    def test_offensive_phases_must_fit_the_normalized_exported_clip(self):
+        gltf, manifest = fixture()
+        metadata = {
+            "schema": "dreadstone.offensive_action.v1",
+            "combatActionId": "fixture_attack",
+            "clipDurationSeconds": 1.0,
+            "phases": {
+                "windup": {"startSeconds": 0.0, "endSeconds": 0.4},
+                "active": {"startSeconds": 0.4, "endSeconds": 0.6},
+                "recovery": {"startSeconds": 0.6, "endSeconds": 1.0},
+            },
+            "commitment": {"timeSeconds": 0.4},
+        }
+        clip = manifest["runtimeAnimations"]["clips"][0]
+        clip["approvedKind"] = "ATTACK_FIXTURE"
+        clip["offensiveAction"] = copy.deepcopy(metadata)
+        extras = gltf["animations"][0]["extras"]
+        extras["dsb_approved_kind"] = "ATTACK_FIXTURE"
+        extras["dsb_offensive_action_json"] = json.dumps(metadata)
+        passing = GLTF_VALIDATION.validate_damage_gltf(gltf, manifest)
+        self.assertEqual(passing["runtimeAnimations"]["status"], "PASS", passing["errors"])
+
+        metadata["phases"]["recovery"]["endSeconds"] = 0.9
+        clip["offensiveAction"] = copy.deepcopy(metadata)
+        extras["dsb_offensive_action_json"] = json.dumps(metadata)
+        failing = GLTF_VALIDATION.validate_damage_gltf(gltf, manifest)
+        self.assertTrue(any(
+            "RECOVERY does not end at the exported clip end" in error
+            for error in failing["runtimeAnimations"]["errors"]
+        ))
 
 
 if __name__ == "__main__":

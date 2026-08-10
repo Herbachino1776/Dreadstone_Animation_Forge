@@ -18,7 +18,7 @@ from . import offensive_actions
 
 
 ANIMATION_CLIP_SCHEMA = "dreadstone.animation_clip.v1"
-ANIMATION_LIBRARY_BUILD_ID = "2026-08-10.offensive-preview-sliders-5.2.1"
+ANIMATION_LIBRARY_BUILD_ID = "2026-08-10.runtime-zero-time-export-5.2.2"
 
 CLIP_ID_PROPERTY = "dsb_animation_clip_id"
 CLIP_SCHEMA_PROPERTY = "dsb_animation_clip_schema"
