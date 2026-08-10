@@ -73,6 +73,29 @@ class RuntimeArmamentContractTests(unittest.TestCase):
             )
         self.assertEqual(8, len(identities))
 
+    def test_character_offensive_recipes_are_bounded_and_drive_phase_timing(self):
+        variant = offense.OFFENSIVE_ACTION_VARIANTS["ATTACK_HEAVY_ONE_HAND"]
+        recipe = offense.default_offensive_recipe(variant)
+        self.assertEqual(offense.OFFENSIVE_RECIPE_SCHEMA, recipe["schema"])
+        self.assertEqual([], offense.validate_offensive_recipe(recipe))
+        recipe.update({
+            "windupSeconds": 1.1,
+            "activeSeconds": 0.24,
+            "recoverySeconds": 0.95,
+            "torsoPower": 1.45,
+            "armReach": 1.2,
+        })
+        customized = offense.offensive_variant_with_recipe("ATTACK_HEAVY_ONE_HAND", recipe)
+        metadata, _schedule = offense.phase_metadata(customized, 24.0)
+        self.assertAlmostEqual(1.083333, metadata["phases"]["windup"]["endSeconds"], places=6)
+        self.assertAlmostEqual(2.291667, metadata["clipDurationSeconds"], places=6)
+        invalid = copy.deepcopy(recipe)
+        invalid["armReach"] = float("nan")
+        invalid["activeSeconds"] = 0.0
+        errors = offense.validate_offensive_recipe(invalid)
+        self.assertTrue(any("armReach must be finite" in message for message in errors))
+        self.assertTrue(any("activeSeconds must be between" in message for message in errors))
+
     def test_socket_contract_rejects_duplicates_parent_and_nonfinite_transform(self):
         payload = copy.deepcopy(self.fixture["runtimeAttachmentSockets"])
         payload["sockets"][1]["socketId"] = payload["sockets"][0]["socketId"]

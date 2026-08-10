@@ -1509,9 +1509,60 @@ def _draw_offensive_animation(layout, settings):
     )
     if offense is None:
         return
-    offense.label(text="Eight reviewed one-hand and two-hand attack drafts", icon='INFO')
-    offense.label(text="Timing exports as WINDUP / ACTIVE / RECOVERY seconds", icon='TIME')
-    row = offense.row(align=True)
+    offense.label(text="Customize one character-specific draft, preview it, then approve", icon='INFO')
+    offense.prop(settings, "offensive_preview_kind")
+
+    custom = offense.box()
+    custom.label(text="Custom Attack Sliders", icon='SETTINGS')
+    timing = custom.column(align=True)
+    timing.label(text="Authored Combat Timing", icon='TIME')
+    timing.prop(settings, "offensive_windup_seconds", slider=True)
+    timing.prop(settings, "offensive_active_seconds", slider=True)
+    timing.prop(settings, "offensive_recovery_seconds", slider=True)
+    motion = custom.column(align=True)
+    motion.label(text="Motion Shape", icon='POSE_HLT')
+    for property_name in (
+        "offensive_anticipation_strength",
+        "offensive_strike_strength",
+        "offensive_follow_through",
+        "offensive_torso_power",
+        "offensive_arm_reach",
+        "offensive_elbow_flex",
+        "offensive_wrist_action",
+        "offensive_stance_compression",
+    ):
+        motion.prop(settings, property_name, slider=True)
+
+    row = custom.row(align=True)
+    row.operator(
+        "daf.generate_selected_offensive_draft",
+        text="1. Apply Sliders / Refresh Draft",
+        icon='FILE_REFRESH',
+    )
+    row.operator(
+        "daf.preview_offensive_draft",
+        text="2. Preview Attack",
+        icon='PLAY',
+    )
+    row = custom.row(align=True)
+    row.operator(
+        "daf.reset_offensive_sliders",
+        text="Reset Sliders",
+        icon='LOOP_BACK',
+    )
+    approve = row.operator(
+        "daf.approve_draft",
+        text="3. Save / Approve This Attack",
+        icon='FAKE_USER_ON',
+    )
+    approve.kind = settings.offensive_preview_kind
+    custom.label(text="Approval is blocked until the refreshed draft has been previewed", icon='LOCKED')
+    custom.label(text="Approved Action + slider recipe stay saved with this character", icon='FILE_BLEND')
+    custom.label(text="Humanoid generator defaults are not changed automatically", icon='INFO')
+
+    suite = offense.box()
+    suite.label(text="Eight-Attack Suite", icon='ACTION')
+    row = suite.row(align=True)
     row.operator(
         "daf.generate_humanoid_offensive_suite",
         text="Generate / Refresh Offensive Suite",
@@ -1522,18 +1573,8 @@ def _draw_offensive_animation(layout, settings):
         text="Validate Suite",
         icon='CHECKMARK',
     )
-    for kind, label in (
-        ("ATTACK_SLASH_RTL_ONE_HAND", "Approve 1H Slash R-L"),
-        ("ATTACK_SLASH_LTR_ONE_HAND", "Approve 1H Slash L-R"),
-        ("ATTACK_OVERHEAD_ONE_HAND", "Approve 1H Overhead"),
-        ("ATTACK_THRUST_ONE_HAND", "Approve 1H Thrust"),
-        ("ATTACK_HEAVY_ONE_HAND", "Approve 1H Heavy"),
-        ("ATTACK_SLASH_TWO_HAND", "Approve 2H Slash"),
-        ("ATTACK_OVERHEAD_TWO_HAND", "Approve 2H Overhead"),
-        ("ATTACK_THRUST_TWO_HAND", "Approve 2H Thrust"),
-    ):
-        approve = offense.operator("daf.approve_draft", text=label, icon='FAKE_USER_ON')
-        approve.kind = kind
+    suite.label(text="Suite refresh keeps each saved draft/approved character recipe", icon='INFO')
+    suite.label(text="Select each attack above to tune, preview, and approve it", icon='INFO')
     offense.operator(
         "daf.ensure_runtime_attachment_sockets",
         text="Create / Repair Runtime Hand Sockets",

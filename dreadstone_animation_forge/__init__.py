@@ -1,7 +1,7 @@
 bl_info = {
     "name": "Dreadstone Animation Forge",
     "author": "Dreadstone Black",
-    "version": (5, 2, 0),
+    "version": (5, 2, 1),
     "blender": (3, 6, 0),
     "location": "3D Viewport > Sidebar > Dreadstone",
     "description": "Animation authoring, protected damage assets, and registered-region trauma-field shape-key authoring.",
@@ -970,6 +970,15 @@ def approve_draft_action(context, kind):
     if action.get(offensive_actions.OFFENSIVE_ACTION_PROPERTY):
         start, end = action_frame_bounds(action)
         fps = context.scene.render.fps / max(context.scene.render.fps_base, 0.001)
+        recipe = offensive_actions.read_offensive_recipe(action)
+        if recipe is None:
+            raise RuntimeError(
+                "This offensive draft has no saved slider recipe. Refresh the selected draft first."
+            )
+        if not bool(action.get("dsb_offensive_previewed", False)):
+            raise RuntimeError(
+                "Preview this offensive draft on the character before approving it."
+            )
         offensive_actions.validated_action_metadata(
             action,
             clip_duration_seconds=max(0.0, end - start) / max(fps, 0.001),
@@ -1006,6 +1015,8 @@ def approve_draft_action(context, kind):
             clip_duration_seconds=max(0.0, action_frame_bounds(action)[1] - action_frame_bounds(action)[0]) / max(fps, 0.001),
             require_approved=True,
         )
+        action["dsb_offensive_previewed_before_approval"] = True
+        action["dsb_offensive_character_recipe"] = True
 
     return action
 
@@ -1167,6 +1178,76 @@ def _progression_site_property_updated(self, context):
         module.update_active_site_from_settings(context)
 
 
+_OFFENSIVE_RECIPE_SETTING_FIELDS = {
+    "windupSeconds": "offensive_windup_seconds",
+    "activeSeconds": "offensive_active_seconds",
+    "recoverySeconds": "offensive_recovery_seconds",
+    "anticipationStrength": "offensive_anticipation_strength",
+    "strikeStrength": "offensive_strike_strength",
+    "followThrough": "offensive_follow_through",
+    "torsoPower": "offensive_torso_power",
+    "armReach": "offensive_arm_reach",
+    "elbowFlex": "offensive_elbow_flex",
+    "wristAction": "offensive_wrist_action",
+    "stanceCompression": "offensive_stance_compression",
+}
+
+
+def offensive_recipe_from_settings(settings, kind):
+    variant = offensive_actions.OFFENSIVE_ACTION_VARIANTS.get(str(kind))
+    if variant is None:
+        raise RuntimeError(f"Unknown offensive Action kind {kind!r}.")
+    recipe = offensive_actions.default_offensive_recipe(variant)
+    for field, setting_name in _OFFENSIVE_RECIPE_SETTING_FIELDS.items():
+        recipe[field] = float(getattr(settings, setting_name))
+    errors = offensive_actions.validate_offensive_recipe(recipe)
+    if errors:
+        raise RuntimeError("Invalid offensive slider recipe: " + " ".join(errors))
+    return recipe
+
+
+def apply_offensive_recipe_to_settings(settings, recipe):
+    errors = offensive_actions.validate_offensive_recipe(recipe)
+    if errors:
+        raise RuntimeError("Invalid saved offensive recipe: " + " ".join(errors))
+    for field, setting_name in _OFFENSIVE_RECIPE_SETTING_FIELDS.items():
+        setattr(settings, setting_name, float(recipe[field]))
+    return recipe
+
+
+def _latest_offensive_recipe(kind):
+    variant = offensive_actions.OFFENSIVE_ACTION_VARIANTS[str(kind)]
+    draft = bpy.data.actions.get(variant["draftName"])
+    candidates = [draft] if draft is not None else []
+    candidates.extend(sorted(
+        (
+            action for action in bpy.data.actions
+            if str(action.get("dsb_approved_kind", "")) == str(kind)
+            and bool(action.get("dsb_approved", False))
+        ),
+        key=lambda action: action.name,
+        reverse=True,
+    ))
+    for action in candidates:
+        try:
+            recipe = offensive_actions.read_offensive_recipe(action)
+        except ValueError:
+            continue
+        if recipe is not None:
+            return recipe
+    return offensive_actions.default_offensive_recipe(variant)
+
+
+def _offensive_preview_kind_updated(self, _context):
+    try:
+        apply_offensive_recipe_to_settings(
+            self,
+            _latest_offensive_recipe(str(self.offensive_preview_kind)),
+        )
+    except (KeyError, RuntimeError, TypeError, ValueError):
+        return
+
+
 class DAFSettings(PropertyGroup):
     # Compact interface state. These values are stored in the Blender scene.
     ui_workspace: EnumProperty(
@@ -1217,6 +1298,7 @@ class DAFSettings(PropertyGroup):
     ui_body_arm_trauma_open: BoolProperty(default=False)
     ui_compound_trauma_open: BoolProperty(default=False)
     ui_offensive_open: BoolProperty(default=True)
+    ui_offensive_custom_open: BoolProperty(default=True)
     ui_mace_guard_open: BoolProperty(default=False)
 
     target_height: FloatProperty(
@@ -1724,6 +1806,58 @@ class DAFSettings(PropertyGroup):
         max=1
     )
 
+    # Per-character offensive draft recipe. Values are persisted into every
+    # generated/approved Action rather than changing global humanoid defaults.
+    offensive_preview_kind: EnumProperty(
+        name="Attack to Customize",
+        description="Choose the character-specific offensive draft controlled by the sliders below",
+        items=[
+            ("ATTACK_SLASH_RTL_ONE_HAND", "1H Slash Right to Left", "One-hand horizontal slash"),
+            ("ATTACK_SLASH_LTR_ONE_HAND", "1H Slash Left to Right", "One-hand reverse slash"),
+            ("ATTACK_OVERHEAD_ONE_HAND", "1H Overhead", "One-hand overhead strike"),
+            ("ATTACK_THRUST_ONE_HAND", "1H Thrust", "One-hand forward thrust"),
+            ("ATTACK_HEAVY_ONE_HAND", "1H Heavy", "Committed one-hand heavy strike"),
+            ("ATTACK_SLASH_TWO_HAND", "2H Slash", "Two-hand diagonal strike"),
+            ("ATTACK_OVERHEAD_TWO_HAND", "2H Overhead", "Two-hand overhead strike"),
+            ("ATTACK_THRUST_TWO_HAND", "2H Thrust", "Two-hand forward thrust"),
+        ],
+        default="ATTACK_SLASH_RTL_ONE_HAND",
+        update=_offensive_preview_kind_updated,
+    )
+    offensive_windup_seconds: FloatProperty(
+        name="WINDUP Seconds", default=0.46, min=0.10, max=2.50, unit='TIME'
+    )
+    offensive_active_seconds: FloatProperty(
+        name="ACTIVE Seconds", default=0.30, min=0.08, max=1.00, unit='TIME'
+    )
+    offensive_recovery_seconds: FloatProperty(
+        name="RECOVERY Seconds", default=0.58, min=0.10, max=3.00, unit='TIME'
+    )
+    offensive_anticipation_strength: FloatProperty(
+        name="Anticipation", default=1.0, min=0.25, max=1.80
+    )
+    offensive_strike_strength: FloatProperty(
+        name="Strike Strength", default=1.0, min=0.25, max=1.80
+    )
+    offensive_follow_through: FloatProperty(
+        name="Follow Through", default=1.0, min=0.25, max=1.80
+    )
+    offensive_torso_power: FloatProperty(
+        name="Torso Power", default=1.0, min=0.0, max=2.0
+    )
+    offensive_arm_reach: FloatProperty(
+        name="Arm Reach", default=1.0, min=0.50, max=1.50
+    )
+    offensive_elbow_flex: FloatProperty(
+        name="Elbow Flex", default=1.0, min=0.50, max=1.50
+    )
+    offensive_wrist_action: FloatProperty(
+        name="Wrist Action", default=1.0, min=0.0, max=2.0
+    )
+    offensive_stance_compression: FloatProperty(
+        name="Stance / Compression", default=1.0, min=0.0, max=2.0
+    )
+
     # Mace head-guard draft timing and pose shaping. Scene FPS determines the
     # actual frames. The wide timing ranges support a readable fear/cower hold
     # as well as the original short, deformed zombie-attack motion.
@@ -1914,7 +2048,7 @@ class DAFSettings(PropertyGroup):
     last_damage_manifest_path: StringProperty(default="", options={'HIDDEN'})
     last_damage_validation_path: StringProperty(default="", options={'HIDDEN'})
 
-    # Trauma Field Authoring v5.2.0.
+    # Trauma Field Authoring v5.2.1.
     deformation_region: EnumProperty(
         name="Active Region",
         items=_deformation_region_items,
@@ -5275,62 +5409,67 @@ def _apply_offensive_pose(arm, mapping, settings, variant, swing):
     motion = variant["motion"]
     two_hand = bool(variant.get("secondarySocketRole"))
     elbow_sign = -1.0 if settings.invert_elbows else 1.0
+    torso_power = float(variant.get("torsoPower", 1.0))
+    arm_reach = float(variant.get("armReach", 1.0))
+    elbow_flex = float(variant.get("elbowFlex", 1.0))
+    wrist_action = float(variant.get("wristAction", 1.0))
+    stance = float(variant.get("stanceCompression", 1.0))
 
     if motion in {"SLASH_RTL", "SLASH_LTR", "TWO_HAND_SLASH", "HEAVY"}:
         direction = -1.0 if motion == "SLASH_LTR" else 1.0
         weight = 1.28 if motion == "HEAVY" else 1.12 if two_hand else 1.0
-        rotate(arm, mapping, "hips", up, direction * swing * 8.0 * weight)
-        rotate(arm, mapping, "spine", up, direction * swing * 14.0 * weight)
-        rotate(arm, mapping, "chest", up, direction * swing * 25.0 * weight)
-        rotate(arm, mapping, "chest", side, -abs(swing) * 5.0 * weight)
-        rotate(arm, mapping, "shoulder_r", side, -14.0 * abs(swing))
-        rotate(arm, mapping, "upper_arm_r", up, direction * swing * 68.0)
-        rotate(arm, mapping, "upper_arm_r", side, -42.0 - abs(swing) * 22.0)
-        rotate(arm, mapping, "lower_arm_r", side, (58.0 - swing * 24.0) * elbow_sign)
-        rotate_local(arm, mapping, "lower_arm_r", (0.0, 1.0, 0.0), direction * swing * 34.0)
-        rotate_local(arm, mapping, "hand_r", (0.0, 0.0, 1.0), -direction * swing * 18.0)
+        rotate(arm, mapping, "hips", up, direction * swing * 8.0 * weight * torso_power)
+        rotate(arm, mapping, "spine", up, direction * swing * 14.0 * weight * torso_power)
+        rotate(arm, mapping, "chest", up, direction * swing * 25.0 * weight * torso_power)
+        rotate(arm, mapping, "chest", side, -abs(swing) * 5.0 * weight * torso_power)
+        rotate(arm, mapping, "shoulder_r", side, -14.0 * abs(swing) * arm_reach)
+        rotate(arm, mapping, "upper_arm_r", up, direction * swing * 68.0 * arm_reach)
+        rotate(arm, mapping, "upper_arm_r", side, (-42.0 - abs(swing) * 22.0) * arm_reach)
+        rotate(arm, mapping, "lower_arm_r", side, (58.0 - swing * 24.0) * elbow_sign * elbow_flex)
+        rotate_local(arm, mapping, "lower_arm_r", (0.0, 1.0, 0.0), direction * swing * 34.0 * wrist_action)
+        rotate_local(arm, mapping, "hand_r", (0.0, 0.0, 1.0), -direction * swing * 18.0 * wrist_action)
         if two_hand:
-            rotate(arm, mapping, "shoulder_l", side, -12.0 * abs(swing))
-            rotate(arm, mapping, "upper_arm_l", up, direction * swing * 52.0)
-            rotate(arm, mapping, "upper_arm_l", side, -36.0 - abs(swing) * 18.0)
-            rotate(arm, mapping, "lower_arm_l", side, (76.0 - swing * 18.0) * elbow_sign)
-            rotate_local(arm, mapping, "hand_l", (0.0, 0.0, 1.0), direction * swing * 14.0)
+            rotate(arm, mapping, "shoulder_l", side, -12.0 * abs(swing) * arm_reach)
+            rotate(arm, mapping, "upper_arm_l", up, direction * swing * 52.0 * arm_reach)
+            rotate(arm, mapping, "upper_arm_l", side, (-36.0 - abs(swing) * 18.0) * arm_reach)
+            rotate(arm, mapping, "lower_arm_l", side, (76.0 - swing * 18.0) * elbow_sign * elbow_flex)
+            rotate_local(arm, mapping, "hand_l", (0.0, 0.0, 1.0), direction * swing * 14.0 * wrist_action)
     elif motion in {"OVERHEAD", "TWO_HAND_OVERHEAD"}:
         weight = 1.12 if two_hand else 1.0
         lift = max(0.0, -swing)
         descend = max(0.0, swing)
-        rotate(arm, mapping, "hips", side, (lift * 5.0 - descend * 8.0) * weight)
-        rotate(arm, mapping, "spine", side, (lift * 9.0 - descend * 15.0) * weight)
-        rotate(arm, mapping, "chest", side, (lift * 16.0 - descend * 28.0) * weight)
+        rotate(arm, mapping, "hips", side, (lift * 5.0 - descend * 8.0) * weight * torso_power)
+        rotate(arm, mapping, "spine", side, (lift * 9.0 - descend * 15.0) * weight * torso_power)
+        rotate(arm, mapping, "chest", side, (lift * 16.0 - descend * 28.0) * weight * torso_power)
         for suffix, lateral in (("r", 1.0), ("l", -1.0)):
             if suffix == "l" and not two_hand:
                 continue
-            rotate(arm, mapping, f"shoulder_{suffix}", side, -18.0 * lift)
-            rotate(arm, mapping, f"upper_arm_{suffix}", side, -72.0 * lift + 58.0 * descend)
-            rotate(arm, mapping, f"upper_arm_{suffix}", fwd, lateral * (18.0 if two_hand else 7.0))
-            rotate(arm, mapping, f"lower_arm_{suffix}", side, (54.0 + lift * 38.0 - descend * 28.0) * elbow_sign)
-            rotate_local(arm, mapping, f"hand_{suffix}", (1.0, 0.0, 0.0), -swing * 16.0)
+            rotate(arm, mapping, f"shoulder_{suffix}", side, -18.0 * lift * arm_reach)
+            rotate(arm, mapping, f"upper_arm_{suffix}", side, (-72.0 * lift + 58.0 * descend) * arm_reach)
+            rotate(arm, mapping, f"upper_arm_{suffix}", fwd, lateral * (18.0 if two_hand else 7.0) * arm_reach)
+            rotate(arm, mapping, f"lower_arm_{suffix}", side, (54.0 + lift * 38.0 - descend * 28.0) * elbow_sign * elbow_flex)
+            rotate_local(arm, mapping, f"hand_{suffix}", (1.0, 0.0, 0.0), -swing * 16.0 * wrist_action)
     elif motion in {"THRUST", "TWO_HAND_THRUST"}:
         extension = max(-1.0, min(1.0, swing))
-        rotate(arm, mapping, "hips", up, -extension * 5.0)
-        rotate(arm, mapping, "spine", side, -extension * 7.0)
-        rotate(arm, mapping, "chest", side, -extension * 13.0)
-        rotate(arm, mapping, "chest", up, -extension * 8.0)
+        rotate(arm, mapping, "hips", up, -extension * 5.0 * torso_power)
+        rotate(arm, mapping, "spine", side, -extension * 7.0 * torso_power)
+        rotate(arm, mapping, "chest", side, -extension * 13.0 * torso_power)
+        rotate(arm, mapping, "chest", up, -extension * 8.0 * torso_power)
         for suffix, lateral in (("r", 1.0), ("l", -1.0)):
             if suffix == "l" and not two_hand:
                 continue
-            rotate(arm, mapping, f"shoulder_{suffix}", side, -10.0 * abs(extension))
-            rotate(arm, mapping, f"upper_arm_{suffix}", side, -54.0 - extension * 24.0)
-            rotate(arm, mapping, f"upper_arm_{suffix}", fwd, lateral * (16.0 if two_hand else 6.0))
+            rotate(arm, mapping, f"shoulder_{suffix}", side, -10.0 * abs(extension) * arm_reach)
+            rotate(arm, mapping, f"upper_arm_{suffix}", side, (-54.0 - extension * 24.0) * arm_reach)
+            rotate(arm, mapping, f"upper_arm_{suffix}", fwd, lateral * (16.0 if two_hand else 6.0) * arm_reach)
             elbow = 92.0 - (extension + 1.0) * 36.0
-            rotate(arm, mapping, f"lower_arm_{suffix}", side, elbow * elbow_sign)
-            rotate_local(arm, mapping, f"hand_{suffix}", (1.0, 0.0, 0.0), extension * 9.0)
-        offset(arm, mapping, "hips", fwd * (0.026 * max(0.0, extension)))
+            rotate(arm, mapping, f"lower_arm_{suffix}", side, elbow * elbow_sign * elbow_flex)
+            rotate_local(arm, mapping, f"hand_{suffix}", (1.0, 0.0, 0.0), extension * 9.0 * wrist_action)
+        offset(arm, mapping, "hips", fwd * (0.026 * max(0.0, extension) * stance))
 
-    rotate(arm, mapping, "thigh_l", side, -4.0 * abs(swing))
-    rotate(arm, mapping, "thigh_r", side, -4.0 * abs(swing))
-    rotate(arm, mapping, "shin_l", side, 7.0 * abs(swing))
-    rotate(arm, mapping, "shin_r", side, 7.0 * abs(swing))
+    rotate(arm, mapping, "thigh_l", side, -4.0 * abs(swing) * stance)
+    rotate(arm, mapping, "thigh_r", side, -4.0 * abs(swing) * stance)
+    rotate(arm, mapping, "shin_l", side, 7.0 * abs(swing) * stance)
+    rotate(arm, mapping, "shin_r", side, 7.0 * abs(swing) * stance)
 
 
 def validate_offensive_action(context, action, *, require_approved=None, available_socket_roles=None):
@@ -5372,10 +5511,15 @@ def validate_offensive_action(context, action, *, require_approved=None, availab
     }
 
 
-def generate_offensive_action(context, kind):
-    variant = offensive_actions.OFFENSIVE_ACTION_VARIANTS.get(kind)
-    if variant is None:
+def generate_offensive_action(context, kind, *, recipe=None):
+    base_variant = offensive_actions.OFFENSIVE_ACTION_VARIANTS.get(kind)
+    if base_variant is None:
         raise RuntimeError(f"Unknown offensive Action kind {kind!r}.")
+    recipe = recipe or offensive_actions.default_offensive_recipe(base_variant)
+    try:
+        variant = offensive_actions.offensive_variant_with_recipe(kind, recipe)
+    except ValueError as exc:
+        raise RuntimeError(str(exc)) from None
     settings = context.scene.daf_settings
     arm = find_armature(context)
     anatomy_blender.require_generator_capability(arm, "offensive_humanoid", "Humanoid offensive generator")
@@ -5396,10 +5540,10 @@ def generate_offensive_action(context, kind):
     context.scene.frame_end = schedule["end"]
     stages = (
         (schedule["start"], 0.0),
-        (schedule["anticipation"], -1.0),
-        (schedule["activeStart"], -0.64),
-        (schedule["contact"], 0.56),
-        (schedule["activeEnd"], 1.0),
+        (schedule["anticipation"], -1.0 * variant["anticipationStrength"]),
+        (schedule["activeStart"], -0.64 * variant["anticipationStrength"]),
+        (schedule["contact"], 0.56 * variant["strikeStrength"]),
+        (schedule["activeEnd"], 1.0 * variant["followThrough"]),
         (schedule["end"], 0.0),
     )
     for frame, swing in stages:
@@ -5420,6 +5564,9 @@ def generate_offensive_action(context, kind):
     action["dsb_draft_kind"] = kind
     action["dsb_root_motion_policy"] = "IN_PLACE"
     offensive_actions.stamp_offensive_metadata(action, metadata)
+    offensive_actions.stamp_offensive_recipe(action, recipe)
+    action["dsb_offensive_previewed"] = False
+    action["dsb_offensive_preview_count"] = 0
     set_bezier(action, cycles=False)
     animation_library.mark_draft(action, arm, settings, kind)
     validation = validate_offensive_action(context, action, require_approved=False)
@@ -5439,7 +5586,9 @@ def generate_humanoid_offensive_suite(context):
         arm.animation_data_create()
     original_action = arm.animation_data.action
     backups = {}
-    for variant in offensive_actions.OFFENSIVE_ACTION_VARIANTS.values():
+    recipes = {}
+    for kind, variant in offensive_actions.OFFENSIVE_ACTION_VARIANTS.items():
+        recipes[kind] = _latest_offensive_recipe(kind)
         draft_name = variant["draftName"]
         existing = bpy.data.actions.get(draft_name)
         if existing is None:
@@ -5450,7 +5599,10 @@ def generate_humanoid_offensive_suite(context):
         backup.use_fake_user = True
         backups[draft_name] = (backup, bool(existing.use_fake_user))
     try:
-        actions = [generate_offensive_action(context, kind) for kind in offensive_actions.OFFENSIVE_ACTION_VARIANTS]
+        actions = [
+            generate_offensive_action(context, kind, recipe=recipes[kind])
+            for kind in offensive_actions.OFFENSIVE_ACTION_VARIANTS
+        ]
     except Exception:
         for variant in offensive_actions.OFFENSIVE_ACTION_VARIANTS.values():
             draft_name = variant["draftName"]
@@ -5467,6 +5619,38 @@ def generate_humanoid_offensive_suite(context):
     for backup, _fake_user in backups.values():
         bpy.data.actions.remove(backup, do_unlink=True)
     return actions
+
+
+def generate_selected_offensive_action(context):
+    settings = context.scene.daf_settings
+    kind = str(settings.offensive_preview_kind)
+    recipe = offensive_recipe_from_settings(settings, kind)
+    return generate_offensive_action(context, kind, recipe=recipe)
+
+
+def preview_offensive_action(context, kind=None, *, start_playback=True):
+    settings = context.scene.daf_settings
+    kind = str(kind or settings.offensive_preview_kind)
+    variant = offensive_actions.OFFENSIVE_ACTION_VARIANTS.get(kind)
+    if variant is None:
+        raise RuntimeError(f"Unknown offensive Action kind {kind!r}.")
+    action = bpy.data.actions.get(variant["draftName"])
+    if action is None or not bool(action.get("dsb_draft", False)):
+        raise RuntimeError("Refresh the selected offensive draft before previewing it.")
+    validation = validate_offensive_action(context, action, require_approved=False)
+    if validation["status"] != "PASS":
+        raise RuntimeError("Draft preview validation failed: " + "; ".join(validation["errors"][:4]))
+    arm = find_armature(context)
+    playback = animation_library.play_action(
+        context,
+        arm,
+        action,
+        start_playback=start_playback,
+    )
+    action["dsb_offensive_previewed"] = True
+    action["dsb_offensive_preview_count"] = int(action.get("dsb_offensive_preview_count", 0)) + 1
+    settings.animation_library_status = f"PREVIEWED — {action.name}"
+    return {**playback, "kind": kind, "previewCount": int(action["dsb_offensive_preview_count"])}
 
 
 def validate_all_offensive_actions(context, *, require_approved=None, available_socket_roles=None):
@@ -5500,7 +5684,64 @@ class DAF_OT_generate_humanoid_offensive_suite(Operator):
     def execute(self, context):
         try:
             actions = generate_humanoid_offensive_suite(context)
-            self.report({'INFO'}, f"Generated {len(actions)} reviewed offensive drafts.")
+            self.report({'INFO'}, f"Generated {len(actions)} customizable offensive drafts.")
+            return {'FINISHED'}
+        except Exception as exc:
+            self.report({'ERROR'}, str(exc))
+            return {'CANCELLED'}
+
+
+class DAF_OT_generate_selected_offensive_draft(Operator):
+    bl_idname = "daf.generate_selected_offensive_draft"
+    bl_label = "Refresh Selected Offensive Draft"
+    bl_description = "Apply the visible timing and motion sliders to the selected character-specific draft"
+    bl_options = {'REGISTER', 'UNDO'}
+
+    def execute(self, context):
+        try:
+            action = generate_selected_offensive_action(context)
+            self.report({'INFO'}, f"Refreshed {action.name}. Preview it before approval.")
+            return {'FINISHED'}
+        except Exception as exc:
+            self.report({'ERROR'}, str(exc))
+            return {'CANCELLED'}
+
+
+class DAF_OT_preview_offensive_draft(Operator):
+    bl_idname = "daf.preview_offensive_draft"
+    bl_label = "Preview Selected Offensive Draft"
+    bl_description = "Play the selected draft on this character across its exact authored attack range"
+    bl_options = {'REGISTER'}
+
+    def execute(self, context):
+        try:
+            result = preview_offensive_action(context, start_playback=True)
+            self.report(
+                {'INFO'},
+                f"Previewing {result['action']} ({result['frameStart']}–{result['frameEnd']}).",
+            )
+            return {'FINISHED'}
+        except Exception as exc:
+            self.report({'ERROR'}, str(exc))
+            return {'CANCELLED'}
+
+
+class DAF_OT_reset_offensive_sliders(Operator):
+    bl_idname = "daf.reset_offensive_sliders"
+    bl_label = "Reset Offensive Sliders"
+    bl_description = "Restore the selected attack's built-in humanoid starting values without changing any saved Action"
+    bl_options = {'REGISTER', 'UNDO'}
+
+    def execute(self, context):
+        settings = context.scene.daf_settings
+        kind = str(settings.offensive_preview_kind)
+        try:
+            recipe = offensive_actions.default_offensive_recipe(
+                offensive_actions.OFFENSIVE_ACTION_VARIANTS[kind]
+            )
+            apply_offensive_recipe_to_settings(settings, recipe)
+            settings.animation_library_status = "OFFENSIVE SLIDERS RESET — refresh draft to apply"
+            self.report({'INFO'}, "Restored the selected attack's starting slider values.")
             return {'FINISHED'}
         except Exception as exc:
             self.report({'ERROR'}, str(exc))
@@ -6957,7 +7198,7 @@ class DAF_PT_legacy_panel(Panel):
             layout,
             s,
             "ui_deformation_authoring_open",
-            "Trauma Field Authoring v5.2.0",
+            "Trauma Field Authoring v5.2.1",
         )
         if opened:
             configure_property_box(box)
@@ -7352,6 +7593,9 @@ CLASSES = (
     DAF_OT_hurt_left,
     DAF_OT_hurt_right,
     DAF_OT_generate_humanoid_offensive_suite,
+    DAF_OT_generate_selected_offensive_draft,
+    DAF_OT_preview_offensive_draft,
+    DAF_OT_reset_offensive_sliders,
     DAF_OT_validate_humanoid_offensive_suite,
     DAF_OT_generate_mace_head_guards,
     DAF_OT_preview_mace_guard_active,

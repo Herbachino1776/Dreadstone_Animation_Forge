@@ -1,14 +1,14 @@
-# Dreadstone Animation Forge 5.2.0 — User Workflow Guide
+# Dreadstone Animation Forge 5.2.1 — User Workflow Guide
 
-- Release archive: `Dreadstone_Animation_Forge_v5_2_0.zip`
+- Release archive: `Dreadstone_Animation_Forge_v5_2_1.zip`
 - Supported release runtime: Blender 5.1.2
 - Damage authoring model: Damage Keys → child Stamp alternatives → strong macros
 - Reuse model: topology-independent Damage Blueprints
 
-## 1. Install Dreadstone Animation Forge 5.2.0
+## 1. Install Dreadstone Animation Forge 5.2.1
 
 In Blender choose **Edit > Preferences > Add-ons > Install from Disk**, select
-`Dreadstone_Animation_Forge_v5_2_0.zip` without extracting it, and enable
+`Dreadstone_Animation_Forge_v5_2_1.zip` without extracting it, and enable
 **Dreadstone Animation Forge**.
 
 ## 2. Open the Dreadstone panel
@@ -249,13 +249,36 @@ Analyze the rig, draft idle/walk/collapse/hurt or mace head-guard Actions,
 inspect them, and use the explicit Version/Approve controls. Generated Actions
 do not animate bone scale. Approved Actions and NLA-used Actions are protected.
 
-For combat motion, open **Humanoid Offensive Actions** and click
-**Generate / Refresh Offensive Suite**. Forge creates eight disposable drafts:
-one-hand right-to-left slash, left-to-right slash, overhead, thrust, and heavy;
-plus two-hand slash, overhead, and thrust. Click **Validate Humanoid Offensive
-Suite**, inspect the motion, then approve each intended Action explicitly. Each
-approved clip preserves a stable combat ID, compatible weapon classes, its
-primary (and when required secondary) hand role, commitment point, and
+For combat motion, open **Humanoid Offensive Actions**. Choose one attack under
+**Attack to Customize**. Its **Custom Attack Sliders** expose exact WINDUP,
+ACTIVE, and RECOVERY seconds plus anticipation, strike strength, follow
+through, torso power, arm reach, elbow flex, wrist action, and stance
+compression.
+
+Use this review loop for every attack you want to keep:
+
+1. Adjust the sliders and click **Apply Sliders / Refresh Draft**.
+2. Click **Preview Attack** to play the exact draft range on the current
+   character. Spacebar stops Blender playback.
+3. Repeat adjustment, refresh, and preview until the motion reads correctly.
+4. Click **Save / Approve This Attack**. Forge deliberately blocks approval
+   until the current generated draft has been previewed.
+
+The approved Action and its `dreadstone.offensive_recipe.v1` slider recipe are
+saved in the character `.blend`. Switching the attack selector reloads the
+latest draft or approved recipe for that attack. **Reset Sliders** restores the
+built-in starting recipe without touching any saved Action. These
+character-specific recipes do not silently replace the global humanoid
+generator defaults; a later explicit promotion can use the good approved
+character Actions as the reviewed default source.
+
+**Generate / Refresh Offensive Suite** still creates all eight disposable
+drafts: one-hand right-to-left slash, left-to-right slash, overhead, thrust,
+and heavy; plus two-hand slash, overhead, and thrust. Suite refresh preserves
+stored per-attack recipes. Select each draft in turn to tune, preview, and
+approve it. Click **Validate Humanoid Offensive Suite** for contract checks.
+Each approved clip preserves a stable combat ID, compatible weapon classes,
+its primary (and when required secondary) hand role, commitment point, and
 contiguous WINDUP / ACTIVE / RECOVERY intervals in seconds. Approval does not
 equip a weapon or create gameplay damage.
 
@@ -527,8 +550,10 @@ authoring asset.
   **CLEAR BASE**,
   **Generate / Refresh Death Draft**, flank-hurt draft controls,
   **Generate Three Mace Head-Guard Drafts**, **Preview Guard_Active**,
-  **Validate Mace Head-Guard Drafts**, **Generate / Refresh Offensive Suite**,
-  **Validate Humanoid Offensive Suite**, **Create / Repair Runtime Hand Sockets**,
+  **Validate Mace Head-Guard Drafts**, **Apply Sliders / Refresh Draft**,
+  **Preview Attack**, **Save / Approve This Attack**,
+  **Generate / Refresh Offensive Suite**, **Validate Humanoid Offensive Suite**,
+  **Create / Repair Runtime Hand Sockets**,
   **VIP ANIMATION LIBRARY**, **PLAY**,
   **EDIT**, **SAVE**, **DELETE**, **EXPORT SELECTED**, **IMPORT TO CHARACTER**,
   **Build Approved Animation Pack**, **Validate Last Built Pack**.

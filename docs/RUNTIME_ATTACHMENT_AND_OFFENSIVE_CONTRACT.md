@@ -1,6 +1,6 @@
 # Runtime attachment and offensive Action contract
 
-Forge release: `5.2.0`
+Forge release: `5.2.1`
 
 Schemas:
 
@@ -61,6 +61,23 @@ Metadata may live on a draft for preview and validation. Runtime export is
 strict: the Action must be explicitly approved, non-draft, compatible with the
 runtime skeleton, reference available socket roles, and have a unique combat
 ID. Forge never infers attack capability from an Action name.
+
+### Character-specific slider recipe and preview gate
+
+Each generated offensive draft also carries authoring-only
+`dreadstone.offensive_recipe.v1` JSON. It stores the visible timing sliders and
+motion-shaping controls for anticipation, strike, follow-through, torso, arm,
+elbow, wrist, and stance. The recipe persists with approved Actions and through
+`.blend` save/reload, but it is not runtime damage or weapon metadata and is
+not required by Dreadstone.
+
+Refreshing a selected draft applies the current sliders and clears its preview
+proof. **Preview Attack** plays that precise Action on the active character and
+records that the current draft was reviewed. Offensive approval fails closed
+until this preview has occurred. Approval preserves the character recipe; it
+does not mutate the built-in humanoid starting recipes. Promoting reviewed
+character Actions into new humanoid defaults remains a separate, explicit
+future authoring decision.
 
 ## Consumer boundary
 

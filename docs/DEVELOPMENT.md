@@ -135,10 +135,13 @@ Run the M6 offensive Action/socket regression as part of the same release gate:
 blender --background --factory-startup --python tests/blender_offensive_animation_acceptance.py
 ```
 
-It must generate and explicitly approve eight phase-valid offensive Actions,
-prove that none animates scale, preserve the exact 21-bone rest skeleton, keep
-socket ensure idempotent, persist an artist-adjusted grip through save/reload,
-and emit the two canonical hand socket records.
+It must generate eight phase-valid offensive drafts, prove the custom timing
+and motion sliders alter phase frames and keyframes, preserve each per-character
+recipe across suite refresh, reject approval before preview, preview and
+explicitly approve all eight Actions, and persist the recipe through
+save/reload. It must also prove that none animates scale, preserve the exact
+21-bone rest skeleton, keep socket ensure idempotent, persist an
+artist-adjusted grip, and emit the two canonical hand socket records.
 
 The Blender-free cavity suite exercises all six Gore identities, each macro at
 0/25/50/75/100, and the exact reported head-macro regression. Every generated
@@ -172,7 +175,7 @@ should be performed only when requested.
 ## Release archive
 
 `python scripts/build_release.py` validates first and writes
-`dist/Dreadstone_Animation_Forge_v5_2_0.zip`. Every package Python file is
+`dist/Dreadstone_Animation_Forge_v5_2_1.zip`. Every package Python file is
 discovered recursively, so new service/operator modules must appear in the
 archive automatically. `dist/`, bytecode, caches, Blender backups, and
 temporary extraction directories are generated artifacts and are not

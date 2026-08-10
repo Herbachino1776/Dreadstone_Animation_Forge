@@ -100,6 +100,35 @@ class AnimationLibraryContractTests(unittest.TestCase):
         self.assertIn("_draw_walk_animation", calls)
         self.assertIn("_draw_idle_animation", calls)
 
+    def test_offensive_panel_exposes_character_sliders_preview_and_approval_gate(self):
+        for marker in (
+            "Custom Attack Sliders",
+            '"offensive_windup_seconds"',
+            '"offensive_active_seconds"',
+            '"offensive_recovery_seconds"',
+            '"offensive_anticipation_strength"',
+            '"offensive_strike_strength"',
+            '"offensive_follow_through"',
+            '"offensive_torso_power"',
+            '"offensive_arm_reach"',
+            '"offensive_elbow_flex"',
+            '"offensive_wrist_action"',
+            '"offensive_stance_compression"',
+            '"daf.generate_selected_offensive_draft"',
+            '"daf.preview_offensive_draft"',
+            "Save / Approve This Attack",
+            "Humanoid generator defaults are not changed automatically",
+        ):
+            self.assertIn(marker, self.panels)
+        for marker in (
+            'OFFENSIVE_RECIPE_SCHEMA = "dreadstone.offensive_recipe.v1"',
+            'action["dsb_offensive_previewed"] = False',
+            'if not bool(action.get("dsb_offensive_previewed", False))',
+            "def generate_selected_offensive_action(",
+            "def preview_offensive_action(",
+        ):
+            self.assertIn(marker, self.addon if marker.startswith(("action", "if ", "def ")) else (PACKAGE / "offensive_actions.py").read_text(encoding="utf-8"))
+
     def test_humanoid_idle_is_a_first_class_yplus_loop(self):
         for marker in (
             '"IDLE": "DSB_DRAFT_Idle"',

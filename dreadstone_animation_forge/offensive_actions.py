@@ -11,6 +11,8 @@ from typing import Any, Mapping
 
 OFFENSIVE_ACTION_SCHEMA = "dreadstone.offensive_action.v1"
 OFFENSIVE_ACTION_PROPERTY = "dsb_offensive_action_json"
+OFFENSIVE_RECIPE_SCHEMA = "dreadstone.offensive_recipe.v1"
+OFFENSIVE_RECIPE_PROPERTY = "dsb_offensive_recipe_json"
 
 SOCKET_ROLES = frozenset({"MAIN_HAND_R", "MAIN_HAND_L"})
 WEAPON_CLASSES = frozenset({
@@ -24,6 +26,31 @@ ROOT_MOTION_POLICIES = frozenset({"IN_PLACE", "AUTHORED_ROOT_MOTION"})
 ATTACK_SOURCE_ROLES = frozenset({"EQUIPPED_MAIN_HAND"})
 _STABLE_ID = re.compile(r"^[a-z0-9]+(?:[a-z0-9_-]*[a-z0-9])?$")
 _EPSILON = 1.0e-6
+
+OFFENSIVE_RECIPE_LIMITS = {
+    "windupSeconds": (0.10, 2.50),
+    "activeSeconds": (0.08, 1.00),
+    "recoverySeconds": (0.10, 3.00),
+    "anticipationStrength": (0.25, 1.80),
+    "strikeStrength": (0.25, 1.80),
+    "followThrough": (0.25, 1.80),
+    "torsoPower": (0.00, 2.00),
+    "armReach": (0.50, 1.50),
+    "elbowFlex": (0.50, 1.50),
+    "wristAction": (0.00, 2.00),
+    "stanceCompression": (0.00, 2.00),
+}
+
+OFFENSIVE_RECIPE_POSE_DEFAULTS = {
+    "anticipationStrength": 1.0,
+    "strikeStrength": 1.0,
+    "followThrough": 1.0,
+    "torsoPower": 1.0,
+    "armReach": 1.0,
+    "elbowFlex": 1.0,
+    "wristAction": 1.0,
+    "stanceCompression": 1.0,
+}
 
 
 OFFENSIVE_ACTION_VARIANTS = {
@@ -127,6 +154,70 @@ OFFENSIVE_ACTION_VARIANTS = {
         "recoverySeconds": 0.64,
     },
 }
+
+
+def default_offensive_recipe(variant: Mapping[str, Any]) -> dict[str, Any]:
+    """Return the editable per-character starting recipe for one variant."""
+
+    return {
+        "schema": OFFENSIVE_RECIPE_SCHEMA,
+        "windupSeconds": float(variant["windupSeconds"]),
+        "activeSeconds": float(variant["activeSeconds"]),
+        "recoverySeconds": float(variant["recoverySeconds"]),
+        **OFFENSIVE_RECIPE_POSE_DEFAULTS,
+    }
+
+
+def validate_offensive_recipe(recipe: Mapping[str, Any]) -> list[str]:
+    errors: list[str] = []
+    if not isinstance(recipe, Mapping):
+        return ["Offensive recipe must be an object."]
+    if recipe.get("schema") != OFFENSIVE_RECIPE_SCHEMA:
+        errors.append(f"recipe schema must be {OFFENSIVE_RECIPE_SCHEMA}.")
+    for field, (minimum, maximum) in OFFENSIVE_RECIPE_LIMITS.items():
+        value = recipe.get(field)
+        if not isinstance(value, (int, float)) or not math.isfinite(float(value)):
+            errors.append(f"{field} must be finite.")
+        elif not minimum <= float(value) <= maximum:
+            errors.append(f"{field} must be between {minimum} and {maximum}.")
+    return errors
+
+
+def offensive_variant_with_recipe(kind: str, recipe: Mapping[str, Any]) -> dict[str, Any]:
+    variant = OFFENSIVE_ACTION_VARIANTS.get(kind)
+    if variant is None:
+        raise ValueError(f"Unknown offensive Action kind {kind!r}.")
+    errors = validate_offensive_recipe(recipe)
+    if errors:
+        raise ValueError("Invalid offensive recipe: " + " ".join(errors))
+    result = deepcopy(variant)
+    for field in OFFENSIVE_RECIPE_LIMITS:
+        result[field] = float(recipe[field])
+    return result
+
+
+def stamp_offensive_recipe(action, recipe: Mapping[str, Any]):
+    errors = validate_offensive_recipe(recipe)
+    if errors:
+        raise ValueError("Invalid offensive recipe: " + " ".join(errors))
+    action[OFFENSIVE_RECIPE_PROPERTY] = json.dumps(
+        dict(recipe), sort_keys=True, separators=(",", ":")
+    )
+    return action
+
+
+def read_offensive_recipe(action) -> dict[str, Any] | None:
+    raw = action.get(OFFENSIVE_RECIPE_PROPERTY, "")
+    if not raw:
+        return None
+    try:
+        value = json.loads(str(raw))
+    except (TypeError, ValueError, json.JSONDecodeError):
+        raise ValueError("Offensive recipe is not valid JSON.") from None
+    errors = validate_offensive_recipe(value)
+    if errors:
+        raise ValueError("Invalid offensive recipe: " + " ".join(errors))
+    return deepcopy(value)
 
 
 def phase_metadata(variant: Mapping[str, Any], fps: float) -> tuple[dict[str, Any], dict[str, int]]:
@@ -315,12 +406,21 @@ __all__ = (
     "OFFENSIVE_ACTION_PROPERTY",
     "OFFENSIVE_ACTION_SCHEMA",
     "OFFENSIVE_ACTION_VARIANTS",
+    "OFFENSIVE_RECIPE_LIMITS",
+    "OFFENSIVE_RECIPE_POSE_DEFAULTS",
+    "OFFENSIVE_RECIPE_PROPERTY",
+    "OFFENSIVE_RECIPE_SCHEMA",
     "ROOT_MOTION_POLICIES",
     "SOCKET_ROLES",
     "WEAPON_CLASSES",
+    "default_offensive_recipe",
+    "offensive_variant_with_recipe",
     "phase_metadata",
     "read_offensive_metadata",
+    "read_offensive_recipe",
     "stamp_offensive_metadata",
+    "stamp_offensive_recipe",
     "validate_offensive_metadata",
+    "validate_offensive_recipe",
     "validated_action_metadata",
 )

@@ -38,13 +38,13 @@ ALL_MODULE_PATHS = tuple(sorted(
     if "__pycache__" not in path.parts
 ))
 
-EXPECTED_VERSION = (5, 2, 0)
+EXPECTED_VERSION = (5, 2, 1)
 EXPECTED_READINESS_BUILD = "2026-07-18.source-contract.1"
 EXPECTED_AUTHORING_BUILD = "2026-08-10.runtime-armament-contract.1"
 EXPECTED_DEFORMATION_BUILD = "2026-07-29.portable-surface-stains.1"
 
 REQUIRED_GUIDE_HEADINGS = (
-    "## 1. Install Dreadstone Animation Forge 5.2.0",
+    "## 1. Install Dreadstone Animation Forge 5.2.1",
     "## 2. Open the Dreadstone panel",
     "## 3. Import and prepare a source GLB",
     "## 4. Use the VIP Damage workflow",
@@ -131,6 +131,9 @@ REQUIRED_GUIDE_UI_LABELS = {
     "**Preview Guard_Active**",
     "**Validate Mace Head-Guard Drafts**",
     "**Generate / Refresh Offensive Suite**",
+    "**Apply Sliders / Refresh Draft**",
+    "**Preview Attack**",
+    "**Save / Approve This Attack**",
     "**Validate Humanoid Offensive Suite**",
     "**Create / Repair Runtime Hand Sockets**",
     "**REBUILD ACTIVE DEFORMATION**",
@@ -158,6 +161,7 @@ REQUIRED_SCHEMAS = {
     "dreadstone.runtime_animations.v1",
     "dreadstone.attachment_sockets.v1",
     "dreadstone.offensive_action.v1",
+    "dreadstone.offensive_recipe.v1",
     "dreadstone.final_glb_validation.v2",
     "dreadstone.trauma_stamp_library.v1",
     "dreadstone.compound_trauma_event.v1",
@@ -263,6 +267,9 @@ REQUIRED_OPERATORS = {
     "daf.preview_mace_guard_active": "Preview Guard_Active",
     "daf.validate_mace_head_guards": "Validate Mace Head-Guard Drafts",
     "daf.generate_humanoid_offensive_suite": "Generate Humanoid Offensive Suite",
+    "daf.generate_selected_offensive_draft": "Refresh Selected Offensive Draft",
+    "daf.preview_offensive_draft": "Preview Selected Offensive Draft",
+    "daf.reset_offensive_sliders": "Reset Offensive Sliders",
     "daf.validate_humanoid_offensive_suite": "Validate Humanoid Offensive Suite",
     "daf.ensure_runtime_attachment_sockets": "Create / Repair Runtime Hand Sockets",
     "daf.toggle_damage_key_preview": "Toggle Damage Key Preview",
@@ -295,7 +302,7 @@ REQUIRED_OPERATORS = {
 REQUIRED_UI_TEXT = {
     "Source Damage Readiness",
     "Damage Segment & Stump Authoring v3.9",
-    "Trauma Field Authoring v5.2.0",
+    "Trauma Field Authoring v5.2.1",
     "Generate Humanoid Idle",
     "Draft Base Pose",
     "Capture Base + Preview Idle",
@@ -500,7 +507,7 @@ def check_extension_manifest() -> None:
         (
             'schema_version = "1.0.0"',
             'id = "dreadstone_animation_forge"',
-            'version = "5.2.0"',
+            'version = "5.2.1"',
             'name = "Dreadstone Animation Forge"',
             'type = "add-on"',
             'blender_version_min = "4.2.0"',
@@ -1006,14 +1013,14 @@ def check_repository_hygiene() -> None:
 
 
 def main() -> int:
-    print("DREADSTONE ANIMATION FORGE v5.2.0 STATIC VALIDATION")
+    print("DREADSTONE ANIMATION FORGE v5.2.1 STATIC VALIDATION")
     print("Blender is not imported; runtime acceptance remains separate.")
 
     sources: dict[str, str] = {}
     trees: dict[str, ast.Module] = {}
     checks: list[tuple[str, Callable[[], None]]] = [
         ("all contract package modules exist", check_module_files),
-        ("Blender extension manifest exists and matches v5.2.0", check_extension_manifest),
+        ("Blender extension manifest exists and matches v5.2.1", check_extension_manifest),
         ("all Python modules parse with ast.parse", lambda: check_parse(sources)),
         ("all Python modules compile with py_compile", check_compile),
         ("add-on/deformation version and build contracts", lambda: check_versions(trees)),

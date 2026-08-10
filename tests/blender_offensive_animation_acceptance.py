@@ -92,6 +92,14 @@ def transform_values(obj):
     }
 
 
+def curve_signature(action):
+    return tuple(
+        round(float(point.co.y), 6)
+        for curve in addon.iter_action_fcurves(action)
+        for point in curve.keyframe_points
+    )
+
+
 def main():
     if not hasattr(bpy.types.Scene, "daf_settings"):
         addon.register()
@@ -132,11 +140,51 @@ def main():
         "An offensive generator animated bone scale.",
     )
 
-    approved = [
-        addon.approve_draft_action(context, kind)
-        for kind in offensive_actions.OFFENSIVE_ACTION_VARIANTS
-    ]
+    selected_kind = "ATTACK_SLASH_RTL_ONE_HAND"
+    settings = context.scene.daf_settings
+    settings.offensive_preview_kind = selected_kind
+    baseline_signature = curve_signature(bpy.data.actions[offensive_actions.OFFENSIVE_ACTION_VARIANTS[selected_kind]["draftName"]])
+    settings.offensive_windup_seconds = 0.80
+    settings.offensive_active_seconds = 0.22
+    settings.offensive_recovery_seconds = 0.90
+    settings.offensive_anticipation_strength = 1.35
+    settings.offensive_strike_strength = 1.40
+    settings.offensive_follow_through = 1.25
+    settings.offensive_torso_power = 1.50
+    settings.offensive_arm_reach = 1.18
+    settings.offensive_elbow_flex = 0.82
+    settings.offensive_wrist_action = 1.30
+    settings.offensive_stance_compression = 1.20
+    customized = addon.generate_selected_offensive_action(context)
+    custom_recipe = offensive_actions.read_offensive_recipe(customized)
+    customized_signature = curve_signature(customized)
+    require(custom_recipe is not None, "The custom slider recipe was not stored on the draft.")
+    require(abs(custom_recipe["windupSeconds"] - 0.80) < 1.0e-6, "The WINDUP slider did not reach the draft recipe.")
+    require(customized_signature != baseline_signature, "Motion sliders did not change generated keyframes.")
+    custom_metadata = offensive_actions.read_offensive_metadata(customized)
+    require(custom_metadata["phases"]["windup"]["endSeconds"] == 0.791667, "Custom timing did not drive phase frames.")
+
+    regenerated = addon.generate_humanoid_offensive_suite(context)
+    regenerated_custom = bpy.data.actions[offensive_actions.OFFENSIVE_ACTION_VARIANTS[selected_kind]["draftName"]]
+    require(offensive_actions.read_offensive_recipe(regenerated_custom) == custom_recipe, "Suite refresh lost a character recipe.")
+    require(curve_signature(regenerated_custom) == customized_signature, "Suite refresh changed the saved custom motion.")
+    drafts = regenerated
+
+    try:
+        addon.approve_draft_action(context, selected_kind)
+    except RuntimeError as exc:
+        require("Preview this offensive draft" in str(exc), "Approval failed for the wrong pre-preview reason.")
+    else:
+        raise RuntimeError("An unpreviewed offensive draft was approved.")
+
+    approved = []
+    preview_results = []
+    for kind in offensive_actions.OFFENSIVE_ACTION_VARIANTS:
+        settings.offensive_preview_kind = kind
+        preview_results.append(addon.preview_offensive_action(context, kind, start_playback=False))
+        approved.append(addon.approve_draft_action(context, kind))
     require(len({action.name for action in approved}) == 8, "Approved Action names are not unique.")
+    require(all(result["previewCount"] == 1 for result in preview_results), "A draft preview was not recorded exactly once.")
     approved_validation = addon.validate_all_offensive_actions(
         context,
         require_approved=True,
@@ -155,6 +203,8 @@ def main():
         require(abs(metadata["clipDurationSeconds"] - expected_duration) < 1.0e-5, "Phase duration drifted from Action frames.")
         require(action["dsb_approved_frame_start"] == int(start), "Approved start frame is wrong.")
         require(action["dsb_approved_frame_end"] == int(end), "Approved end frame is wrong.")
+        require(bool(action["dsb_offensive_previewed_before_approval"]), "Approved Action lost preview proof.")
+        require(offensive_actions.read_offensive_recipe(action) is not None, "Approved Action lost its character recipe.")
 
     socket_contract = attachment_sockets.runtime_socket_contract(runtime_rig=armature)
     require(socket_contract["socketCount"] == 2, "The sidecar socket inventory is incomplete.")
@@ -172,6 +222,11 @@ def main():
         len([action for action in bpy.data.actions if action.get(offensive_actions.OFFENSIVE_ACTION_PROPERTY)]) == 8,
         "Reload lost offensive Action metadata.",
     )
+    reloaded_custom = next(
+        action for action in bpy.data.actions
+        if action.get("dsb_approved_kind") == selected_kind
+    )
+    require(offensive_actions.read_offensive_recipe(reloaded_custom) == custom_recipe, "Reload lost the custom slider recipe.")
 
     report = {
         "status": "PASS",
@@ -185,6 +240,8 @@ def main():
         "noScaleAnimation": True,
         "restSkeletonPreserved": True,
         "socketTransformPersisted": True,
+        "customSliderRecipePersisted": True,
+        "previewRequiredBeforeApproval": True,
         "blend": str(blend_path),
     }
     print("OFFENSIVE_ANIMATION_ACCEPTANCE=" + json.dumps(report, sort_keys=True))

@@ -1,5 +1,17 @@
 # Changelog
 
+## 5.2.1
+
+- Added visible per-attack timing and motion sliders for all eight humanoid
+  offensive drafts.
+- Added selected-draft refresh and playback controls so attacks can be reviewed
+  on the current character before approval.
+- Offensive approval now requires preview proof for the current generated
+  draft; regenerating a draft clears that proof.
+- Added persistent `dreadstone.offensive_recipe.v1` authoring metadata so
+  character-specific settings survive suite refresh, approval, and `.blend`
+  save/reload without changing built-in humanoid defaults.
+
 ## 5.2.0
 
 - Added eight reviewed humanoid offensive Action generators covering one-hand
