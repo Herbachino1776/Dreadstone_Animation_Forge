@@ -1,5 +1,31 @@
 # Changelog
 
+## 5.3.0
+
+- Added Character Variant Families using the exact approved Skin & Bones 2.2.0
+  `skin-and-bones-appearance-family-handoff-v1` metadata, including strict
+  technical-body fingerprint and canonical rig/coordinate compatibility gates.
+- Added a persistent shared Forge authoring layer with sparse copy-on-write
+  Action, Damage Key, and Progressive Damage Site override maps. Compatible
+  appearance-only variants create no duplicate Actions or Damage Keys.
+- Added compact `SHARED` / `INHERITED` / `OVERRIDE` UI, direct appearance
+  switching, confirmed shared edits, single-item override/revert operations,
+  and an explicit lock against accidental family-wide Damage edits.
+- Offensive Actions inherit their existing approval and socket/timing recipes;
+  an explicit variant override becomes a new draft and must pass the normal
+  preview and approval gate.
+- Progressive Site overrides clone only the Site and its distinct assigned
+  Light/Medium/Heavy Damage Keys, preserving coherent stage references while
+  unrelated Damage stays inherited.
+- Complete Damage export now resolves the selected appearance plus shared and
+  overridden Forge content, emits versioned family/variant provenance, and can
+  export every ready variant as an independent GLB and sidecars.
+- Preserved the 21-bone `DSB_DAMAGE_RIG`, family-shared managed sockets,
+  zero-time temporary runtime Action staging, declared clip duration checks,
+  offensive timing validation, and standalone 5.2.2 project behavior.
+- Added pure family/resolution regression coverage and Blender 5.1.2
+  active-switch, copy-count, override/revert, and save/reopen acceptance.
+
 ## 5.2.2
 
 - Complete Damage export now shifts only temporary runtime Action clones to a

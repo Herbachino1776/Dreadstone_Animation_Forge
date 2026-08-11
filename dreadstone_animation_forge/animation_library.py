@@ -18,7 +18,7 @@ from . import offensive_actions
 
 
 ANIMATION_CLIP_SCHEMA = "dreadstone.animation_clip.v1"
-ANIMATION_LIBRARY_BUILD_ID = "2026-08-10.runtime-zero-time-export-5.2.2"
+ANIMATION_LIBRARY_BUILD_ID = "2026-08-11.character-variant-families-5.3.0"
 
 CLIP_ID_PROPERTY = "dsb_animation_clip_id"
 CLIP_SCHEMA_PROPERTY = "dsb_animation_clip_schema"
@@ -509,6 +509,12 @@ def mark_approved(action, armature, settings, kind=None):
     for key in ("dsb_edit_source_clip_id", "dsb_draft_kind"):
         if key in action:
             del action[key]
+    # Character Variant Families are shared-by-default.  The variant module
+    # preserves explicit override ownership copied through an edit draft and
+    # registers every ordinary newly approved Action in the shared layer.
+    from . import variant_authoring
+
+    variant_authoring.mark_action_for_family(action, armature)
     return action
 
 
@@ -713,6 +719,9 @@ def character_actions(armature, *, include_drafts=False):
         if report["errors"]:
             continue
         result.append(action)
+    from . import variant_authoring
+
+    result = variant_authoring.effective_actions(result)
     return sorted(
         result,
         key=lambda action: (

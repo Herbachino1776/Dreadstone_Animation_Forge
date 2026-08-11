@@ -1,14 +1,14 @@
-# Dreadstone Animation Forge 5.2.2 — User Workflow Guide
+# Dreadstone Animation Forge 5.3.0 — User Workflow Guide
 
-- Release archive: `Dreadstone_Animation_Forge_v5_2_2.zip`
+- Release archive: `Dreadstone_Animation_Forge_v5_3_0.zip`
 - Supported release runtime: Blender 5.1.2
 - Damage authoring model: Damage Keys → child Stamp alternatives → strong macros
 - Reuse model: topology-independent Damage Blueprints
 
-## 1. Install Dreadstone Animation Forge 5.2.2
+## 1. Install Dreadstone Animation Forge 5.3.0
 
 In Blender choose **Edit > Preferences > Add-ons > Install from Disk**, select
-`Dreadstone_Animation_Forge_v5_2_2.zip` without extracting it, and enable
+`Dreadstone_Animation_Forge_v5_3_0.zip` without extracting it, and enable
 **Dreadstone Animation Forge**.
 
 ## 2. Open the Dreadstone panel
@@ -26,6 +26,49 @@ Source Readiness, creates the protected authoring asset only after a valid
 handoff, and registers the standard Head, Body, Left Forearm, and Right Forearm
 regions when they exist. A `NOT READY` result is a stop condition; inspect or
 repair the source rather than bypassing it.
+
+## Character Variant Families (Skin & Bones 2.2.0+)
+
+The **CHARACTER VARIANTS** card is the compact family control surface. To adopt
+an existing fully authored approved character, select its Skin & Bones mesh or
+armature and click **ADOPT AS SHARED FAMILY BASE**. Existing approved Actions,
+Damage Keys, Stamps, gore, Progressive Damage Sites, and managed sockets remain
+the one shared authoring layer.
+
+To add an appearance, choose its Skin & Bones GLB and click
+**ADD COMPATIBLE SKIN & BONES VARIANT**. Forge reads the shipped appearance-family handoff from
+the GLB, checks its family/body fingerprint and exact canonical rig/coordinate
+contract, and refuses a mismatch. A successful appearance immediately inherits
+all shared Forge authoring and creates no Action or Damage Key copies.
+
+Click a variant's radio row to make it active. The viewport switches baked
+appearance while retaining the resolved technical rig, animation, damage, and
+sockets. Each selected editable item is visibly `SHARED`, `INHERITED`, or
+`OVERRIDE`.
+
+For animation, select an inherited Action and click
+**CREATE VARIANT OVERRIDE**. Forge creates one editable draft copy for that variant; save,
+preview, and approve it through the normal workflow. Other Actions remain
+inherited. Use the confirmed **EDIT SHARED** only when the change should reach
+every inheriting appearance. **REVERT TO SHARED** discards the variant Action
+and resolves the shared Action immediately.
+
+For Damage, select either **Active Damage Key** or **Active Progressive Site**
+as the override unit, then click **CREATE VARIANT OVERRIDE**. A Damage Key
+override clones only that key's paired shape keys, Stamps, Gore, and bindings.
+A Progressive Site override clones the site and exactly its assigned
+Light/Medium/Heavy keys so all internal references remain variant-owned and
+coherent. **REVERT TO SHARED** warns before removing variant-only data. The
+normal inherited Damage controls remain locked until an override is created or
+the artist deliberately confirms **EDIT SHARED**.
+
+Selected Complete Damage export writes the active appearance plus its resolved
+shared/override content. **EXPORT ALL READY VARIANTS** writes each passing
+variant as a separate GLB and sidecars. Inherited approvals are reused; only
+variant overrides require their own relevant preview, validation, and
+approval. See
+[CHARACTER_VARIANT_FAMILY_CONTRACT.md](CHARACTER_VARIANT_FAMILY_CONTRACT.md)
+for exact handoff, ownership, resolution, and export rules.
 
 ## 4. Use the VIP Damage workflow
 

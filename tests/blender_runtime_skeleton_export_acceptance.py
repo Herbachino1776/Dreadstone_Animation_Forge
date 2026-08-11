@@ -28,7 +28,10 @@ from dreadstone_animation_forge import (  # noqa: E402
     deformation_authoring,
     offensive_actions,
     runtime_export,
+    variant_authoring,
+    variant_family,
 )
+from dreadstone_animation_forge.anatomy import skin_and_bones  # noqa: E402
 from dreadstone_animation_forge.anatomy.skin_and_bones import (  # noqa: E402
     CANONICAL_HUMANOID_PARENTS,
 )
@@ -353,6 +356,21 @@ def main():
         create_action(runtime_rig, "DSB_Hurt_LEFT_v001", "HURT_LEFT", clip_id="runtime_hurt"),
         create_action(runtime_rig, "DSB_Death_v001", "DEATH", clip_id="runtime_death"),
     ]
+    sooted_walk_override = runtime_actions[1].copy()
+    sooted_walk_override.name = "DSB_Walk_Sooted_Override_v001"
+    sooted_walk_override[animation_library.CLIP_ID_PROPERTY] = "runtime_walk_sooted"
+    sooted_walk_override[variant_authoring.ACTION_SCOPE_PROPERTY] = (
+        variant_family.ACTION_SCOPE_OVERRIDE
+    )
+    sooted_walk_override[variant_authoring.ACTION_FAMILY_PROPERTY] = (
+        "runtime-bandit-family"
+    )
+    sooted_walk_override[variant_authoring.ACTION_VARIANT_PROPERTY] = "sooted"
+    sooted_walk_override[variant_authoring.ACTION_SHARED_ID_PROPERTY] = "runtime_walk"
+    sooted_walk_override[variant_authoring.ACTION_OVERRIDE_ID_PROPERTY] = (
+        "runtime_walk_sooted"
+    )
+    runtime_actions.append(sooted_walk_override)
     source_rig.animation_data.action = source_actions[0]
     runtime_rig.animation_data.action = runtime_actions[0]
 
@@ -445,6 +463,73 @@ def main():
     selected_before = {obj.name for obj in context.selected_objects}
     active_before = context.view_layer.objects.active.name if context.view_layer.objects.active else ""
 
+    base_material = bpy.data.materials.new("Bandit_Filthy_BaseColor")
+    base_material.diffuse_color = (0.42, 0.09, 0.04, 1.0)
+    sooted_material = bpy.data.materials.new("Bandit_Sooted_BaseColor")
+    sooted_material.diffuse_color = (0.035, 0.035, 0.035, 1.0)
+    for obj in objects.values():
+        if obj.type == "MESH":
+            obj.data.materials.append(base_material)
+
+    def family_handoff(variant_id, display_name, export_identity, fingerprint):
+        return {
+            "schema": variant_family.SBF_HANDOFF_SCHEMA,
+            "schema_version": variant_family.SBF_HANDOFF_SCHEMA_VERSION,
+            "family_schema": variant_family.SBF_FAMILY_SCHEMA,
+            "family_schema_version": variant_family.SBF_FAMILY_SCHEMA_VERSION,
+            "family_id": "runtime-bandit-family",
+            "family_display_name": "Runtime Bandit Family",
+            "variant_id": variant_id,
+            "variant_display_name": display_name,
+            "export_identity": export_identity,
+            "technical_body_schema": variant_family.SBF_TECHNICAL_BODY_SCHEMA,
+            "technical_body_schema_version": variant_family.SBF_TECHNICAL_BODY_SCHEMA_VERSION,
+            "technical_body_fingerprint": "a" * 64,
+            "appearance_revision": 1,
+            "approval": {
+                "state": "APPROVED",
+                "approved_revision": 1,
+                "appearance_fingerprint": fingerprint,
+                "approved_at_utc": "2026-08-11T12:00:00Z",
+                "addon_version": "2.2.0",
+            },
+        }
+
+    rig_contract = skin_and_bones.require_canonical_yplus(source_rig)
+    family_state = variant_family.new_family(
+        family_handoff("filthy", "Filthy", "bandit_filthy", "b" * 64),
+        rig_contract,
+        appearance={
+            "objectNames": [],
+            "materialPalette": [{"material": base_material.name, "baseColorImages": []}],
+        },
+    )
+    family_state = variant_family.add_variant(
+        family_state,
+        family_handoff("sooted", "Sooted", "bandit_sooted", "c" * 64),
+        rig_contract,
+        appearance={
+            "objectNames": [],
+            "materialPalette": [{"material": sooted_material.name, "baseColorImages": []}],
+        },
+    )
+    family_state = variant_family.register_shared_actions(
+        family_state,
+        [
+            action[animation_library.CLIP_ID_PROPERTY]
+            for action in approved_actions
+            if action != sooted_walk_override
+        ],
+    )
+    family_state = variant_family.set_action_override(
+        family_state,
+        "runtime_walk",
+        "runtime_walk_sooted",
+        "sooted",
+    )
+    variant_authoring.store_state(family_state)
+    variant_authoring.switch_variant("sooted")
+
     original_validate_current = damage_authoring._validate_current_source
     original_validate_authoring = damage_authoring._validate_authoring
     original_prepare = deformation_authoring.prepare_for_export
@@ -453,6 +538,7 @@ def main():
     original_manifest = deformation_authoring.get_deformation_manifest
     original_capture = deformation_authoring.capture_damage_preview_snapshot
     original_restore = deformation_authoring.restore_damage_preview_snapshot
+    original_load_authoring_state = damage_authoring._load_state
     damage_authoring._validate_current_source = lambda _state: None
     damage_authoring._validate_authoring = lambda _state, _gap: {
         "status": "PASS",
@@ -471,13 +557,73 @@ def main():
     }
     deformation_authoring.capture_damage_preview_snapshot = lambda _context: {"fixture": True}
     deformation_authoring.restore_damage_preview_snapshot = lambda _context, _snapshot: None
+    damage_authoring._load_state = lambda: state
     try:
         settings.damage_authoring_output_directory = str(output)
-        settings.damage_authoring_filename = "runtime_skeleton_acceptance"
-        glb_path, manifest_path, validation_path = damage_authoring._export_asset(
+        del context.scene[variant_authoring.FAMILY_STATE_PROPERTY]
+        if variant_authoring.FAMILY_STATE_PROPERTY in runtime_rig:
+            del runtime_rig[variant_authoring.FAMILY_STATE_PROPERTY]
+        sooted_walk_override["dsb_approved"] = False
+        settings.damage_authoring_filename = "standalone_runtime_skeleton"
+        standalone_paths = damage_authoring._export_asset(
             context,
             settings,
             state,
+        )
+        standalone_manifest = json.loads(
+            Path(standalone_paths[1]).read_text(encoding="utf-8")
+        )
+        require(
+            "characterVariant" not in standalone_manifest,
+            "Standalone Complete Damage export gained a family requirement.",
+        )
+        sooted_walk_override["dsb_approved"] = True
+        variant_authoring.store_state(family_state)
+        variant_authoring.switch_variant("sooted")
+        settings.damage_authoring_filename = "runtime_skeleton_acceptance"
+        batch = variant_authoring.batch_export_ready_variants(context)
+        require(not batch["skipped"], f"Variant batch export skipped entries: {batch}")
+        require(len(batch["exported"]) == 2, f"Variant batch export did not write two assets: {batch}")
+        exported_by_id = {record["variantId"]: record for record in batch["exported"]}
+        glb_path, manifest_path, validation_path = exported_by_id["sooted"]["paths"]
+        filthy_glb, filthy_manifest, _filthy_validation = exported_by_id["filthy"]["paths"]
+        require(Path(filthy_glb).name == "bandit_filthy.glb", filthy_glb)
+        require(Path(glb_path).name == "bandit_sooted.glb", glb_path)
+        require(Path(filthy_glb).is_file() and Path(glb_path).is_file(), "Variant GLBs are missing.")
+        filthy_materials = {
+            str(record.get("name", ""))
+            for record in gltf_validation.load_glb_json(filthy_glb).get("materials", [])
+        }
+        sooted_materials = {
+            str(record.get("name", ""))
+            for record in gltf_validation.load_glb_json(glb_path).get("materials", [])
+        }
+        require(base_material.name in filthy_materials, filthy_materials)
+        require(sooted_material.name in sooted_materials, sooted_materials)
+        filthy_animations = {
+            str(record.get("name", ""))
+            for record in gltf_validation.load_glb_json(filthy_glb).get("animations", [])
+        }
+        sooted_animations = {
+            str(record.get("name", ""))
+            for record in gltf_validation.load_glb_json(glb_path).get("animations", [])
+        }
+        require(
+            "DSB_Walk_NORMAL_v002" in filthy_animations
+            and "DSB_Walk_Sooted_Override_v001" not in filthy_animations,
+            filthy_animations,
+        )
+        require(
+            "DSB_Walk_Sooted_Override_v001" in sooted_animations
+            and "DSB_Walk_NORMAL_v002" not in sooted_animations,
+            sooted_animations,
+        )
+        filthy_payload = json.loads(Path(filthy_manifest).read_text(encoding="utf-8"))
+        sooted_payload = json.loads(Path(manifest_path).read_text(encoding="utf-8"))
+        require(
+            filthy_payload["characterVariant"]["appearanceVariantId"] == "filthy"
+            and sooted_payload["characterVariant"]["appearanceVariantId"] == "sooted",
+            "Variant manifests do not carry distinct resolved provenance.",
         )
     finally:
         damage_authoring._validate_current_source = original_validate_current
@@ -488,17 +634,31 @@ def main():
         deformation_authoring.get_deformation_manifest = original_manifest
         deformation_authoring.capture_damage_preview_snapshot = original_capture
         deformation_authoring.restore_damage_preview_snapshot = original_restore
+        damage_authoring._load_state = original_load_authoring_state
 
     manifest = json.loads(Path(manifest_path).read_text(encoding="utf-8"))
     validation = json.loads(Path(validation_path).read_text(encoding="utf-8"))
     gltf = gltf_validation.load_glb_json(glb_path)
+    runtime_node = next(
+        node for node in gltf.get("nodes", [])
+        if str(node.get("name", "")) == damage_authoring.AUTHORING_RIG_NAME
+    )
+    runtime_extras = runtime_node.get("extras", {})
+    runtime_variant = json.loads(runtime_extras[variant_authoring.PROVENANCE_PROPERTY])
+    require(
+        runtime_variant["appearanceVariantId"] == "sooted"
+        and runtime_extras[variant_family.SBF_FAMILY_ID_PROPERTY]
+        == "runtime-bandit-family"
+        and runtime_extras[variant_family.SBF_VARIANT_ID_PROPERTY] == "sooted",
+        "Runtime GLB node extras lost Character Variant provenance.",
+    )
     node_names = {str(node.get("name", "")) for node in gltf.get("nodes", [])}
     animation_names = [
         str(animation.get("name", "")) for animation in gltf.get("animations", [])
     ]
     expected_animations = {
         "DSB_Idle_Humanoid_v002",
-        "DSB_Walk_NORMAL_v002",
+        "DSB_Walk_Sooted_Override_v001",
         "DSB_Hurt_LEFT_v001",
         "DSB_Death_v001",
         "DSB_Attack_SourceOnly_v001",
@@ -659,6 +819,10 @@ def main():
         "temporaryStateCleaned": True,
         "cleanReimportArmatureCount": len(imported_armatures),
         "cleanReimportMorphs": [key.name for key in imported_body.data.shape_keys.key_blocks],
+        "variantBatchExportCount": 2,
+        "variantOutputs": ["bandit_filthy.glb", "bandit_sooted.glb"],
+        "variantProvenance": manifest["characterVariant"],
+        "standaloneCompleteDamageExport": Path(standalone_paths[0]).name,
     }
     report_path = output / "runtime_skeleton_acceptance.json"
     report_path.write_text(json.dumps(report, indent=2, sort_keys=True) + "\n", encoding="utf-8")

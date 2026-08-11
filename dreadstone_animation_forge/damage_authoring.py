@@ -27,7 +27,7 @@ from .deformation import gltf_validation
 
 AUTHORING_SCHEMA = "dreadstone.damage_authoring.v1"
 AUTHORING_VERSION = (3, 9, 1)
-AUTHORING_BUILD_ID = "2026-08-10.runtime-armament-contract.1"
+AUTHORING_BUILD_ID = "2026-08-11.character-variant-families.1"
 READINESS_SCHEMA = "dreadstone.damage_readiness.v1"
 READINESS_REVISION_REQUIRED = "hierarchical_weight_partition_v3.16.3"
 STATE_TEXT_NAME = "DSB_DAMAGE_AUTHORING_STATE.json"
@@ -1775,12 +1775,20 @@ def _manifest(
         state,
         runtime_rig=runtime_rig,
     )
+    from . import variant_authoring
+
+    variant_provenance = variant_authoring.export_provenance()
     return {
         "schema": AUTHORING_SCHEMA,
         "authoringVersion": _version_string(),
         "authoringBuildId": AUTHORING_BUILD_ID,
         "generatedAtUtc": _utc_timestamp(),
         "glb": glb_filename,
+        **(
+            {"characterVariant": variant_provenance}
+            if variant_provenance is not None
+            else {}
+        ),
         "source": {
             "object": state["source_object_name"],
             "armature": state["source_armature_name"],
@@ -2116,10 +2124,11 @@ def _export_asset_inactive(context, settings, state):
 def _export_asset(context, settings, state):
     """Export from an inactive damage state, then restore the exact viewport preview."""
 
-    from . import deformation_authoring
+    from . import deformation_authoring, variant_authoring
     snapshot = deformation_authoring.capture_damage_preview_snapshot(context)
     try:
-        return _export_asset_inactive(context, settings, state)
+        with variant_authoring.export_context(context, settings, state):
+            return _export_asset_inactive(context, settings, state)
     finally:
         deformation_authoring.restore_damage_preview_snapshot(context, snapshot)
 
@@ -2165,6 +2174,14 @@ class DAF_OT_build_damage_authoring_asset(Operator):
             seams = _validate_report_structure(report)
             source, analysis, _topology = _source_mesh_from_report(context, report)
             state = _build_authoring_asset(context, path, report, seams, source, analysis)
+            from . import variant_authoring
+
+            family = variant_authoring.load_state(context.scene)
+            if family is not None:
+                variant_authoring.switch_variant(
+                    family["activeVariantId"],
+                    context.scene,
+                )
             settings.damage_authoring_report_path = path
             settings.damage_authoring_status = "BUILT — INTACT PREVIEW"
             settings.source_readiness_contract_status = "VALID"

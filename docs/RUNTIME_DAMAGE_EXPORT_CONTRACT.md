@@ -51,6 +51,13 @@ The source Actions, source rig, damage-rig rest pose, active Action, NLA state,
 selection, visibility, and frame state are restored on success and failure.
 Temporary Action copies and tracks are removed.
 
+For a Character Variant Family, this Action inventory is resolved before the
+same ownership audit and temporary zero-time staging. Each shared logical clip
+contributes either the active appearance's explicit override or the shared
+Action, never both. An unapproved/draft override blocks export; an inherited
+approved offensive Action reuses its family approval. No runtime timing,
+socket, or skeleton validation is weakened.
+
 ## Sidecar provenance
 
 The JSON sidecar continues to identify the immutable source:
@@ -63,6 +70,14 @@ source.armature = SBF_ProductionRig
 Source object/data IDs, topology and weight fingerprints, readiness revision,
 matrix/export scale, virtual-weld data, and anatomy metadata remain unchanged.
 The sidecar says where the body came from; the GLB says what the game runs.
+
+Family exports additionally carry `characterVariant` using
+`dreadstone.character_variant_provenance.v1`. It identifies the technical
+family, selected Skin & Bones appearance variant/export identity and body
+fingerprint, deterministic effective Forge identity/revision, shared socket
+policy, and sparse shared-to-override mappings. Export is fully resolved; the
+runtime does not implement authoring inheritance. Batch export writes one
+independent GLB and sidecars per ready appearance.
 
 ## Completed-GLB validation
 

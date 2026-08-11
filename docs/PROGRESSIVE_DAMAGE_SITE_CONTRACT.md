@@ -2,7 +2,7 @@
 
 Schema: `dreadstone.progressive_damage_sites.v1`
 
-Forge release: `5.2.2`
+Forge release: `5.3.0`
 Supported production authoring runtime: Blender `5.1.2`
 
 ## Product boundary
@@ -54,6 +54,15 @@ role, attached/detached/core ownership, saved/dirty state, validation
 measurements, and triangle counts. Damage Key IDs are additive metadata; names
 remain artist-controlled. A key may drive only one site/stage unless the artist
 creates a true independent duplicate.
+
+In a Character Variant Family, a site is inherited as one shared logical unit
+until the artist creates an override. The override transaction clones the site
+and exactly the distinct Damage Keys assigned to its `LIGHT`, `MEDIUM`, and
+`HEAVY` stages, resets variant-owned validation/export state, and retargets all
+three stage records to those new stable key IDs. Duplicate stage references
+are cloned once. Other Sites and Damage Keys remain inherited. Revert removes
+the variant site and its owned key/Stamp/Gore graph, then restores the live
+shared site without touching family data.
 
 When a stage uses `SURFACE_STAIN` or `STAIN_AND_RAISED`, its record additionally
 owns the exact `dreadstone.surface_stain_binding.v1` bindings generated for

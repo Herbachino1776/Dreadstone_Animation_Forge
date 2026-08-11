@@ -37,6 +37,14 @@ For a Complete Damage GLB, approved clips are ownership-audited and staged only
 on `DSB_DAMAGE_RIG`; source-rig Actions cannot enter through Blender's global
 Action inventory. See `RUNTIME_DAMAGE_EXPORT_CONTRACT.md`.
 
+Inside a Character Variant Family, portable Action identity is also the
+copy-on-write key. Shared approved Actions remain single physical Blender
+Actions. **CREATE VARIANT OVERRIDE** copies only the selected Action and gives
+the copy a new clip ID plus stable links to its shared clip and owning
+appearance. **REVERT TO SHARED** removes that copy. The native package schema
+and compatibility rules do not change; family inheritance is resolved before
+Complete Damage export and is not delegated to the game.
+
 An offensive Action additionally carries `dreadstone.offensive_action.v1` in
 `dsb_offensive_action_json`. The record preserves its stable combat ID,
 attack family, compatible weapon classes, primary/secondary hand roles,

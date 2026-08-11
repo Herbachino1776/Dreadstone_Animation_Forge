@@ -882,7 +882,7 @@ def _animation_foldout(layout, settings, property_name, title, icon='ACTION'):
 
 
 def _draw_vip_animation_library(layout, context, settings):
-    from .. import animation_library, find_armature
+    from .. import animation_library, find_armature, variant_authoring
 
     library = layout.box()
     header = library.row(align=True)
@@ -1005,6 +1005,10 @@ def _draw_vip_animation_library(layout, context, settings):
         )
         == str(settings.animation_library_edit_source_clip_id)
     )
+    variant_scope = variant_authoring.action_status(
+        selected_action,
+        context.scene,
+    )
     if selected_action is not None:
         fps = (
             context.scene.render.fps
@@ -1022,6 +1026,17 @@ def _draw_vip_animation_library(layout, context, settings):
             ),
             icon='TIME',
         )
+        if variant_scope in {"SHARED", "INHERITED", "OVERRIDE"}:
+            scope_row = library.row(align=True)
+            scope_row.alert = variant_scope == "SHARED"
+            scope_row.label(
+                text=(
+                    "SHARED FAMILY ACTION"
+                    if variant_scope == "SHARED"
+                    else f"VARIANT {variant_scope}"
+                ),
+                icon='LINKED' if variant_scope != "OVERRIDE" else 'LIBRARY_DATA_OVERRIDE',
+            )
         info.label(
             text=(
                 f"{summary['fcurveCount']} curves · "
@@ -1051,10 +1066,11 @@ def _draw_vip_animation_library(layout, context, settings):
     edit.enabled = (
         selected_action is not None
         and (selected_is_draft or not editing)
+        and variant_scope != "INHERITED"
     )
     edit.operator(
         "daf.animation_library_edit",
-        text="EDIT",
+        text="EDIT OVERRIDE" if variant_scope == "OVERRIDE" else "EDIT",
         icon='GREASEPENCIL',
     )
     save = controls.row(align=True)
@@ -1072,7 +1088,10 @@ def _draw_vip_animation_library(layout, context, settings):
         icon='FILE_TICK',
     )
     delete = controls.row(align=True)
-    delete.enabled = selected_action is not None
+    delete.enabled = (
+        selected_action is not None
+        and variant_scope not in {"SHARED", "INHERITED"}
+    )
     delete.operator(
         "daf.animation_library_delete",
         text="DELETE",
@@ -1638,7 +1657,7 @@ def _draw_animation(layout, context, settings):
     _draw_animation_pack(layout, settings)
 
 
-def _draw_export(layout, settings):
+def _draw_export(layout, context, settings):
     validation = layout.box()
     validation.label(text="Focused Validation", icon='CHECKMARK')
     row = validation.row(align=True)
@@ -1654,6 +1673,18 @@ def _draw_export(layout, settings):
     export.prop(settings, "damage_authoring_filename")
     export.operator("daf.ensure_runtime_attachment_sockets", text="Create / Repair Runtime Hand Sockets")
     export.operator("daf.export_damage_asset", text="Export Damage GLB + Manifest")
+    from .. import variant_authoring
+
+    if variant_authoring.load_state(context.scene) is not None:
+        export.operator(
+            "daf.export_ready_character_variants",
+            text="EXPORT ALL READY VARIANTS",
+            icon='EXPORT',
+        )
+        export.label(
+            text="Each ready appearance ships as its own resolved GLB + sidecars",
+            icon='PACKAGE',
+        )
     export.label(text="Approved offensive metadata and runtime sockets are emitted in the sidecar", icon='INFO')
     export.operator("daf.restore_imported_damage_intact_preview", text="Restore Reimported GLB Intact Preview")
 
@@ -1734,20 +1765,195 @@ def _draw_advanced(layout, context, settings, deformation_draw, deformation_auth
         row.operator("daf.forge_startup_self_check", text="Startup Self-Check")
 
 
+def _draw_character_variants(layout, context, settings):
+    from .. import animation_library, variant_authoring
+
+    box = layout.box()
+    header = box.row(align=True)
+    header.prop(
+        settings,
+        "ui_variant_family_open",
+        text="CHARACTER VARIANTS",
+        icon='TRIA_DOWN' if settings.ui_variant_family_open else 'TRIA_RIGHT',
+        emboss=False,
+    )
+    if not settings.ui_variant_family_open:
+        return
+    state = variant_authoring.load_state(context.scene)
+    if state is None:
+        box.label(text="No technical family adopted", icon='INFO')
+        box.operator(
+            "daf.adopt_character_variant_family",
+            text="ADOPT AS SHARED FAMILY BASE",
+            icon='LINKED',
+        )
+        box.label(
+            text="Requires approved Skin & Bones 2.2.0 family handoff metadata",
+            icon='LOCKED',
+        )
+        if settings.variant_family_status:
+            box.label(text=str(settings.variant_family_status)[:100])
+        return
+
+    active = next(
+        value
+        for value in state["variants"]
+        if value["variantId"] == state["activeVariantId"]
+    )
+    box.label(text=f"Family · {state['displayName']}", icon='OUTLINER_OB_GROUP_INSTANCE')
+    box.label(
+        text=f"Body · {state['technicalBodyFingerprint'][:12]}… · canonical Y+ / Z+",
+        icon='CHECKMARK',
+    )
+    variants = box.box()
+    variants.label(text=f"VARIANTS · {len(state['variants'])}")
+    for variant in state["variants"]:
+        selected = variant["variantId"] == active["variantId"]
+        row = variants.row(align=True)
+        op = row.operator(
+            "daf.switch_character_variant",
+            text=variant["displayName"],
+            icon='RADIOBUT_ON' if selected else 'RADIOBUT_OFF',
+            depress=selected,
+        )
+        op.variant_id = variant["variantId"]
+        row.label(
+            text=(
+                f"{len(variant.get('actionOverrides', {}))} anim / "
+                f"{len(variant.get('damageKeyOverrides', {})) + len(variant.get('progressiveSiteOverrides', {}))} damage"
+            )
+        )
+    active_box = box.box()
+    active_box.label(text=f"ACTIVE · {active['displayName']}", icon='HIDE_OFF')
+    active_box.label(
+        text=(
+            "Appearance APPROVED · Technical family COMPATIBLE · "
+            "Sockets SHARED"
+        ),
+        icon='CHECKMARK',
+    )
+    add = box.box()
+    add.prop(settings, "variant_import_path")
+    add.operator(
+        "daf.import_character_variant",
+        text="ADD COMPATIBLE SKIN & BONES VARIANT",
+        icon='IMPORT',
+    )
+
+    if settings.ui_workspace == 'ANIMATION':
+        selected = animation_library.selected_action(settings)
+        if selected is not None:
+            status = variant_authoring.action_status(selected, context.scene)
+            action_box = box.box()
+            action_box.label(
+                text=f"ACTION · {selected.name} · {status}",
+                icon='LINKED' if status in {"SHARED", "INHERITED"} else 'LIBRARY_DATA_OVERRIDE',
+            )
+            row = action_box.row(align=True)
+            if status in {"SHARED", "INHERITED"}:
+                row.operator(
+                    "daf.create_variant_action_override",
+                    text="CREATE VARIANT OVERRIDE",
+                    icon='DUPLICATE',
+                )
+                row.operator(
+                    "daf.edit_shared_family_action",
+                    text="EDIT SHARED",
+                    icon='ERROR',
+                )
+            elif status == "OVERRIDE":
+                row.operator(
+                    "daf.revert_variant_action_override",
+                    text="REVERT TO SHARED",
+                    icon='LOOP_BACK',
+                )
+            action_box.label(
+                text=(
+                    "Shared edits reach inheritors; overrides stay independent"
+                    if status != "OVERRIDE"
+                    else "Only this appearance owns the selected Action"
+                ),
+                icon='INFO',
+            )
+
+    if settings.ui_workspace == 'DAMAGE':
+        damage_box = box.box()
+        damage_box.prop(settings, "variant_damage_override_unit", expand=True)
+        try:
+            damage = variant_authoring.damage_status(context)
+            damage_box.label(
+                text=f"DAMAGE · {damage.get('kind', '')} · {damage.get('status', 'NONE')}",
+                icon='LINKED' if damage.get("status") == "INHERITED" else 'LIBRARY_DATA_OVERRIDE',
+            )
+            row = damage_box.row(align=True)
+            if damage.get("status") == "OVERRIDE":
+                row.operator(
+                    "daf.revert_variant_damage_override",
+                    text="REVERT TO SHARED",
+                    icon='LOOP_BACK',
+                )
+            elif damage.get("status") == "INHERITED":
+                row.operator(
+                    "daf.create_variant_damage_override",
+                    text="CREATE VARIANT OVERRIDE",
+                    icon='DUPLICATE',
+                )
+                row.operator(
+                    "daf.toggle_shared_family_damage_edit",
+                    text=(
+                        "LOCK SHARED"
+                        if settings.variant_shared_damage_edit_enabled
+                        else "EDIT SHARED"
+                    ),
+                    icon=(
+                        'UNLOCKED'
+                        if settings.variant_shared_damage_edit_enabled
+                        else 'LOCKED'
+                    ),
+                )
+            damage_box.label(
+                text="Progressive override clones only its assigned stage keys",
+                icon='INFO',
+            )
+        except Exception as exc:
+            damage_box.label(text=str(exc)[:90], icon='INFO')
+    if settings.variant_family_status:
+        box.label(text=str(settings.variant_family_status)[:100], icon='INFO')
+
+
 def draw_main_panel(layout, context, settings, deformation_draw):
     from .. import deformation_authoring
 
     summary = deformation_authoring.cached_ui_summary(settings)
     state = workflow_state.dashboard_state(context, settings, summary)
     layout.prop(settings, "ui_workspace", expand=True)
+    _draw_character_variants(layout, context, settings)
     _draw_next_action(layout, state)
     if settings.ui_workspace == 'START':
         _draw_start(layout, context, settings, summary)
     elif settings.ui_workspace == 'DAMAGE':
-        _draw_damage(layout, context, settings, summary)
+        from .. import variant_authoring
+
+        damage_layout = layout.column()
+        family = variant_authoring.load_state(context.scene)
+        if family is not None:
+            try:
+                status = variant_authoring.damage_status(context).get("status")
+            except RuntimeError:
+                status = "NONE"
+            damage_layout.enabled = not (
+                status == "INHERITED"
+                and not settings.variant_shared_damage_edit_enabled
+            )
+            if not damage_layout.enabled:
+                layout.label(
+                    text="Inherited Damage is locked. Create an override or explicitly Edit Shared.",
+                    icon='LOCKED',
+                )
+        _draw_damage(damage_layout, context, settings, summary)
     elif settings.ui_workspace == 'ANIMATION':
         _draw_animation(layout, context, settings)
     elif settings.ui_workspace == 'EXPORT':
-        _draw_export(layout, settings)
+        _draw_export(layout, context, settings)
     else:
         _draw_advanced(layout, context, settings, deformation_draw, deformation_authoring)

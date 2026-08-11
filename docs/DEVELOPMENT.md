@@ -131,6 +131,26 @@ sampler bounds, preserve offensive phases and authored Actions, export only
 pieces, hand sockets, and Light/Medium/Heavy morphs, clean-reimport one
 armature hierarchy, and remove every temporary Action/NLA staging record.
 
+Run the Character Variant Family ingest/save regression:
+
+```text
+blender --background --factory-startup --python tests/blender_character_variant_family_acceptance.py
+```
+
+It must consume exact Skin & Bones 2.2.0 handoff extras, switch two compatible
+appearances, create no Action copies for the new appearance, create exactly one
+copy for one explicit Action override, preserve active/override state through
+save and reopen, and remove the owned Action on revert. The Complete Damage
+runtime-skeleton regression additionally batch-exports two materially distinct
+appearances, resolves one variant Walk override, preserves the zero-time
+21-bone runtime contract, and clean-reimports the selected output.
+
+The Progressive Damage Site regression also exercises both Damage copy-on-write
+boundaries. It must clone exactly one Damage Key for a narrow override, exactly
+the three assigned stage keys for a Site override, preserve shared coordinates,
+leave unrelated keys inherited, and restore the shared graph without orphans on
+revert.
+
 Run the M6 offensive Action/socket regression as part of the same release gate:
 
 ```text
@@ -177,7 +197,7 @@ should be performed only when requested.
 ## Release archive
 
 `python scripts/build_release.py` validates first and writes
-`dist/Dreadstone_Animation_Forge_v5_2_2.zip`. Every package Python file is
+`dist/Dreadstone_Animation_Forge_v5_3_0.zip`. Every package Python file is
 discovered recursively, so new service/operator modules must appear in the
 archive automatically. `dist/`, bytecode, caches, Blender backups, and
 temporary extraction directories are generated artifacts and are not

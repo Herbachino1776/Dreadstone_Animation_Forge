@@ -149,6 +149,10 @@ def resolve_runtime_objects(state, *, stain_objects=()):
             and str(obj.get("dsb_generated_role", "")) == "raised_gore"
             and not bool(obj.get("dsb_preview_only", True))
         ):
+            from . import variant_authoring
+
+            if not variant_authoring.damage_object_is_effective(obj):
+                continue
             result.append(obj)
     for obj in stain_objects:
         if obj is None:
@@ -258,7 +262,9 @@ def audit_runtime_actions(state):
     fps = bpy.context.scene.render.fps / max(
         bpy.context.scene.render.fps_base, 0.001
     )
-    for action in bpy.data.actions:
+    from . import variant_authoring
+
+    for action in variant_authoring.effective_actions(list(bpy.data.actions)):
         if not bool(action.get("dsb_approved", False)) or bool(action.get("dsb_draft", False)):
             continue
         users = _action_users(action)

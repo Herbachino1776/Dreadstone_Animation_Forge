@@ -1,6 +1,6 @@
 # Dreadstone Animation Forge
 
-Dreadstone Animation Forge `5.2.2` is a proprietary Blender add-on for
+Dreadstone Animation Forge `5.3.0` is a proprietary Blender add-on for
 animation drafting and compatibility-preserving damage authoring. The supported
 release runtime is Blender `5.1.2`.
 
@@ -65,15 +65,22 @@ but export only as versioned sidecar transforms; they do not become runtime
 bones or GLB nodes. See
 [the runtime attachment and offensive contract](docs/RUNTIME_ATTACHMENT_AND_OFFENSIVE_CONTRACT.md).
 
-Forge 5.2.2 retains the character-specific attack sliders and mandatory preview
+Forge 5.2.2 introduced character-specific attack sliders and a mandatory preview
 gate, and makes Complete Damage runtime animations zero-time-based. Authored
 Actions keep their normal frame ranges in the `.blend`; export shifts only
 temporary copies so each GLB clip begins at `0.0` seconds and ends at its
 declared `clipDurationSeconds`.
 
+Forge 5.3 adds Character Variant Families for approved Skin & Bones 2.2.0+
+appearance exports. Compatible appearances share one normal Action, Damage,
+Progressive Site, gore, and socket authoring layer. A variant stores only its
+appearance and deliberate copy-on-write overrides; adding a texture-only
+variant creates no duplicate Actions or Damage Keys. See the
+[Character Variant Family contract](docs/CHARACTER_VARIANT_FAMILY_CONTRACT.md).
+
 ## Install and open
 
-1. Download `Dreadstone_Animation_Forge_v5_2_2.zip`.
+1. Download `Dreadstone_Animation_Forge_v5_3_0.zip`.
 2. In Blender choose **Edit > Preferences > Add-ons > Install from Disk**.
 3. Select the ZIP without extracting it and enable the add-on.
 4. In the 3D Viewport press `N`, open **Dreadstone**, then choose

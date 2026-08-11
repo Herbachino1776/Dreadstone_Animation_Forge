@@ -139,6 +139,8 @@ def empty_stage(stage, stage_id=None):
         "triangleCount": 0,
         "visibleTriangleCount": 0,
         "measurements": {},
+        "ownerVariantId": "",
+        "sharedDamageKeyId": "",
     }
 
 
@@ -203,6 +205,8 @@ def normalize_stage(value, stage, *, stage_id=None):
                 if isinstance(raw.get("measurements", {}), Mapping)
                 else {}
             ),
+            "ownerVariantId": str(raw.get("ownerVariantId", "")),
+            "sharedDamageKeyId": str(raw.get("sharedDamageKeyId", "")),
         }
     )
     if bool(normalized["damageKeyId"]) != bool(normalized["deformationKeyName"]):
@@ -316,6 +320,8 @@ def normalize_site(value):
         "version": SITE_VERSION,
         "siteId": site_id,
         "siteGuid": site_guid,
+        "ownerVariantId": str(value.get("ownerVariantId", "")),
+        "sharedSiteGuid": str(value.get("sharedSiteGuid", "")),
         "displayName": display_name[:96],
         "regionId": str(value.get("regionId", "")),
         "structuralGroup": str(

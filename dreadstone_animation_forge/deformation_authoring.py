@@ -1,4 +1,4 @@
-"""Dreadstone Animation Forge v5.2.2 trauma-field authoring.
+"""Dreadstone Animation Forge v5.3.0 trauma-field authoring.
 
 The workbench edits explicitly registered paired-segment or core-single regions
 on the generated protected Damage Asset. Paired morph targets remain exact-index
@@ -39,8 +39,8 @@ from .deformation import (
 )
 
 DEFORMATION_SCHEMA = "dreadstone.damage_deformation.v1"
-DEFORMATION_VERSION = (5, 2, 2)
-DEFORMATION_BUILD_ID = "2026-07-29.portable-surface-stains.1"
+DEFORMATION_VERSION = (5, 3, 0)
+DEFORMATION_BUILD_ID = "2026-08-11.character-variant-families.1"
 IMPACT_CONTROL_SCHEMA = parameter_schema.IMPACT_CONTROL_SCHEMA
 ATTACHED_HEAD_NAME = "DSB_ATTACHED_HEAD"
 DETACHED_HEAD_NAME = "DSB_SEGMENT_HEAD"
@@ -928,7 +928,12 @@ def _managed_names(attached=None):
             continue
         if _key(attached, name):
             names.append(name)
-    return names
+    from . import variant_authoring
+
+    return variant_authoring.effective_damage_key_names(
+        str(metadata.get("regionId", metadata.get("region", ""))),
+        names,
+    )
 
 
 def _escape_data_path(value):

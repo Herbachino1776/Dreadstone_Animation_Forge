@@ -24,6 +24,8 @@ sys.path.insert(0, str(ROOT))
 import dreadstone_animation_forge as addon
 from dreadstone_animation_forge import deformation_authoring
 from dreadstone_animation_forge import progressive_authoring
+from dreadstone_animation_forge import variant_authoring
+from dreadstone_animation_forge import variant_family
 from dreadstone_animation_forge.deformation import gltf_validation
 from dreadstone_animation_forge.deformation import preview_service
 from dreadstone_animation_forge.deformation import progressive_sites
@@ -32,6 +34,45 @@ from dreadstone_animation_forge.deformation import progressive_sites
 def require(condition, message):
     if not condition:
         raise RuntimeError(message)
+
+
+def family_handoff(variant_id, display_name, fingerprint):
+    return {
+        "schema": variant_family.SBF_HANDOFF_SCHEMA,
+        "schema_version": 1,
+        "family_schema": variant_family.SBF_FAMILY_SCHEMA,
+        "family_schema_version": 1,
+        "family_id": "progressive-bandit-family",
+        "family_display_name": "Progressive Bandit Family",
+        "variant_id": variant_id,
+        "variant_display_name": display_name,
+        "export_identity": f"progressive_{variant_id}",
+        "technical_body_schema": variant_family.SBF_TECHNICAL_BODY_SCHEMA,
+        "technical_body_schema_version": 1,
+        "technical_body_fingerprint": "d" * 64,
+        "appearance_revision": 1,
+        "approval": {
+            "state": "APPROVED",
+            "approved_revision": 1,
+            "appearance_fingerprint": fingerprint,
+            "approved_at_utc": "2026-08-11T12:00:00Z",
+            "addon_version": "2.2.0",
+        },
+    }
+
+
+def canonical_rig_contract():
+    return {
+        "rigVersion": "SBF_HUMANOID_YPLUS_V1",
+        "rigContractVersion": 1,
+        "forwardAxis": "+Y",
+        "upAxis": "+Z",
+        "rootBone": "root",
+        "orientationState": "CANONICAL_Y_PLUS",
+        "orientationRevision": 1,
+        "unitScaleMeters": 1.0,
+        "canonicalYPlus": True,
+    }
 
 
 def grid_mesh(name, size=7):
@@ -434,6 +475,179 @@ def main():
         ),
         "Acceptance accidentally relied on stage names.",
     )
+
+    family = variant_family.new_family(
+        family_handoff("filthy", "Filthy", "e" * 64),
+        canonical_rig_contract(),
+    )
+    family = variant_family.add_variant(
+        family,
+        family_handoff("sooted", "Sooted", "f" * 64),
+        canonical_rig_contract(),
+    )
+    variant_authoring.store_state(family)
+    variant_authoring.switch_variant("sooted")
+    shared_light_z = tuple(
+        float(point.co.z)
+        for point in deformation_authoring._key(
+            target,
+            authored["LIGHT"]["key"],
+        ).data
+    )
+    settings.variant_damage_override_unit = "DAMAGE_KEY"
+    deformation_authoring._select_key(settings, authored["LIGHT"]["key"])
+    narrow_shape_count = len(target.data.shape_keys.key_blocks)
+    narrow_record = variant_authoring.create_damage_key_override(context)
+    require(
+        len(target.data.shape_keys.key_blocks) == narrow_shape_count + 1,
+        "Narrow Damage override cloned more than the selected key.",
+    )
+    require(
+        authored["MEDIUM"]["key"]
+        in variant_authoring.effective_damage_key_names(
+            "head",
+            [authored[name]["key"] for name in progressive_sites.STAGE_ORDER],
+        ),
+        "Narrow Damage override suppressed an unrelated key.",
+    )
+    deformation_authoring._key(target, narrow_record["overrideName"]).data[0].co.z += 0.003
+    require(
+        shared_light_z
+        == tuple(
+            float(point.co.z)
+            for point in deformation_authoring._key(
+                target,
+                authored["LIGHT"]["key"],
+            ).data
+        ),
+        "Editing a narrow Damage override mutated its shared key.",
+    )
+    variant_authoring.revert_damage_key_override(context)
+    require(
+        len(target.data.shape_keys.key_blocks) == narrow_shape_count,
+        "Narrow Damage revert left variant-owned shape keys behind.",
+    )
+    settings.variant_damage_override_unit = "PROGRESSIVE_SITE"
+    settings.progression_active_site_guid = original_site_guid
+    shared_shape_count = len(target.data.shape_keys.key_blocks)
+    override_record = variant_authoring.create_progressive_site_override(context)
+    require(
+        len(override_record["ownedDamageKeys"]) == 3,
+        "Progressive variant override did not clone exactly its three assigned keys.",
+    )
+    require(
+        len(target.data.shape_keys.key_blocks) == shared_shape_count + 3,
+        "Progressive variant override cloned unrelated Damage Keys.",
+    )
+    effective_sites = variant_authoring.effective_progressive_collection(
+        variant_authoring._full_progressive_collection()[1]
+    )["sites"]
+    require(
+        len(effective_sites) == 1
+        and effective_sites[0]["siteGuid"] == override_record["overrideSiteGuid"],
+        "Effective Progressive resolution did not replace only the shared Site.",
+    )
+    effective_key_names = set(
+        variant_authoring.effective_damage_key_names(
+            "head",
+            [
+                record["name"]
+                for record in variant_authoring._physical_damage_records("head")
+            ],
+        )
+    )
+    override_key_names = {
+        record["overrideName"] for record in override_record["ownedDamageKeys"]
+    }
+    require(
+        effective_key_names == override_key_names,
+        f"Progressive Damage resolution leaked shared keys: {effective_key_names}",
+    )
+    mute_snapshot = {
+        key.name: bool(key.mute) for key in target.data.shape_keys.key_blocks
+    }
+    staged_output = Path(tempfile.mkdtemp(prefix="daf_variant_damage_export_"))
+    staged_glb = staged_output / "sooted_progressive_override.glb"
+    with variant_authoring.export_context(
+        context,
+        settings,
+        {"authoring_rig": ""},
+    ) as provenance:
+        require(
+            provenance["progressiveSiteOverrides"][0]["sharedSiteGuid"]
+            == original_site_guid,
+            "Damage export provenance lost the Progressive override.",
+        )
+        for name in authored.values():
+            require(
+                deformation_authoring._key(target, name["key"]).mute,
+                f"Shared stage {name['key']} was not suppressed during variant export.",
+            )
+        for name in override_key_names:
+            require(
+                not deformation_authoring._key(target, name).mute,
+                f"Effective override {name} was muted during variant export.",
+            )
+        bpy.ops.object.mode_set(mode="OBJECT") if bpy.context.mode != "OBJECT" else None
+        bpy.ops.object.select_all(action="DESELECT")
+        target.select_set(True)
+        context.view_layer.objects.active = target
+        export_result = bpy.ops.export_scene.gltf(
+            filepath=str(staged_glb),
+            export_format="GLB",
+            use_selection=True,
+            export_extras=True,
+            export_morph=True,
+            export_animations=False,
+        )
+        require("FINISHED" in export_result, "Variant Damage staging export failed.")
+    require(
+        mute_snapshot
+        == {key.name: bool(key.mute) for key in target.data.shape_keys.key_blocks},
+        "Variant Damage export did not restore source shape-key mute state.",
+    )
+    staged_json = gltf_validation.load_glb_json(staged_glb)
+    staged_targets = {
+        str(name)
+        for mesh in staged_json.get("meshes", [])
+        for name in mesh.get("extras", {}).get("targetNames", [])
+    }
+    require(
+        override_key_names <= staged_targets
+        and not ({value["key"] for value in authored.values()} & staged_targets),
+        f"Variant Damage GLB contains the wrong effective morphs: {staged_targets}",
+    )
+    light_clone = next(
+        record
+        for record in override_record["ownedDamageKeys"]
+        if record["sharedDamageKeyId"] == original_light_id
+    )
+    deformation_authoring._key(target, light_clone["overrideName"]).data[0].co.z += 0.007
+    require(
+        shared_light_z
+        == tuple(
+            float(point.co.z)
+            for point in deformation_authoring._key(
+                target,
+                authored["LIGHT"]["key"],
+            ).data
+        ),
+        "Editing a variant Damage Key mutated the shared key.",
+    )
+    reverted_record = variant_authoring.revert_progressive_site_override(context)
+    require(
+        reverted_record["overrideSiteGuid"] == override_record["overrideSiteGuid"]
+        and len(target.data.shape_keys.key_blocks) == shared_shape_count,
+        "Progressive revert did not remove exactly the variant-owned data.",
+    )
+    require(
+        variant_authoring.effective_progressive_collection(
+            variant_authoring._full_progressive_collection()[1]
+        )["sites"][0]["siteGuid"] == original_site_guid,
+        "Progressive revert did not restore shared resolution.",
+    )
+    settings.variant_shared_damage_edit_enabled = True
+
     before_failed_assignment = progressive_sites.canonical_digest(
         progressive_authoring._collection()
     )

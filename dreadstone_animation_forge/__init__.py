@@ -1,7 +1,7 @@
 bl_info = {
     "name": "Dreadstone Animation Forge",
     "author": "Dreadstone Black",
-    "version": (5, 2, 2),
+    "version": (5, 3, 0),
     "blender": (3, 6, 0),
     "location": "3D Viewport > Sidebar > Dreadstone",
     "description": "Animation authoring, protected damage assets, and registered-region trauma-field shape-key authoring.",
@@ -1300,6 +1300,42 @@ class DAFSettings(PropertyGroup):
     ui_offensive_open: BoolProperty(default=True)
     ui_offensive_custom_open: BoolProperty(default=True)
     ui_mace_guard_open: BoolProperty(default=False)
+    ui_variant_family_open: BoolProperty(default=True)
+
+    variant_import_path: StringProperty(
+        name="Skin & Bones Variant GLB",
+        description="Approved Skin & Bones 2.2.0+ appearance export to add to the active technical family",
+        default="",
+        subtype='FILE_PATH',
+    )
+    variant_family_status: StringProperty(
+        name="Character Variant Family Status",
+        default="NO FAMILY — ADOPT AN APPROVED SKIN & BONES APPEARANCE",
+        options={'HIDDEN'},
+    )
+    variant_shared_damage_edit_enabled: BoolProperty(
+        name="Shared Family Damage Editing",
+        description="Explicit family-wide edit gate for inherited Damage authoring",
+        default=False,
+        options={'HIDDEN'},
+    )
+    variant_damage_override_unit: EnumProperty(
+        name="Damage Override Unit",
+        description="Choose the narrow coherent Damage unit to inherit or override",
+        items=[
+            (
+                'DAMAGE_KEY',
+                "Active Damage Key",
+                "Override only the active Damage Key, its Stamps, Gore, and generated bindings",
+            ),
+            (
+                'PROGRESSIVE_SITE',
+                "Active Progressive Site",
+                "Override the site plus independent copies of its assigned Light/Medium/Heavy Damage Keys",
+            ),
+        ],
+        default='DAMAGE_KEY',
+    )
 
     target_height: FloatProperty(
         name="Target Height",
@@ -2048,7 +2084,7 @@ class DAFSettings(PropertyGroup):
     last_damage_manifest_path: StringProperty(default="", options={'HIDDEN'})
     last_damage_validation_path: StringProperty(default="", options={'HIDDEN'})
 
-    # Trauma Field Authoring v5.2.2.
+    # Trauma Field Authoring v5.3.0.
     deformation_region: EnumProperty(
         name="Active Region",
         items=_deformation_region_items,
@@ -7198,7 +7234,7 @@ class DAF_PT_legacy_panel(Panel):
             layout,
             s,
             "ui_deformation_authoring_open",
-            "Trauma Field Authoring v5.2.2",
+            "Trauma Field Authoring v5.3.0",
         )
         if opened:
             configure_property_box(box)
@@ -7556,6 +7592,12 @@ _TASK_UI_MODULE_NAME = f"{__package__}.ui"
 task_ui = importlib.import_module(".ui", __package__)
 TASK_UI_CLASSES = task_ui.CLASSES
 
+_VARIANT_AUTHORING_MODULE_NAME = f"{__package__}.variant_authoring"
+sys.modules.pop(_VARIANT_AUTHORING_MODULE_NAME, None)
+importlib.invalidate_caches()
+variant_authoring = importlib.import_module(".variant_authoring", __package__)
+VARIANT_AUTHORING_CLASSES = variant_authoring.CLASSES
+
 
 class DAF_PT_panel(Panel):
     bl_label = "Dreadstone Animation Forge"
@@ -7610,6 +7652,7 @@ CLASSES = (
     *ATTACHMENT_SOCKET_CLASSES,
     *DEFORMATION_AUTHORING_CLASSES,
     *TASK_UI_CLASSES,
+    *VARIANT_AUTHORING_CLASSES,
     DAF_PT_panel,
 )
 
@@ -7652,6 +7695,7 @@ def register():
         bpy.types.Scene.daf_settings = PointerProperty(type=DAFSettings)
         _REGISTERED_CLASS_NAMES = registered
         deformation_authoring.initialize_runtime_services()
+        variant_authoring.recover_state()
     except Exception:
         if hasattr(bpy.types.Scene, "daf_settings"):
             del bpy.types.Scene.daf_settings

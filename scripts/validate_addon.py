@@ -31,6 +31,8 @@ MODULE_NAMES = (
     "offensive_actions.py",
     "parameter_schema.py",
     "trauma_field.py",
+    "variant_authoring.py",
+    "variant_family.py",
 )
 MODULE_PATHS = tuple(PACKAGE / name for name in MODULE_NAMES)
 ALL_MODULE_PATHS = tuple(sorted(
@@ -38,13 +40,13 @@ ALL_MODULE_PATHS = tuple(sorted(
     if "__pycache__" not in path.parts
 ))
 
-EXPECTED_VERSION = (5, 2, 2)
+EXPECTED_VERSION = (5, 3, 0)
 EXPECTED_READINESS_BUILD = "2026-07-18.source-contract.1"
-EXPECTED_AUTHORING_BUILD = "2026-08-10.runtime-armament-contract.1"
-EXPECTED_DEFORMATION_BUILD = "2026-07-29.portable-surface-stains.1"
+EXPECTED_AUTHORING_BUILD = "2026-08-11.character-variant-families.1"
+EXPECTED_DEFORMATION_BUILD = "2026-08-11.character-variant-families.1"
 
 REQUIRED_GUIDE_HEADINGS = (
-    "## 1. Install Dreadstone Animation Forge 5.2.2",
+    "## 1. Install Dreadstone Animation Forge 5.3.0",
     "## 2. Open the Dreadstone panel",
     "## 3. Import and prepare a source GLB",
     "## 4. Use the VIP Damage workflow",
@@ -144,6 +146,13 @@ REQUIRED_GUIDE_UI_LABELS = {
     "**Restore Reimported GLB Intact Preview**",
     "**Build Approved Animation Pack**",
     "**Validate Last Built Pack**",
+    "**CHARACTER VARIANTS**",
+    "**ADOPT AS SHARED FAMILY BASE**",
+    "**ADD COMPATIBLE SKIN & BONES VARIANT**",
+    "**CREATE VARIANT OVERRIDE**",
+    "**REVERT TO SHARED**",
+    "**EDIT SHARED**",
+    "**EXPORT ALL READY VARIANTS**",
 }
 
 REQUIRED_SCHEMAS = {
@@ -153,6 +162,8 @@ REQUIRED_SCHEMAS = {
     "dreadstone.damage_authoring.v1",
     "dreadstone.damage_deformation.v1",
     "dreadstone.progressive_damage_sites.v1",
+    "dreadstone.character_variant_family.v1",
+    "dreadstone.character_variant_provenance.v1",
     "dreadstone.impact_control.v1",
     "dreadstone.gore_control.v1",
     "dreadstone.surface_gore_control.v1",
@@ -302,7 +313,7 @@ REQUIRED_OPERATORS = {
 REQUIRED_UI_TEXT = {
     "Source Damage Readiness",
     "Damage Segment & Stump Authoring v3.9",
-    "Trauma Field Authoring v5.2.2",
+    "Trauma Field Authoring v5.3.0",
     "Generate Humanoid Idle",
     "Draft Base Pose",
     "Capture Base + Preview Idle",
@@ -507,7 +518,7 @@ def check_extension_manifest() -> None:
         (
             'schema_version = "1.0.0"',
             'id = "dreadstone_animation_forge"',
-            'version = "5.2.2"',
+            'version = "5.3.0"',
             'name = "Dreadstone Animation Forge"',
             'type = "add-on"',
             'blender_version_min = "4.2.0"',
@@ -1013,14 +1024,14 @@ def check_repository_hygiene() -> None:
 
 
 def main() -> int:
-    print("DREADSTONE ANIMATION FORGE v5.2.2 STATIC VALIDATION")
+    print("DREADSTONE ANIMATION FORGE v5.3.0 STATIC VALIDATION")
     print("Blender is not imported; runtime acceptance remains separate.")
 
     sources: dict[str, str] = {}
     trees: dict[str, ast.Module] = {}
     checks: list[tuple[str, Callable[[], None]]] = [
         ("all contract package modules exist", check_module_files),
-        ("Blender extension manifest exists and matches v5.2.2", check_extension_manifest),
+        ("Blender extension manifest exists and matches v5.3.0", check_extension_manifest),
         ("all Python modules parse with ast.parse", lambda: check_parse(sources)),
         ("all Python modules compile with py_compile", check_compile),
         ("add-on/deformation version and build contracts", lambda: check_versions(trees)),

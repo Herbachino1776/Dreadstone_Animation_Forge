@@ -20,7 +20,7 @@
 
 ## Documentation definition of done
 
-- [ ] Version and `Dreadstone_Animation_Forge_v5_2_2.zip` match everywhere.
+- [ ] Version and `Dreadstone_Animation_Forge_v5_3_0.zip` match everywhere.
 - [ ] Creature Anatomy Profile schema/detection/orientation/persistence tests,
       the exact humanoid mapping comparison, malformed quadruped cases, and
       extracted-ZIP Blender registration pass.
@@ -49,5 +49,9 @@
       finite canonical-hand-local transforms.
 - [ ] Eight offensive Actions pass approval, identity, phase, duration, socket,
       GLB inventory, sidecar, and clean-reimport regressions.
+- [ ] Character Variant Families consume exact Skin & Bones 2.2.0 metadata;
+      compatibility refusal, zero-copy inheritance, Action and Damage
+      copy-on-write/revert, save/reopen, two-output batch export, appearance
+      materials, resolved provenance, 21-bone sockets, and zero-time clips pass.
 - [ ] No stale button label, version, archive name, or superseded workflow
       remains.

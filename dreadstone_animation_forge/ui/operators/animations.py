@@ -114,6 +114,13 @@ class DAF_OT_animation_library_edit(_AnimationLibraryOperator):
             )
             if source is None:
                 raise RuntimeError("Select a saved animation first.")
+            if not bool(source.get("dsb_draft", False)):
+                from ... import variant_authoring
+
+                variant_authoring.require_regular_action_edit_allowed(
+                    source,
+                    context.scene,
+                )
             result = (
                 animation_library.edit_existing_draft(
                     context,
@@ -251,6 +258,14 @@ class DAF_OT_animation_library_delete(_AnimationLibraryOperator):
             )
             if action is None:
                 raise RuntimeError("Select a saved animation first.")
+            from ... import variant_authoring
+
+            status = variant_authoring.action_status(action, context.scene)
+            if status in {"SHARED", "INHERITED"}:
+                raise RuntimeError(
+                    "Shared family Actions cannot be deleted from a variant. "
+                    "Create an override or leave family authoring before deleting shared content."
+                )
             result = animation_library.delete_action(
                 context,
                 armature,

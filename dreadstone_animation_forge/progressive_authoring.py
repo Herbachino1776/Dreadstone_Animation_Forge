@@ -38,18 +38,29 @@ def _settings(context=None):
 def _collection(registry=None):
     deformation = _deformation()
     registry = registry if registry is not None else deformation._load_registry()
-    return progressive_sites.normalize_sites(
+    normalized = progressive_sites.normalize_sites(
         registry.get("progressiveDamageSites")
     )
+    from . import variant_authoring
+
+    return variant_authoring.effective_progressive_collection(normalized)
 
 
 def _store_collection(collection, registry=None):
     deformation = _deformation()
     registry = registry if registry is not None else deformation._load_registry()
     normalized = progressive_sites.normalize_sites(collection)
-    registry["progressiveDamageSites"] = normalized
+    full = progressive_sites.normalize_sites(
+        registry.get("progressiveDamageSites")
+    )
+    from . import variant_authoring
+
+    merged = variant_authoring.merge_progressive_collection(full, normalized)
+    registry["progressiveDamageSites"] = progressive_sites.normalize_sites(merged)
     deformation._store_registry(registry)
-    return normalized
+    return variant_authoring.effective_progressive_collection(
+        registry["progressiveDamageSites"]
+    )
 
 
 def _active_site(collection=None, context=None, required=True):

@@ -1,6 +1,6 @@
 # Runtime attachment and offensive Action contract
 
-Forge release: `5.2.2`
+Forge release: `5.3.0`
 
 Schemas:
 
@@ -64,6 +64,13 @@ Metadata may live on a draft for preview and validation. Runtime export is
 strict: the Action must be explicitly approved, non-draft, compatible with the
 runtime skeleton, reference available socket roles, and have a unique combat
 ID. Forge never infers attack capability from an Action name.
+
+Character Variant Families share sockets and approved offensive Actions by
+default. An appearance-only variant reuses the family Action, recipe, preview,
+and approval without duplicate review. Creating an offensive variant override
+copies only that Action, preserves the combat/weapon/socket/phase contract,
+clears preview and approval, and requires the normal gate again. The effective
+resolver supplies exactly one shared or overridden Action to runtime staging.
 
 ### Character-specific slider recipe and preview gate
 
