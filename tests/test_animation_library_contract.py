@@ -100,9 +100,18 @@ class AnimationLibraryContractTests(unittest.TestCase):
         self.assertIn("_draw_walk_animation", calls)
         self.assertIn("_draw_idle_animation", calls)
 
-    def test_offensive_panel_exposes_character_sliders_preview_and_approval_gate(self):
+    def test_offensive_panel_prioritizes_motion_studio_and_preserves_legacy_drafting(self):
         for marker in (
-            "Custom Attack Sliders",
+            "OFFENSIVE MOTION STUDIO",
+            "TARGET → WEAPON PATH → BODY SOLVE → FK BAKE → VALIDATE",
+            '"daf.motion_studio_build_from_master"',
+            '"daf.motion_studio_rebuild_body_solve"',
+            '"daf.motion_studio_validate_baked_path"',
+            '"daf.motion_studio_preview"',
+            '"daf.motion_studio_approve"',
+            '"daf.motion_studio_promote_master"',
+            "CONTACT shows the intended target",
+            "LEGACY / PROCEDURAL DRAFTING",
             '"offensive_windup_seconds"',
             '"offensive_active_seconds"',
             '"offensive_recovery_seconds"',
@@ -117,7 +126,7 @@ class AnimationLibraryContractTests(unittest.TestCase):
             '"daf.generate_selected_offensive_draft"',
             '"daf.preview_offensive_draft"',
             "Save / Approve This Attack",
-            "Humanoid generator defaults are not changed automatically",
+            "Backward-compatible body-first rough drafts",
         ):
             self.assertIn(marker, self.panels)
         for marker in (

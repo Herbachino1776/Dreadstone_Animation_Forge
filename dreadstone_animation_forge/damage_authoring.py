@@ -20,6 +20,7 @@ from bpy.types import Operator
 from . import attachment_sockets
 from . import damage_readiness
 from . import offensive_actions
+from . import offensive_motion
 from . import runtime_export
 from . import trauma_field
 from .anatomy import persistence as anatomy_persistence
@@ -27,7 +28,7 @@ from .deformation import gltf_validation
 
 AUTHORING_SCHEMA = "dreadstone.damage_authoring.v1"
 AUTHORING_VERSION = (3, 9, 1)
-AUTHORING_BUILD_ID = "2026-08-11.character-variant-families.1"
+AUTHORING_BUILD_ID = "2026-08-12.offensive-motion-studio.1"
 READINESS_SCHEMA = "dreadstone.damage_readiness.v1"
 READINESS_REVISION_REQUIRED = "hierarchical_weight_partition_v3.16.3"
 STATE_TEXT_NAME = "DSB_DAMAGE_AUTHORING_STATE.json"
@@ -1844,6 +1845,7 @@ def _manifest(
             "runtimeArmature": AUTHORING_RIG_NAME,
             "exportedCount": len(runtime_animation.get("clips", [])),
             "offensiveActionSchema": offensive_actions.OFFENSIVE_ACTION_SCHEMA,
+            "offensiveTargetingSchema": offensive_motion.TARGETING_SCHEMA,
             "clips": [
                 {
                     "name": clip["name"],
@@ -1861,10 +1863,16 @@ def _manifest(
                         if clip.get("offensiveAction") is not None
                         else {}
                     ),
+                    **(
+                        {"offensiveTargeting": clip["offensiveTargeting"]}
+                        if clip.get("offensiveTargeting") is not None
+                        else {}
+                    ),
                 }
                 for clip in runtime_animation.get("clips", [])
             ],
             "offensiveActions": list(runtime_animation.get("offensiveActions", [])),
+            "offensiveTargeting": list(runtime_animation.get("offensiveTargeting", [])),
             "rejectedSourceActions": list(
                 runtime_animation.get("rejectedSourceActions", [])
             ),

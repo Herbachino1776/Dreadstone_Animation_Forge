@@ -1,11 +1,12 @@
 # Runtime attachment and offensive Action contract
 
-Forge release: `5.3.0`
+Forge release: `5.4.0`
 
 Schemas:
 
 - `dreadstone.attachment_sockets.v1`
 - `dreadstone.offensive_action.v1`
+- optional `dreadstone.offensive_targeting.v1`
 
 ## Attachment sockets
 
@@ -65,11 +66,21 @@ strict: the Action must be explicitly approved, non-draft, compatible with the
 runtime skeleton, reference available socket roles, and have a unique combat
 ID. Forge never infers attack capability from an Action name.
 
+Motion Studio Actions additionally require a current `PASS` report from the
+actual baked FK hand/socket/proxy path, with intended target contact during
+ACTIVE. Their small optional `dreadstone.offensive_targeting.v1` companion
+records where the attack was authored to connect: target zone and local offset,
+preferred distance/contact height, horizontal/vertical/depth tolerances,
+trajectory family, contact time, and proxy reach. It contains no IK, helper,
+collision, homing, or hit-result data. See
+[Offensive Motion Studio](OFFENSIVE_MOTION_STUDIO_CONTRACT.md).
+
 Character Variant Families share sockets and approved offensive Actions by
 default. An appearance-only variant reuses the family Action, recipe, preview,
 and approval without duplicate review. Creating an offensive variant override
-copies only that Action, preserves the combat/weapon/socket/phase contract,
-clears preview and approval, and requires the normal gate again. The effective
+copies only that Action and embedded Motion Studio provenance, preserves the
+combat/weapon/socket/phase contract, clears preview/trajectory validation,
+targeting and approval, and requires the normal gate again. The effective
 resolver supplies exactly one shared or overridden Action to runtime staging.
 
 ### Character-specific slider recipe and preview gate
@@ -85,14 +96,17 @@ Refreshing a selected draft applies the current sliders and clears its preview
 proof. **Preview Attack** plays that precise Action on the active character and
 records that the current draft was reviewed. Offensive approval fails closed
 until this preview has occurred. Approval preserves the character recipe; it
-does not mutate the built-in humanoid starting recipes. Promoting reviewed
-character Actions into new humanoid defaults remains a separate, explicit
-future authoring decision.
+does not mutate the built-in humanoid starting recipes. Motion Studio promotion
+is a separate explicit action and never mutates built-in or family-wide
+defaults. The body-first slider recipe remains legacy compatible.
 
 ## Consumer boundary
 
 Dreadstone treats these records as optional, versioned capabilities. An older
 pack without them remains importable but reports armament unavailable. The game
-owns weapon definitions, visuals, damage, reach capsules, loadouts, hit policy,
-and AI. Forge owns animation and attachment authoring data only. No socket
+owns weapon definitions, visuals, damage, reach capsules, physical world-space
+sweeps, loadouts, hit/miss policy, and AI. Forge owns animation,
+target/trajectory authoring geometry, and attachment authoring data only. The
+target record is a pre-commitment launch-envelope hint; after commitment the
+fixed baked Action cannot track the player. No socket
 fallback to root/chest and no name-based offensive inference is permitted.

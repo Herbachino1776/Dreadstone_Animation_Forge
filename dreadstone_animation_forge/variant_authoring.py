@@ -13,7 +13,7 @@ import bpy
 from bpy.props import StringProperty
 from bpy.types import Operator
 
-from . import animation_library
+from . import animation_library, offensive_motion
 from . import variant_family as model
 from .anatomy import skin_and_bones as sbf_handoff
 from .deformation import progressive_sites, serialization
@@ -621,9 +621,17 @@ def create_action_override(context, action):
         for name in (
             "dsb_offensive_previewed_before_approval",
             "dsb_offensive_character_recipe",
+            offensive_motion.MOTION_VALIDATION_PROPERTY,
+            offensive_motion.TARGETING_PROPERTY,
+            "dsb_motion_preview_digest",
         ):
             if name in override:
                 del override[name]
+        if override.get(offensive_motion.MOTION_RECIPE_PROPERTY):
+            override["dsb_motion_validation_status"] = "STALE"
+            override["dsb_motion_validation_reason"] = (
+                "Character Variant override requires a new baked-path validation"
+            )
     override.use_fake_user = True
     if context.active_object is not None:
         try:
@@ -1245,6 +1253,9 @@ def _resolved_action_revision():
                 "kind": str(action.get("dsb_approved_kind", "")),
                 "offensive": str(action.get("dsb_offensive_action_json", "")),
                 "recipe": str(action.get("dsb_offensive_character_recipe", "")),
+                "motionRecipe": str(action.get(offensive_motion.MOTION_RECIPE_PROPERTY, "")),
+                "motionValidation": str(action.get(offensive_motion.MOTION_VALIDATION_PROPERTY, "")),
+                "offensiveTargeting": str(action.get(offensive_motion.TARGETING_PROPERTY, "")),
                 "curves": sorted(
                     curves,
                     key=lambda value: (value["dataPath"], value["arrayIndex"]),

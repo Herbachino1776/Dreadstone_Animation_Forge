@@ -197,7 +197,7 @@ should be performed only when requested.
 ## Release archive
 
 `python scripts/build_release.py` validates first and writes
-`dist/Dreadstone_Animation_Forge_v5_3_0.zip`. Every package Python file is
+`dist/Dreadstone_Animation_Forge_v5_4_0.zip`. Every package Python file is
 discovered recursively, so new service/operator modules must appear in the
 archive automatically. `dist/`, bytecode, caches, Blender backups, and
 temporary extraction directories are generated artifacts and are not

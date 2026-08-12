@@ -29,6 +29,8 @@ MODULE_NAMES = (
     "attachment_socket_contract.py",
     "attachment_sockets.py",
     "offensive_actions.py",
+    "offensive_motion.py",
+    "offensive_motion_studio.py",
     "parameter_schema.py",
     "trauma_field.py",
     "variant_authoring.py",
@@ -40,13 +42,13 @@ ALL_MODULE_PATHS = tuple(sorted(
     if "__pycache__" not in path.parts
 ))
 
-EXPECTED_VERSION = (5, 3, 0)
+EXPECTED_VERSION = (5, 4, 0)
 EXPECTED_READINESS_BUILD = "2026-07-18.source-contract.1"
-EXPECTED_AUTHORING_BUILD = "2026-08-11.character-variant-families.1"
-EXPECTED_DEFORMATION_BUILD = "2026-08-11.character-variant-families.1"
+EXPECTED_AUTHORING_BUILD = "2026-08-12.offensive-motion-studio.1"
+EXPECTED_DEFORMATION_BUILD = "2026-08-12.offensive-motion-studio.1"
 
 REQUIRED_GUIDE_HEADINGS = (
-    "## 1. Install Dreadstone Animation Forge 5.3.0",
+    "## 1. Install Dreadstone Animation Forge 5.4.0",
     "## 2. Open the Dreadstone panel",
     "## 3. Import and prepare a source GLB",
     "## 4. Use the VIP Damage workflow",
@@ -138,6 +140,15 @@ REQUIRED_GUIDE_UI_LABELS = {
     "**Save / Approve This Attack**",
     "**Validate Humanoid Offensive Suite**",
     "**Create / Repair Runtime Hand Sockets**",
+    "**BUILD FROM MOTION MASTER**",
+    "**BUILD / REBUILD BODY SOLVE**",
+    "**ANTICIPATION**",
+    "**CONTACT**",
+    "**FOLLOW THROUGH**",
+    "**PREVIEW**",
+    "**VALIDATE BAKED PATH**",
+    "**APPROVE**",
+    "**PROMOTE TO MOTION MASTER**",
     "**REBUILD ACTIVE DEFORMATION**",
     "**REPAIR LEGACY PAIR SYNC**",
     "**Validate Morph Targets**",
@@ -173,6 +184,11 @@ REQUIRED_SCHEMAS = {
     "dreadstone.attachment_sockets.v1",
     "dreadstone.offensive_action.v1",
     "dreadstone.offensive_recipe.v1",
+    "dreadstone.offensive_motion_recipe.v1",
+    "dreadstone.offensive_motion_master.v1",
+    "dreadstone.offensive_motion_master_library.v1",
+    "dreadstone.offensive_motion_validation.v1",
+    "dreadstone.offensive_targeting.v1",
     "dreadstone.final_glb_validation.v2",
     "dreadstone.trauma_stamp_library.v1",
     "dreadstone.compound_trauma_event.v1",
@@ -283,6 +299,15 @@ REQUIRED_OPERATORS = {
     "daf.reset_offensive_sliders": "Reset Offensive Sliders",
     "daf.validate_humanoid_offensive_suite": "Validate Humanoid Offensive Suite",
     "daf.ensure_runtime_attachment_sockets": "Create / Repair Runtime Hand Sockets",
+    "daf.motion_studio_build_from_master": "Build From Motion Master",
+    "daf.motion_studio_rebuild_body_solve": "Rebuild Body Solve",
+    "daf.motion_studio_jump_key_pose": "Jump to Motion Key Pose",
+    "daf.motion_studio_validate_baked_path": "Validate Baked Weapon Path",
+    "daf.motion_studio_preview": "Preview Motion Studio Attack",
+    "daf.motion_studio_approve": "Approve Target-Constrained Attack",
+    "daf.motion_studio_promote_master": "Promote to Motion Master",
+    "daf.motion_studio_repair_helpers": "Repair Motion Studio Helpers",
+    "daf.motion_studio_remove_helpers": "Hide / Remove Motion Studio Helpers",
     "daf.toggle_damage_key_preview": "Toggle Damage Key Preview",
     "daf.rename_damage_key": "Rename Damage Key",
     "daf.select_damage_stamp": "Select Damage Stamp",
@@ -313,7 +338,7 @@ REQUIRED_OPERATORS = {
 REQUIRED_UI_TEXT = {
     "Source Damage Readiness",
     "Damage Segment & Stump Authoring v3.9",
-    "Trauma Field Authoring v5.3.0",
+    "Trauma Field Authoring v5.4.0",
     "Generate Humanoid Idle",
     "Draft Base Pose",
     "Capture Base + Preview Idle",
@@ -332,7 +357,9 @@ REQUIRED_UI_TEXT = {
     "4 · ADAPTIVE BLUEPRINT LIBRARY",
     "Restore Reimported GLB Intact Preview",
     "Validate Complete Damage Asset",
-    "Humanoid Offensive Actions",
+    "OFFENSIVE MOTION STUDIO",
+    "LEGACY / PROCEDURAL DRAFTING",
+    "TARGET → WEAPON PATH → BODY SOLVE → FK BAKE → VALIDATE",
     "Generate / Refresh Offensive Suite",
     "Create / Repair Runtime Hand Sockets",
 }
@@ -518,7 +545,7 @@ def check_extension_manifest() -> None:
         (
             'schema_version = "1.0.0"',
             'id = "dreadstone_animation_forge"',
-            'version = "5.3.0"',
+            'version = "5.4.0"',
             'name = "Dreadstone Animation Forge"',
             'type = "add-on"',
             'blender_version_min = "4.2.0"',
@@ -1024,14 +1051,14 @@ def check_repository_hygiene() -> None:
 
 
 def main() -> int:
-    print("DREADSTONE ANIMATION FORGE v5.3.0 STATIC VALIDATION")
+    print("DREADSTONE ANIMATION FORGE v5.4.0 STATIC VALIDATION")
     print("Blender is not imported; runtime acceptance remains separate.")
 
     sources: dict[str, str] = {}
     trees: dict[str, ast.Module] = {}
     checks: list[tuple[str, Callable[[], None]]] = [
         ("all contract package modules exist", check_module_files),
-        ("Blender extension manifest exists and matches v5.3.0", check_extension_manifest),
+        ("Blender extension manifest exists and matches v5.4.0", check_extension_manifest),
         ("all Python modules parse with ast.parse", lambda: check_parse(sources)),
         ("all Python modules compile with py_compile", check_compile),
         ("add-on/deformation version and build contracts", lambda: check_versions(trees)),

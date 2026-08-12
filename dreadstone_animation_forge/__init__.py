@@ -1,7 +1,7 @@
 bl_info = {
     "name": "Dreadstone Animation Forge",
     "author": "Dreadstone Black",
-    "version": (5, 3, 0),
+    "version": (5, 4, 0),
     "blender": (3, 6, 0),
     "location": "3D Viewport > Sidebar > Dreadstone",
     "description": "Animation authoring, protected damage assets, and registered-region trauma-field shape-key authoring.",
@@ -15,6 +15,7 @@ from bpy.props import BoolProperty, EnumProperty, FloatProperty, FloatVectorProp
 from bpy.types import Operator, Panel, PropertyGroup
 from . import animation_library
 from . import offensive_actions
+from . import offensive_motion
 from . import parameter_schema
 from .anatomy import blender_adapter as anatomy_blender
 from .anatomy import persistence as anatomy_persistence
@@ -979,6 +980,8 @@ def approve_draft_action(context, kind):
             raise RuntimeError(
                 "Preview this offensive draft on the character before approving it."
             )
+        if action.get(offensive_motion.MOTION_RECIPE_PROPERTY):
+            offensive_motion_studio.require_approval_ready(context, action)
         offensive_actions.validated_action_metadata(
             action,
             clip_duration_seconds=max(0.0, end - start) / max(fps, 0.001),
@@ -1017,6 +1020,8 @@ def approve_draft_action(context, kind):
         )
         action["dsb_offensive_previewed_before_approval"] = True
         action["dsb_offensive_character_recipe"] = True
+        if action.get(offensive_motion.MOTION_RECIPE_PROPERTY):
+            offensive_motion_studio.on_action_approved(action)
 
     return action
 
@@ -1248,6 +1253,34 @@ def _offensive_preview_kind_updated(self, _context):
         return
 
 
+def _motion_master_items(self, context):
+    module = sys.modules.get(f"{__package__}.offensive_motion_studio")
+    if module is None:
+        return [
+            (master_id, master["label"], "Built-in target-constrained Motion Master")
+            for master_id, master in offensive_motion.BUILTIN_MOTION_MASTERS.items()
+        ]
+    return module.motion_master_items(self, context)
+
+
+def _motion_master_updated(self, context):
+    module = sys.modules.get(f"{__package__}.offensive_motion_studio")
+    if module is not None:
+        module.motion_master_updated(self, context)
+
+
+def _motion_setting_updated(self, context):
+    module = sys.modules.get(f"{__package__}.offensive_motion_studio")
+    if module is not None:
+        module.motion_setting_updated(self, context)
+
+
+def _motion_display_updated(self, context):
+    module = sys.modules.get(f"{__package__}.offensive_motion_studio")
+    if module is not None:
+        module.motion_display_updated(self, context)
+
+
 class DAFSettings(PropertyGroup):
     # Compact interface state. These values are stored in the Blender scene.
     ui_workspace: EnumProperty(
@@ -1298,6 +1331,8 @@ class DAFSettings(PropertyGroup):
     ui_body_arm_trauma_open: BoolProperty(default=False)
     ui_compound_trauma_open: BoolProperty(default=False)
     ui_offensive_open: BoolProperty(default=True)
+    ui_motion_style_open: BoolProperty(default=False)
+    ui_legacy_offensive_open: BoolProperty(default=False)
     ui_offensive_custom_open: BoolProperty(default=True)
     ui_mace_guard_open: BoolProperty(default=False)
     ui_variant_family_open: BoolProperty(default=True)
@@ -1842,8 +1877,80 @@ class DAFSettings(PropertyGroup):
         max=1
     )
 
-    # Per-character offensive draft recipe. Values are persisted into every
-    # generated/approved Action rather than changing global humanoid defaults.
+    # Weapon-first Offensive Motion Studio.  These are scene UI values; the
+    # authoritative versioned recipe is persisted on the Action.
+    motion_master_id: EnumProperty(
+        name="Motion Master",
+        description="Built-in starter or deliberately promoted target/trajectory master",
+        items=_motion_master_items,
+        update=_motion_master_updated,
+    )
+    motion_target_zone: EnumProperty(
+        name="Target Zone",
+        items=[
+            ("HEAD", "Head", "Spherical head target"),
+            ("UPPER_TORSO", "Upper Torso", "Upper torso capsule"),
+            ("CENTER_MASS", "Center Mass", "Center torso capsule"),
+            ("LOW_TORSO", "Low Torso", "Lower torso capsule"),
+            ("CUSTOM", "Custom", "Editable spherical target"),
+        ],
+        default="UPPER_TORSO",
+        update=_motion_setting_updated,
+    )
+    motion_target_height: FloatProperty(name="Target Height", default=1.80, min=0.60, max=4.0, unit='LENGTH', update=_motion_setting_updated)
+    motion_target_distance: FloatProperty(name="Target Distance", default=0.72, min=0.20, max=4.0, unit='LENGTH', update=_motion_setting_updated)
+    motion_target_lateral: FloatProperty(name="Lateral Offset", default=0.0, min=-2.0, max=2.0, unit='LENGTH', update=_motion_setting_updated)
+    motion_target_radius: FloatProperty(name="Torso Radius", default=0.22, min=0.05, max=0.60, unit='LENGTH', update=_motion_setting_updated)
+    motion_target_half_height: FloatProperty(name="Zone Half Height", default=0.16, min=0.03, max=0.60, unit='LENGTH', update=_motion_setting_updated)
+    motion_target_head_radius: FloatProperty(name="Head Radius", default=0.14, min=0.04, max=0.40, unit='LENGTH', update=_motion_setting_updated)
+    motion_custom_target_height: FloatProperty(name="Custom Contact Height", default=1.15, min=0.10, max=4.0, unit='LENGTH', update=_motion_setting_updated)
+    motion_custom_target_radius: FloatProperty(name="Custom Target Radius", default=0.20, min=0.03, max=0.60, unit='LENGTH', update=_motion_setting_updated)
+    motion_proxy_class: EnumProperty(
+        name="Weapon Proxy",
+        items=[
+            ("ONE_HAND_BLUNT", "1H Blunt / Mace", "Grip, shaft, and head contact geometry"),
+            ("ONE_HAND_BLADE", "1H Blade", "Grip, blade strike segment, and tip"),
+            ("SHORT_BLADE", "Dagger / Short Blade", "Short blade proxy architecture"),
+            ("TWO_HAND_GENERIC", "2H Generic (Architecture)", "Two-hand proxy representation; polished two-hand solve is future work"),
+        ],
+        default="ONE_HAND_BLUNT",
+        update=_motion_setting_updated,
+    )
+    motion_proxy_length: FloatProperty(name="Proxy Length", default=0.74, min=0.15, max=3.0, unit='LENGTH', update=_motion_setting_updated)
+    motion_proxy_contact: FloatProperty(name="Grip to Contact", default=0.64, min=0.05, max=3.0, unit='LENGTH', update=_motion_setting_updated)
+    motion_proxy_strike_start: FloatProperty(name="Strike Segment Start", default=0.54, min=0.0, max=3.0, unit='LENGTH', update=_motion_setting_updated)
+    motion_proxy_strike_end: FloatProperty(name="Strike Segment End", default=0.74, min=0.05, max=3.0, unit='LENGTH', update=_motion_setting_updated)
+    motion_proxy_head_radius: FloatProperty(name="Head / Contact Radius", default=0.075, min=0.0, max=0.30, unit='LENGTH', update=_motion_setting_updated)
+    motion_trajectory_family: EnumProperty(
+        name="Trajectory Family",
+        items=[
+            ("HORIZONTAL", "Horizontal", "Lateral target crossing on a horizontal plane"),
+            ("DIAGONAL_DOWN", "Diagonal Down", "High-to-low diagonal target crossing"),
+            ("OVERHEAD_VERTICAL", "Overhead Vertical", "Descending sagittal strike plane"),
+            ("THRUST", "Thrust", "Forward line through the target"),
+            ("CUSTOM", "Custom", "Artist-defined trajectory controls"),
+        ],
+        default="OVERHEAD_VERTICAL",
+        update=_motion_setting_updated,
+    )
+    motion_windup_seconds: FloatProperty(name="WINDUP Seconds", default=0.58, min=0.10, max=2.50, unit='TIME', update=_motion_setting_updated)
+    motion_active_seconds: FloatProperty(name="ACTIVE Seconds", default=0.26, min=0.08, max=1.00, unit='TIME', update=_motion_setting_updated)
+    motion_recovery_seconds: FloatProperty(name="RECOVERY Seconds", default=0.66, min=0.10, max=3.00, unit='TIME', update=_motion_setting_updated)
+    motion_style_anticipation: FloatProperty(name="Anticipation", default=1.0, min=0.0, max=2.0, update=_motion_setting_updated)
+    motion_style_torso_power: FloatProperty(name="Torso Power", default=1.0, min=0.0, max=2.0, update=_motion_setting_updated)
+    motion_style_stance_compression: FloatProperty(name="Stance Compression", default=1.0, min=0.0, max=2.0, update=_motion_setting_updated)
+    motion_style_follow_through: FloatProperty(name="Follow Through", default=1.0, min=0.0, max=2.0, update=_motion_setting_updated)
+    motion_style_recovery: FloatProperty(name="Recovery", default=1.0, min=0.0, max=2.0, update=_motion_setting_updated)
+    motion_style_arm_extension: FloatProperty(name="Arm Extension", default=1.0, min=0.0, max=2.0, update=_motion_setting_updated)
+    motion_style_elbow_style: FloatProperty(name="Elbow Style", default=1.0, min=0.0, max=2.0, update=_motion_setting_updated)
+    motion_style_wrist_style: FloatProperty(name="Wrist Style", default=1.0, min=0.0, max=2.0, update=_motion_setting_updated)
+    motion_show_target: BoolProperty(name="Show Target", default=True, update=_motion_display_updated)
+    motion_show_trail: BoolProperty(name="Show Weapon Trail", default=True, update=_motion_display_updated)
+    motion_show_plane: BoolProperty(name="Show Strike Plane / Line", default=True, update=_motion_display_updated)
+    motion_validation_status: StringProperty(name="Motion Studio Status", default="NO MOTION STUDIO ACTION", options={'HIDDEN'})
+
+    # Backward-compatible body-first recipe. Values are persisted into every
+    # legacy generated/approved Action rather than changing global defaults.
     offensive_preview_kind: EnumProperty(
         name="Attack to Customize",
         description="Choose the character-specific offensive draft controlled by the sliders below",
@@ -2084,7 +2191,7 @@ class DAFSettings(PropertyGroup):
     last_damage_manifest_path: StringProperty(default="", options={'HIDDEN'})
     last_damage_validation_path: StringProperty(default="", options={'HIDDEN'})
 
-    # Trauma Field Authoring v5.3.0.
+    # Trauma Field Authoring v5.4.0.
     deformation_region: EnumProperty(
         name="Active Region",
         items=_deformation_region_items,
@@ -2979,6 +3086,7 @@ def character_objects_for_armature(context, armature):
         if obj in scene_objects
         if obj.type in {'EMPTY', 'ARMATURE', 'MESH'}
         and obj.name != PREVIEW_FLOOR_NAME
+        and not bool(obj.get("dsb_preview_only", False))
     }
 
 
@@ -5508,7 +5616,14 @@ def _apply_offensive_pose(arm, mapping, settings, variant, swing):
     rotate(arm, mapping, "shin_r", side, 7.0 * abs(swing) * stance)
 
 
-def validate_offensive_action(context, action, *, require_approved=None, available_socket_roles=None):
+def validate_offensive_action(
+    context,
+    action,
+    *,
+    require_approved=None,
+    available_socket_roles=None,
+    require_motion_validation=True,
+):
     start, end = action_frame_bounds(action)
     fps = context.scene.render.fps / max(context.scene.render.fps_base, 0.001)
     require_approved = bool(action.get("dsb_approved", False)) if require_approved is None else bool(require_approved)
@@ -5533,6 +5648,35 @@ def validate_offensive_action(context, action, *, require_approved=None, availab
     kind = str(action.get("dsb_approved_kind", action.get("dsb_draft_kind", "")))
     if not kind.startswith("ATTACK_"):
         errors.append("Offensive Action kind must use the ATTACK_ namespace.")
+    if action.get(offensive_motion.MOTION_RECIPE_PROPERTY) and require_motion_validation:
+        try:
+            recipe = offensive_motion.read_motion_recipe(action)
+            report = offensive_motion.read_json(
+                action,
+                offensive_motion.MOTION_VALIDATION_PROPERTY,
+                "Motion Studio validation",
+            )
+            armature = find_armature(context)
+            current_digest = offensive_motion_studio.validation_input_digest(
+                armature,
+                action,
+                recipe,
+            )
+            if report is None:
+                errors.append("Motion Studio baked weapon path has not been validated.")
+            elif report.get("status") != "PASS":
+                errors.extend(
+                    "Motion Studio: " + message
+                    for message in report.get("errors", ["Baked weapon-path validation failed."])
+                )
+            elif str(report.get("inputDigest", "")) != current_digest:
+                errors.append("Motion Studio baked-path validation is stale after a trajectory-critical change.")
+            elif not bool(report.get("activeContact", False)):
+                errors.append("Motion Studio baked weapon path does not contact its target during ACTIVE.")
+            if require_approved:
+                errors.extend(offensive_motion_studio.approval_errors(context, action))
+        except (RuntimeError, ValueError) as exc:
+            errors.append(str(exc))
     markers = {marker.name: int(marker.frame) for marker in action.pose_markers}
     for name in ("Attack_Start", "Active_Start", "Active_End", "Attack_End"):
         if name not in markers:
@@ -5673,6 +5817,14 @@ def preview_offensive_action(context, kind=None, *, start_playback=True):
     action = bpy.data.actions.get(variant["draftName"])
     if action is None or not bool(action.get("dsb_draft", False)):
         raise RuntimeError("Refresh the selected offensive draft before previewing it.")
+    if action.get(offensive_motion.MOTION_RECIPE_PROPERTY):
+        return {
+            **offensive_motion_studio.preview_motion(
+                context,
+                start_playback=start_playback,
+            ),
+            "kind": kind,
+        }
     validation = validate_offensive_action(context, action, require_approved=False)
     if validation["status"] != "PASS":
         raise RuntimeError("Draft preview validation failed: " + "; ".join(validation["errors"][:4]))
@@ -6096,6 +6248,14 @@ def action_pack_metadata(action, fps):
             clip_duration_seconds=result["duration_seconds"],
             require_approved=True,
         )
+        if action.get(offensive_motion.MOTION_RECIPE_PROPERTY):
+            result["offensive_targeting"] = (
+                offensive_motion_studio.validated_targeting_record(
+                    bpy.context,
+                    action,
+                    require_current=True,
+                )
+            )
     return result
 
 
@@ -6880,7 +7040,16 @@ class DAF_OT_build_approved_pack(Operator):
                 ),
                 'animations': metadata,
                 'offensive_action_schema': offensive_actions.OFFENSIVE_ACTION_SCHEMA,
+                'offensive_targeting_schema': offensive_motion.TARGETING_SCHEMA,
                 'approved_offensive_action_count': len(offensive_metadata),
+                'offensive_targeting': [
+                    {
+                        'actionName': item['name'],
+                        **item['offensive_targeting'],
+                    }
+                    for item in offensive_metadata
+                    if item.get('offensive_targeting') is not None
+                ],
                 'mace_head_guard_validation': guard_validation,
                 'death_floor_validation': death_floor_validation,
                 'validation_report': os.path.basename(validation_path),
@@ -7234,7 +7403,7 @@ class DAF_PT_legacy_panel(Panel):
             layout,
             s,
             "ui_deformation_authoring_open",
-            "Trauma Field Authoring v5.3.0",
+            "Trauma Field Authoring v5.4.0",
         )
         if opened:
             configure_property_box(box)
@@ -7575,6 +7744,11 @@ sys.modules.pop(_ATTACHMENT_SOCKETS_MODULE_NAME, None)
 importlib.invalidate_caches()
 attachment_sockets = importlib.import_module(".attachment_sockets", __package__)
 ATTACHMENT_SOCKET_CLASSES = attachment_sockets.CLASSES
+_OFFENSIVE_MOTION_STUDIO_MODULE_NAME = f"{__package__}.offensive_motion_studio"
+sys.modules.pop(_OFFENSIVE_MOTION_STUDIO_MODULE_NAME, None)
+importlib.invalidate_caches()
+offensive_motion_studio = importlib.import_module(".offensive_motion_studio", __package__)
+OFFENSIVE_MOTION_STUDIO_CLASSES = offensive_motion_studio.CLASSES
 damage_authoring = importlib.import_module(".damage_authoring", __package__)
 DAMAGE_AUTHORING_CLASSES = damage_authoring.CLASSES
 
@@ -7650,6 +7824,7 @@ CLASSES = (
     *DAMAGE_READINESS_CLASSES,
     *DAMAGE_AUTHORING_CLASSES,
     *ATTACHMENT_SOCKET_CLASSES,
+    *OFFENSIVE_MOTION_STUDIO_CLASSES,
     *DEFORMATION_AUTHORING_CLASSES,
     *TASK_UI_CLASSES,
     *VARIANT_AUTHORING_CLASSES,
@@ -7696,7 +7871,10 @@ def register():
         _REGISTERED_CLASS_NAMES = registered
         deformation_authoring.initialize_runtime_services()
         variant_authoring.recover_state()
+        offensive_motion_studio.register_handlers()
+        offensive_motion_studio.recover_sessions()
     except Exception:
+        offensive_motion_studio.unregister_handlers()
         if hasattr(bpy.types.Scene, "daf_settings"):
             del bpy.types.Scene.daf_settings
         for cls in reversed(CLASSES[:len(registered)]):
@@ -7713,6 +7891,7 @@ def register():
 def unregister():
     global _REGISTERED_CLASS_NAMES
     try:
+        offensive_motion_studio.unregister_handlers()
         deformation_authoring.shutdown_runtime_services()
     finally:
         if hasattr(bpy.types.Scene, "daf_settings"):

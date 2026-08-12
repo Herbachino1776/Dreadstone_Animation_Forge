@@ -9,7 +9,9 @@
    mode-aware vertex/face selection and rollback, Stamp alternatives, hybrid
    1.0 + 1.0 components, cohesive Surface Gore macros, distributed nucleus
    geometry, VIP animation edit/overwrite/delete, portable clip compatibility,
-   adaptive Blueprint reuse, validation, export, and clean reimport.
+   adaptive Blueprint reuse, validation, export, and clean reimport. For 5.4,
+   also run the Motion Studio overhead/opposite-slash/thrust FK-bake acceptance
+   and manually review Dread Ram God's one-hand mace overhead.
    Follow `docs/USER_WORKFLOW_GUIDE.md` as the authoritative user procedure.
 5. Run `python scripts/build_release.py` twice and require identical SHA-256
    hashes.
@@ -20,38 +22,46 @@
 
 ## Documentation definition of done
 
-- [ ] Version and `Dreadstone_Animation_Forge_v5_3_0.zip` match everywhere.
-- [ ] Creature Anatomy Profile schema/detection/orientation/persistence tests,
+- [x] Version and `Dreadstone_Animation_Forge_v5_4_0.zip` match everywhere.
+- [x] Creature Anatomy Profile schema/detection/orientation/persistence tests,
       the exact humanoid mapping comparison, malformed quadruped cases, and
       extracted-ZIP Blender registration pass.
-- [ ] AnyTop access commit, inspected files, licenses, checkpoint/data terms,
+- [x] AnyTop access commit, inspected files, licenses, checkpoint/data terms,
       external-only boundary, and multi-skeleton/multi-seed corpus plan are
       documented without vendored code, datasets, or checkpoints.
-- [ ] The VIP Damage Key -> Stamp -> macro workflow is current.
-- [ ] No user-facing factory preset instructions remain.
-- [ ] Independent multi-key Preview toggles and one active Stamp alternative
+- [x] The VIP Damage Key -> Stamp -> macro workflow is current.
+- [x] No user-facing factory preset instructions remain.
+- [x] Independent multi-key Preview toggles and one active Stamp alternative
       per key are documented.
-- [ ] Hybrid raised + inlay 1.0 + 1.0 semantics and component export mapping
+- [x] Hybrid raised + inlay 1.0 + 1.0 semantics and component export mapping
       are documented.
-- [ ] Surface Mass/Relief/Nucleus/Folds/Redness behavior, v6 legacy migration,
+- [x] Surface Mass/Relief/Nucleus/Folds/Redness behavior, v6 legacy migration,
       nucleus materials/metadata, and Blueprint persistence are documented.
-- [ ] VIP animation Play/Edit/Save/Delete, NLA reconnection, and compatible
+- [x] VIP animation Play/Edit/Save/Delete, NLA reconnection, and compatible
       `.blend` clip export/import are documented and runtime-tested.
-- [ ] Damage Blueprint save/apply portability and the fresh-destination-capture
+- [x] Damage Blueprint save/apply portability and the fresh-destination-capture
       requirement are documented.
-- [ ] Source Readiness, validation, export, and clean-reimport procedures are
+- [x] Source Readiness, validation, export, and clean-reimport procedures are
       current.
-- [ ] Complete Damage runtime membership, `DSB_DAMAGE_RIG`-only skeleton,
+- [x] Complete Damage runtime membership, `DSB_DAMAGE_RIG`-only skeleton,
       Action owner/filter staging, source provenance, GLB v2 diagnostics, and
       clean-reimport regression pass.
-- [ ] Runtime hand sockets preserve the exact 21-bone rest skeleton, persist
+- [x] Runtime hand sockets preserve the exact 21-bone rest skeleton, persist
       artist grip offsets, remain absent from GLB nodes/joints, and export
       finite canonical-hand-local transforms.
-- [ ] Eight offensive Actions pass approval, identity, phase, duration, socket,
+- [x] Eight offensive Actions pass approval, identity, phase, duration, socket,
       GLB inventory, sidecar, and clean-reimport regressions.
-- [ ] Character Variant Families consume exact Skin & Bones 2.2.0 metadata;
+- [x] Motion Studio target volumes, proxy/trajectory schemas, opposite slash
+      direction, overhead descent, thrust direction, FK bake, ACTIVE contact,
+      plane tolerance, validation invalidation, approval, master promotion,
+      helper exclusion, save/reopen, and targeting metadata regressions pass.
+- [ ] Manual Dread Ram God mace-overhead review confirms readable anticipation,
+      true target passage at CONTACT, dangerous ACTIVE speed, believable
+      follow-through/recovery, no shoulder/elbow/wrist failure, and no foot
+      sliding. Geometry PASS alone is not visual approval.
+- [x] Character Variant Families consume exact Skin & Bones 2.2.0 metadata;
       compatibility refusal, zero-copy inheritance, Action and Damage
       copy-on-write/revert, save/reopen, two-output batch export, appearance
       materials, resolved provenance, 21-bone sockets, and zero-time clips pass.
-- [ ] No stale button label, version, archive name, or superseded workflow
+- [x] No stale button label, version, archive name, or superseded workflow
       remains.

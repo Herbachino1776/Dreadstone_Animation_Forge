@@ -1,14 +1,14 @@
-# Dreadstone Animation Forge 5.3.0 — User Workflow Guide
+# Dreadstone Animation Forge 5.4.0 — User Workflow Guide
 
-- Release archive: `Dreadstone_Animation_Forge_v5_3_0.zip`
+- Release archive: `Dreadstone_Animation_Forge_v5_4_0.zip`
 - Supported release runtime: Blender 5.1.2
 - Damage authoring model: Damage Keys → child Stamp alternatives → strong macros
 - Reuse model: topology-independent Damage Blueprints
 
-## 1. Install Dreadstone Animation Forge 5.3.0
+## 1. Install Dreadstone Animation Forge 5.4.0
 
 In Blender choose **Edit > Preferences > Add-ons > Install from Disk**, select
-`Dreadstone_Animation_Forge_v5_3_0.zip` without extracting it, and enable
+`Dreadstone_Animation_Forge_v5_4_0.zip` without extracting it, and enable
 **Dreadstone Animation Forge**.
 
 ## 2. Open the Dreadstone panel
@@ -292,38 +292,95 @@ Analyze the rig, draft idle/walk/collapse/hurt or mace head-guard Actions,
 inspect them, and use the explicit Version/Approve controls. Generated Actions
 do not animate bone scale. Approved Actions and NLA-used Actions are protected.
 
-For combat motion, open **Humanoid Offensive Actions**. Choose one attack under
-**Attack to Customize**. Its **Custom Attack Sliders** expose exact WINDUP,
-ACTIVE, and RECOVERY seconds plus anticipation, strike strength, follow
-through, torso power, arm reach, elbow flex, wrist action, and stance
-compression.
+For combat motion, open **OFFENSIVE MOTION STUDIO**. This is the primary attack
+workflow. It starts with a target and weapon path instead of guessing arm
+rotations:
 
-Use this review loop for every attack you want to keep:
+1. Choose a **Motion Master**. The initial proof is **1H Overhead**; the five
+   starters also include opposite horizontal slashes, heavy diagonal, and
+   thrust. Click **BUILD FROM MOTION MASTER**.
+2. Under Target Dummy & Zone, choose HEAD, UPPER_TORSO, CENTER_MASS,
+   LOW_TORSO, or CUSTOM. Set editable target height, distance, lateral offset,
+   and volume dimensions. Defaults are Forge authoring dimensions, not fixed
+   Dreadstone player truth.
+3. Choose the Weapon Proxy class and its measured length, grip-to-contact
+   distance, strike segment, and optional head radius. It is only clean
+   authoring geometry; the game still owns the real weapon asset and damage.
+4. Use **ANTICIPATION**, **CONTACT**, and **FOLLOW THROUGH** to jump to the key
+   review states. CONTACT is sacred: at this frozen frame, verify that the red
+   proxy strike segment/contact point actually passes through the selected
+   target volume on the visible plane or line.
+5. Move the orange trajectory controls directly in the viewport when needed,
+   adjust target/proxy/timing values, then click **BUILD / REBUILD BODY SOLVE**.
+   Forge uses temporary constrained arm controls and supporting torso/stance
+   motion, then bakes ordinary canonical FK curves and removes constraints.
+6. Click **PREVIEW**, scrub WINDUP/ACTIVE/RECOVERY with the blue/red/green
+   weapon trail visible, and click **VALIDATE BAKED PATH**. Validation samples
+   the real baked hand, unchanged runtime socket, and configured proxy—not only
+   the pre-bake controls.
+7. Click **APPROVE** only after the current preview and target validation pass.
+   A useful miss reads like `Weapon contact point missed UPPER_TORSO by 0.18 m
+   during ACTIVE`, rather than a generic failure.
+8. After human review, optionally click **PROMOTE TO MOTION MASTER**. Promotion
+   is deliberate and stores the target-relative path for reuse through the
+   solver; it never silently replaces a global default.
 
-1. Adjust the sliders and click **Apply Sliders / Refresh Draft**.
-2. Click **Preview Attack** to play the exact draft range on the current
-   character. Spacebar stops Blender playback.
-3. Repeat adjustment, refresh, and preview until the motion reads correctly.
-4. Click **Save / Approve This Attack**. Forge deliberately blocks approval
-   until the current generated draft has been previewed.
+Built-in starters are marked geometry valid, not artist approved. A numeric
+PASS proves target contact, ACTIVE timing, plane tolerance, and direction; it
+does not prove that the body motion is beautiful. Human preview and approval
+remain authoritative. Starter masters are IN_PLACE and do not hide a forward
+root lunge. The target is an authored launch relationship, not runtime homing:
+after commitment the baked path is fixed and a player can dodge.
 
-The approved Action and its `dreadstone.offensive_recipe.v1` slider recipe are
-saved in the character `.blend`. Switching the attack selector reloads the
-latest draft or approved recipe for that attack. **Reset Sliders** restores the
-built-in starting recipe without touching any saved Action. These
-character-specific recipes do not silently replace the global humanoid
-generator defaults; a later explicit promotion can use the good approved
-character Actions as the reviewed default source.
+The approved Action stores `dreadstone.offensive_motion_recipe.v1`, current
+`dreadstone.offensive_motion_validation.v1`, and a small optional
+`dreadstone.offensive_targeting.v1` sidecar record. The established
+`dreadstone.offensive_action.v1` combat ID, socket, weapon class, commitment,
+and WINDUP/ACTIVE/RECOVERY contract remains unchanged. Helpers live only in
+`DSB_OFFENSIVE_MOTION_STUDIO`, can be repaired after reopen, and never export
+as GLB nodes or bones.
 
-**Generate / Refresh Offensive Suite** still creates all eight disposable
-drafts: one-hand right-to-left slash, left-to-right slash, overhead, thrust,
-and heavy; plus two-hand slash, overhead, and thrust. Suite refresh preserves
-stored per-attack recipes. Select each draft in turn to tune, preview, and
-approve it. Click **Validate Humanoid Offensive Suite** for contract checks.
-Each approved clip preserves a stable combat ID, compatible weapon classes,
-its primary (and when required secondary) hand role, commitment point, and
-contiguous WINDUP / ACTIVE / RECOVERY intervals in seconds. Approval does not
-equip a weapon or create gameplay damage.
+Open **LEGACY / PROCEDURAL DRAFTING** only for backward-compatible rough
+drafting. **Generate / Refresh Offensive Suite** still creates all eight old
+body-first drafts; **Apply Sliders / Refresh Draft**, **Preview Attack**, and
+**Save / Approve This Attack** remain available, and existing Actions are not
+migrated. Motion Studio does not require old approved Actions to gain target
+proof retroactively.
+
+### Exact Dread Ram God one-hand overhead acceptance
+
+Use this manual review before calling the milestone artistically complete:
+
+1. Open the Dread Ram God authoring `.blend`, select its canonical humanoid,
+   and open **OFFENSIVE MOTION STUDIO**.
+2. Choose **1H Overhead**, **1H Blunt / Mace**, and UPPER_TORSO (or HEAD when
+   that is the deliberate contact). Set realistic target distance and proxy
+   length/contact dimensions for the review mace.
+3. Click **BUILD FROM MOTION MASTER**, then enable Show Target, Show Weapon
+   Trail, and Show Strike Plane / Line.
+4. Click **CONTACT**. In the frozen viewport confirm the mace contact/head and
+   red strike segment physically pass through the selected mathematical target
+   volume on the vertical plane. Do not accept a pass above or beside it.
+5. Click **ANTICIPATION** and scrub WINDUP. Confirm the weapon raises clearly,
+   the silhouette reads overhead, and torso/stance support does not create an
+   impossible shoulder, inverted elbow, collapsed wrist, snap, or foot slide.
+6. Scrub the red ACTIVE trail through CONTACT. Confirm a fast downward crossing
+   rather than uniform speed or a slowdown at impact.
+7. Click **FOLLOW THROUGH**, scrub RECOVERY, and confirm the weapon exits the
+   target, carries momentum, and returns cleanly without a spine discontinuity.
+8. Click **PREVIEW**, then **VALIDATE BAKED PATH**. Require PASS for actual
+   baked FK ACTIVE contact, intended CONTACT, vertical descent, plane tolerance,
+   unchanged socket, no scale channels, exact skeleton, and IN_PLACE root.
+9. If the motion also passes human visual review, click **APPROVE**. Export
+   through the ordinary Animation Pack or Complete Damage path and clean-
+   reimport to confirm no `DSB_MS_*` helpers and the unchanged 21-bone rig.
+10. Only after that review, optionally click **PROMOTE TO MOTION MASTER** and
+    build it on a second compatible humanoid to confirm the target-relative
+    solver workflow.
+
+Record visual defects as manual acceptance failures even when geometric tests
+pass. The decisive proof is a believable body supporting a baked mace path that
+actually descends through the authored target during ACTIVE.
 
 Click **Create / Repair Runtime Hand Sockets** after `DSB_DAMAGE_RIG` exists.
 Forge creates managed artist-adjustable Empty helpers on `arm_right_hand` and
@@ -481,6 +538,10 @@ Duplicate combat IDs, absent hand roles, non-finite or overlapping timing,
 zero-length ACTIVE windows, draft/unapproved state, and sampler-duration drift
 all block export. The sidecar is the only attachment capability handoff;
 Dreadstone must report the capability unavailable when an older pack omits it.
+Motion Studio clips add current baked FK target contact, intended CONTACT,
+plane/direction, socket, skeleton/rest, scale-channel, and preview-digest gates.
+The optional targeting record is a future pre-commitment launch-envelope hint;
+it does not guarantee a hit and contains no runtime tracking.
 
 ## 13. Clean reimport and verification
 
@@ -496,10 +557,15 @@ Reimport the exported GLB into a clean Blender file. Confirm:
 - every runtime Action starts at `0.0` seconds and ends at its declared
   `clipDurationSeconds`;
 - no `DSB_ATTACHMENT_SOCKET_*` helper is a GLB node or skin joint;
+- no `DSB_MS_*` Motion Studio target, proxy, control, plane, or trail helper is
+  a GLB node or skin joint;
 - `runtimeAttachmentSockets` names the two canonical hand bones and contains
   finite normalized local transforms;
 - each offensive clip's combat ID, compatible weapon classes, phases, and
   duration match the runtime animation record;
+- each Motion Studio clip's optional targeting schema, target zone, preferred
+  distance/contact height, trajectory family, contact time, and proxy reach
+  match its approved baked-path proof;
 - the intact character is visible;
 - each Damage Key morph is present;
 - hybrid recipes have both `_RAISED` and `_INLAY` nodes for every required role;
@@ -602,7 +668,11 @@ authoring asset.
   **CLEAR BASE**,
   **Generate / Refresh Death Draft**, flank-hurt draft controls,
   **Generate Three Mace Head-Guard Drafts**, **Preview Guard_Active**,
-  **Validate Mace Head-Guard Drafts**, **Apply Sliders / Refresh Draft**,
+  **Validate Mace Head-Guard Drafts**, **BUILD FROM MOTION MASTER**,
+  **BUILD / REBUILD BODY SOLVE**, **ANTICIPATION**, **CONTACT**,
+  **FOLLOW THROUGH**, **PREVIEW**, **VALIDATE BAKED PATH**, **APPROVE**,
+  **PROMOTE TO MOTION MASTER**, **Repair Helpers**, **Remove Helpers**,
+  **Apply Sliders / Refresh Draft**,
   **Preview Attack**, **Save / Approve This Attack**,
   **Generate / Refresh Offensive Suite**, **Validate Humanoid Offensive Suite**,
   **Create / Repair Runtime Hand Sockets**,

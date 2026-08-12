@@ -27,6 +27,8 @@ from dreadstone_animation_forge import (  # noqa: E402
     damage_authoring,
     deformation_authoring,
     offensive_actions,
+    offensive_motion,
+    offensive_motion_studio,
     runtime_export,
     variant_authoring,
     variant_family,
@@ -395,6 +397,18 @@ def main():
     require(len(runtime_rig.data.bones) == bone_count_before_sockets, "Socket ensure added a bone.")
     require(rig_snapshot(runtime_rig)["bones"] == rest_before_sockets, "Socket ensure changed rest matrices.")
     require(len(bpy.data.actions) == action_count_before_sockets, "Socket ensure changed Actions.")
+    bpy.ops.object.select_all(action="DESELECT")
+    runtime_rig.select_set(True)
+    context.view_layer.objects.active = runtime_rig
+    settings.motion_master_id = "builtin_1h_overhead"
+    settings.motion_target_distance = 0.62
+    motion_result = offensive_motion_studio.build_from_master(context)
+    require(motion_result["validation"]["status"] == "PASS", motion_result["validation"].get("errors"))
+    offensive_motion_studio.preview_motion(context, start_playback=False)
+    motion_action = addon.approve_draft_action(context, "ATTACK_OVERHEAD_ONE_HAND")
+    runtime_actions.append(motion_action)
+    motion_helpers = list(offensive_motion_studio._owned_objects())
+    require(motion_helpers, "Motion Studio did not create export-exclusion helpers.")
 
     state = {
         "schema": damage_authoring.AUTHORING_SCHEMA,
@@ -653,6 +667,10 @@ def main():
         "Runtime GLB node extras lost Character Variant provenance.",
     )
     node_names = {str(node.get("name", "")) for node in gltf.get("nodes", [])}
+    require(
+        not ({helper.name for helper in motion_helpers} & node_names),
+        "Motion Studio authoring helpers leaked into the Complete Damage GLB.",
+    )
     animation_names = [
         str(animation.get("name", "")) for animation in gltf.get("animations", [])
     ]
@@ -662,6 +680,7 @@ def main():
         "DSB_Hurt_LEFT_v001",
         "DSB_Death_v001",
         "DSB_Attack_SourceOnly_v001",
+        motion_action.name,
     }
     require(validation["status"] == "PASS", "; ".join(validation["errors"]))
     require(validation["runtimeSkeleton"]["status"] == "PASS", "Runtime skeleton validation failed.")
@@ -713,10 +732,23 @@ def main():
         "Runtime socket parents are not canonical hand bones.",
     )
     offensive_records = manifest["runtimeAnimations"]["offensiveActions"]
-    require(len(offensive_records) == 1, "Exactly one offensive capability should export.")
+    require(len(offensive_records) == 2, "Exactly two offensive capabilities should export.")
     require(
-        offensive_records[0]["combatActionId"] == "humanoid_one_hand_slash_rtl",
-        "Offensive combat Action identity changed.",
+        {record["combatActionId"] for record in offensive_records}
+        == {"humanoid_one_hand_slash_rtl", "humanoid_one_hand_overhead"},
+        "Offensive combat Action identities changed.",
+    )
+    targeting_records = manifest["runtimeAnimations"]["offensiveTargeting"]
+    require(
+        len(targeting_records) == 1
+        and targeting_records[0]["schema"] == offensive_motion.TARGETING_SCHEMA
+        and targeting_records[0]["trajectoryFamily"] == "OVERHEAD_VERTICAL",
+        "Complete Damage did not emit the validated optional Motion Studio targeting handoff.",
+    )
+    require(
+        manifest_clips[motion_action.name]["offensiveTargeting"]
+        == {key: value for key, value in targeting_records[0].items() if key != "actionName"},
+        "Per-clip Motion Studio targeting differs from the manifest capability record.",
     )
     exported_offensive = manifest_clips["DSB_Attack_SourceOnly_v001"]["offensiveAction"]
     require(exported_offensive == offensive_metadata_before, "Offensive metadata changed during normalization.")
@@ -811,6 +843,8 @@ def main():
         "authoredFrameBounds": authored_frame_bounds,
         "exportedRuntimeTiming": timing_clips,
         "offensivePhaseContractPreserved": True,
+        "offensiveTargetingExported": True,
+        "motionStudioHelperCountExcluded": len(motion_helpers),
         "runtimeSocketContractPreserved": True,
         "sourceProvenancePreserved": True,
         "sourceActionsPreserved": True,

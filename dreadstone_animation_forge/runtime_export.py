@@ -13,7 +13,7 @@ from collections import defaultdict
 
 import bpy
 
-from . import animation_library, attachment_sockets, offensive_actions
+from . import animation_library, attachment_sockets, offensive_actions, offensive_motion
 
 
 RUNTIME_ARMATURE_ROLE = "authoring_rig"
@@ -31,6 +31,7 @@ AUTHORING_ONLY_ROLES = {
     "diagnostic",
     "export_staging",
     "attachment_socket_helper",
+    "offensive_motion_studio_helper",
 }
 RUNTIME_GENERATED_VISUAL_ROLES = {"raised_gore", "surface_stain_export"}
 RUNTIME_EXPORT_MARKER = "dsb_runtime_export_staging"
@@ -312,6 +313,7 @@ def audit_runtime_actions(state):
             errors.append(f"Approved Action {action.name!r} has invalid frame bounds.")
         duration_seconds = max(0.0, float(end) - float(start)) / max(fps, 0.001)
         offensive = None
+        offensive_targeting = None
         try:
             offensive = offensive_actions.validated_action_metadata(
                 action,
@@ -325,6 +327,18 @@ def audit_runtime_actions(state):
             errors.append(
                 f"Offensive Action {action.name!r} has no valid explicit combat metadata."
             )
+        if action.get(offensive_motion.MOTION_RECIPE_PROPERTY):
+            try:
+                from . import offensive_motion_studio
+
+                offensive_targeting = offensive_motion_studio.validated_targeting_record(
+                    bpy.context,
+                    action,
+                    require_current=True,
+                    armature=runtime_rig,
+                )
+            except (RuntimeError, ValueError) as exc:
+                errors.append(f"Action {action.name!r}: {exc}")
         candidates.append(
             {
                 "action": action,
@@ -342,6 +356,7 @@ def audit_runtime_actions(state):
                 "boneOnly": not curve_errors,
                 "compatibility": compatibility,
                 "offensiveAction": offensive,
+                "offensiveTargeting": offensive_targeting,
             }
         )
     if errors:
@@ -402,10 +417,16 @@ def audit_runtime_actions(state):
         ),
         "ignoredUnrelatedApprovedActions": sorted(ignored),
         "offensiveActionSchema": offensive_actions.OFFENSIVE_ACTION_SCHEMA,
+        "offensiveTargetingSchema": offensive_motion.TARGETING_SCHEMA,
         "offensiveActions": [
             {"actionName": record["name"], **record["offensiveAction"]}
             for record in selected
             if record.get("offensiveAction")
+        ],
+        "offensiveTargeting": [
+            {"actionName": record["name"], **record["offensiveTargeting"]}
+            for record in selected
+            if record.get("offensiveTargeting")
         ],
     }
 

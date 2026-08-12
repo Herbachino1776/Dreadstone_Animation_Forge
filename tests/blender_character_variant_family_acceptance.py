@@ -15,7 +15,7 @@ if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
 import dreadstone_animation_forge as addon  # noqa: E402
-from dreadstone_animation_forge import animation_library, variant_authoring  # noqa: E402
+from dreadstone_animation_forge import animation_library, offensive_motion, variant_authoring  # noqa: E402
 from dreadstone_animation_forge import variant_family as model  # noqa: E402
 from dreadstone_animation_forge.anatomy import skin_and_bones  # noqa: E402
 
@@ -234,9 +234,41 @@ def main():
 
     select_character(base_rig, base_mesh)
     animation_library.select_action(bpy.context.scene.daf_settings, shared)
+    motion_recipe = offensive_motion.instantiate_motion_recipe(
+        offensive_motion.BUILTIN_MOTION_MASTERS["builtin_1h_overhead"]
+    )
+    offensive_motion.stamp_motion_recipe(shared, motion_recipe)
+    shared["dsb_offensive_action_json"] = json.dumps({"schema": "dreadstone.offensive_action.v1"})
+    offensive_motion.stamp_json(
+        shared,
+        offensive_motion.MOTION_VALIDATION_PROPERTY,
+        {"schema": offensive_motion.MOTION_VALIDATION_SCHEMA, "status": "PASS", "inputDigest": "shared-proof"},
+    )
+    offensive_motion.stamp_json(
+        shared,
+        offensive_motion.TARGETING_PROPERTY,
+        {"schema": offensive_motion.TARGETING_SCHEMA, "targetZone": "UPPER_TORSO"},
+    )
+    shared["dsb_offensive_previewed"] = True
     override = variant_authoring.create_action_override(bpy.context, shared)
     require(len(bpy.data.actions) == 2, "One override did not create exactly one Action.")
     require(variant_authoring.action_status(override) == "OVERRIDE", override)
+    require(
+        offensive_motion.read_motion_recipe(override) == motion_recipe,
+        "The variant override did not clone only the Motion Studio authoring recipe.",
+    )
+    require(
+        offensive_motion.MOTION_VALIDATION_PROPERTY not in override
+        and offensive_motion.TARGETING_PROPERTY not in override
+        and not bool(override.get("dsb_offensive_previewed", True))
+        and str(override.get("dsb_motion_validation_status", "")) == "STALE",
+        "The variant Motion Studio override retained shared validation, targeting, or preview proof.",
+    )
+    require(
+        offensive_motion.MOTION_VALIDATION_PROPERTY in shared
+        and offensive_motion.TARGETING_PROPERTY in shared,
+        "Creating a variant override mutated shared Motion Studio provenance.",
+    )
     state = variant_authoring.load_state(required=True)
     require(
         model.resolve_action_id(state, "clip_shared_walk", "sooted")[0]
@@ -314,6 +346,7 @@ def main():
         "variantCount": len(reopened["variants"]),
         "defaultActionCopies": 0,
         "singleOverrideCopies": 1,
+        "motionStudioOverrideReset": True,
         "saveReopen": True,
         "activeSwitching": True,
         "revert": True,

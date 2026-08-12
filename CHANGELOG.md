@@ -1,5 +1,34 @@
 # Changelog
 
+## 5.4.0
+
+- Added weapon-first **OFFENSIVE MOTION STUDIO**: editable target dummy and
+  mathematical target zones, geometric weapon proxies, explicit trajectory
+  controls/families, sacred CONTACT navigation, strike plane/line, and
+  phase-colored actual weapon trails.
+- Added versioned Motion recipe, Motion Master/library, baked validation, and
+  optional targeting handoff schemas. Five built-in one-hand masters cover
+  opposite horizontal slashes, overhead, heavy diagonal, and thrust while
+  retaining the established combat Action IDs.
+- Added a temporary no-stretch arm IK/body-support solve with planted-foot
+  constraints that bakes back to the exact canonical 21-bone FK rig, removes
+  constraints/helpers, forbids scale animation and hidden starter root motion,
+  and leaves runtime sockets intact.
+- Approval now fails closed for Motion Studio attacks unless the current baked
+  FK socket/proxy path intersects the intended target at CONTACT during ACTIVE,
+  matches plane/direction tolerances, and has current preview proof.
+- Added explicit reviewed-attack promotion to reusable target-relative Motion
+  Masters, Character Variant Action copy-on-write invalidation, save/reopen
+  repair, helper lifecycle/export exclusion, and optional non-homing launch-
+  envelope metadata in Animation Pack and Complete Damage sidecars.
+- Preserved 5.3 Character Variant Families, 5.2.2 zero-time temporary runtime
+  staging, `dreadstone.offensive_action.v1`, existing approved Actions, and the
+  full eight-generator workflow under LEGACY / PROCEDURAL DRAFTING.
+- Added deterministic target/intersection/plane/direction/schema/invalidation
+  tests and Blender acceptance for overhead, opposite slashes, thrust, FK bake,
+  sockets, helper cleanup, persistence, approval, and export exclusion. Numeric
+  geometry validation is not a claim of human artistic approval.
+
 ## 5.3.0
 
 - Added Character Variant Families using the exact approved Skin & Bones 2.2.0

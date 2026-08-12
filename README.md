@@ -1,6 +1,6 @@
 # Dreadstone Animation Forge
 
-Dreadstone Animation Forge `5.3.0` is a proprietary Blender add-on for
+Dreadstone Animation Forge `5.4.0` is a proprietary Blender add-on for
 animation drafting and compatibility-preserving damage authoring. The supported
 release runtime is Blender `5.1.2`.
 
@@ -78,9 +78,19 @@ appearance and deliberate copy-on-write overrides; adding a texture-only
 variant creates no duplicate Actions or Damage Keys. See the
 [Character Variant Family contract](docs/CHARACTER_VARIANT_FAMILY_CONTRACT.md).
 
+Forge 5.4 adds **OFFENSIVE MOTION STUDIO**, a target-constrained weapon-first
+workflow. Artists place a mathematical target dummy, choose a target zone and
+weapon proxy, edit an explicit horizontal/diagonal/overhead/thrust trajectory,
+solve the canonical body around that path, bake ordinary FK curves, and then
+validate the real baked hand/socket/proxy path during ACTIVE. Five geometry-
+valid one-hand starter masters ship; reviewed approved attacks can be promoted
+deliberately for reuse on another compatible humanoid. The existing eight
+body-first generators remain under LEGACY / PROCEDURAL DRAFTING. See the
+[Offensive Motion Studio contract](docs/OFFENSIVE_MOTION_STUDIO_CONTRACT.md).
+
 ## Install and open
 
-1. Download `Dreadstone_Animation_Forge_v5_3_0.zip`.
+1. Download `Dreadstone_Animation_Forge_v5_4_0.zip`.
 2. In Blender choose **Edit > Preferences > Add-ons > Install from Disk**.
 3. Select the ZIP without extracting it and enable the add-on.
 4. In the 3D Viewport press `N`, open **Dreadstone**, then choose

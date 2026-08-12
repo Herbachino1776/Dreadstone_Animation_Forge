@@ -1524,82 +1524,136 @@ def _draw_mace_guard_animation(layout, settings):
 
 def _draw_offensive_animation(layout, settings):
     offense = _animation_foldout(
-        layout, settings, "ui_offensive_open", "Humanoid Offensive Actions", icon='ACTION'
+        layout, settings, "ui_offensive_open", "OFFENSIVE MOTION STUDIO", icon='ACTION'
     )
     if offense is None:
         return
-    offense.label(text="Customize one character-specific draft, preview it, then approve", icon='INFO')
-    offense.prop(settings, "offensive_preview_kind")
+    offense.label(text="TARGET → WEAPON PATH → BODY SOLVE → FK BAKE → VALIDATE", icon='TRACKING')
+    offense.label(text="The baked weapon path defines the attack; the body supports it", icon='INFO')
 
-    custom = offense.box()
-    custom.label(text="Custom Attack Sliders", icon='SETTINGS')
-    timing = custom.column(align=True)
-    timing.label(text="Authored Combat Timing", icon='TIME')
+    master = offense.box()
+    master.label(text="1 · MOTION MASTER", icon='ASSET_MANAGER')
+    master.prop(settings, "motion_master_id")
+    master.operator(
+        "daf.motion_studio_build_from_master",
+        text="BUILD FROM MOTION MASTER",
+        icon='ARMATURE_DATA',
+    )
+    master.label(text="Built-in starters are geometry-valid, not automatically artist approved", icon='INFO')
+
+    target = offense.box()
+    target.label(text="2 · TARGET DUMMY & ZONE", icon='OUTLINER_OB_EMPTY')
+    target.prop(settings, "motion_target_zone")
+    target.prop(settings, "motion_target_distance")
+    target.prop(settings, "motion_target_height")
+    target.prop(settings, "motion_target_lateral")
+    dimensions = target.column(align=True)
+    dimensions.prop(settings, "motion_target_radius")
+    dimensions.prop(settings, "motion_target_half_height")
+    dimensions.prop(settings, "motion_target_head_radius")
+    if settings.motion_target_zone == "CUSTOM":
+        dimensions.prop(settings, "motion_custom_target_height")
+        dimensions.prop(settings, "motion_custom_target_radius")
+    target.label(text="Canonical target space: +Y forward · +Z up · X lateral", icon='ORIENTATION_GLOBAL')
+
+    proxy = offense.box()
+    proxy.label(text="3 · WEAPON PROXY GEOMETRY", icon='EMPTY_AXIS')
+    proxy.prop(settings, "motion_proxy_class")
+    proxy.prop(settings, "motion_proxy_length")
+    proxy.prop(settings, "motion_proxy_contact")
+    proxy.prop(settings, "motion_proxy_strike_start")
+    proxy.prop(settings, "motion_proxy_strike_end")
+    proxy.prop(settings, "motion_proxy_head_radius")
+    proxy.label(text="Proxy controls geometry only; production weapon identity stays game-owned", icon='INFO')
+
+    trajectory = offense.box()
+    trajectory.label(text="4 · CONTACT & TRAJECTORY", icon='CURVE_PATH')
+    trajectory.prop(settings, "motion_trajectory_family")
+    pose_row = trajectory.row(align=True)
+    for pose, label in (
+        ("ANTICIPATION", "ANTICIPATION"),
+        ("CONTACT", "CONTACT"),
+        ("FOLLOW_THROUGH", "FOLLOW THROUGH"),
+    ):
+        jump = pose_row.operator("daf.motion_studio_jump_key_pose", text=label, icon='MARKER_HLT')
+        jump.pose = pose
+    trajectory.label(text="CONTACT shows the intended target, proxy, plane/line, and frozen relationship", icon='INFO')
+    display = trajectory.row(align=True)
+    display.prop(settings, "motion_show_target", toggle=True)
+    display.prop(settings, "motion_show_trail", toggle=True)
+    display.prop(settings, "motion_show_plane", toggle=True)
+    trajectory.operator("daf.motion_studio_rebuild_body_solve", text="BUILD / REBUILD BODY SOLVE", icon='CONSTRAINT_BONE')
+    trajectory.label(text="Move orange control arrows in the viewport, then rebuild", icon='ORIENTATION_LOCAL')
+
+    timing = offense.box()
+    timing.label(text="5 · COMBAT TIMING", icon='TIME')
+    timing.prop(settings, "motion_windup_seconds")
+    timing.prop(settings, "motion_active_seconds")
+    timing.prop(settings, "motion_recovery_seconds")
+    timing.label(text="ACTIVE accelerates through CONTACT; starter roots remain IN_PLACE", icon='INFO')
+
+    style = _animation_foldout(
+        offense, settings, "ui_motion_style_open", "Secondary Style Controls", icon='POSE_HLT'
+    )
+    if style is not None:
+        style.label(text="Style supports a geometrically correct path; it does not decide whether the attack hits", icon='INFO')
+        for property_name in (
+            "motion_style_anticipation",
+            "motion_style_torso_power",
+            "motion_style_stance_compression",
+            "motion_style_follow_through",
+            "motion_style_recovery",
+            "motion_style_arm_extension",
+            "motion_style_elbow_style",
+            "motion_style_wrist_style",
+        ):
+            style.prop(settings, property_name, slider=True)
+
+    proof = offense.box()
+    proof.label(text="6 · BAKED FK PROOF", icon='CHECKMARK')
+    row = proof.row(align=True)
+    row.operator("daf.motion_studio_preview", text="PREVIEW", icon='PLAY')
+    row.operator("daf.motion_studio_validate_baked_path", text="VALIDATE BAKED PATH", icon='CHECKMARK')
+    row = proof.row(align=True)
+    row.operator("daf.motion_studio_approve", text="APPROVE", icon='FAKE_USER_ON')
+    row.operator("daf.motion_studio_promote_master", text="PROMOTE TO MOTION MASTER", icon='ASSET_MANAGER')
+    proof.label(text=str(settings.motion_validation_status)[:120], icon='INFO')
+    proof.label(text="Approval requires current preview + ACTIVE target contact from the actual FK/socket path", icon='LOCKED')
+    helper_row = proof.row(align=True)
+    helper_row.operator("daf.motion_studio_repair_helpers", text="Repair Helpers", icon='FILE_REFRESH')
+    helper_row.operator("daf.motion_studio_remove_helpers", text="Remove Helpers", icon='HIDE_ON')
+    proof.operator("daf.ensure_runtime_attachment_sockets", text="Create / Repair Runtime Hand Sockets", icon='CONSTRAINT_BONE')
+    proof.label(text="Motion controls never rotate or recalibrate MAIN_HAND_R / MAIN_HAND_L", icon='ORIENTATION_LOCAL')
+
+    legacy = _animation_foldout(
+        offense, settings, "ui_legacy_offensive_open", "LEGACY / PROCEDURAL DRAFTING", icon='SETTINGS'
+    )
+    if legacy is None:
+        return
+    legacy.label(text="Backward-compatible body-first rough drafts; Motion Studio is primary", icon='INFO')
+    legacy.prop(settings, "offensive_preview_kind")
+    timing = legacy.column(align=True)
+    timing.label(text="Legacy Authored Combat Timing", icon='TIME')
     timing.prop(settings, "offensive_windup_seconds", slider=True)
     timing.prop(settings, "offensive_active_seconds", slider=True)
     timing.prop(settings, "offensive_recovery_seconds", slider=True)
-    motion = custom.column(align=True)
-    motion.label(text="Motion Shape", icon='POSE_HLT')
+    sliders = legacy.column(align=True)
     for property_name in (
-        "offensive_anticipation_strength",
-        "offensive_strike_strength",
-        "offensive_follow_through",
-        "offensive_torso_power",
-        "offensive_arm_reach",
-        "offensive_elbow_flex",
-        "offensive_wrist_action",
-        "offensive_stance_compression",
+        "offensive_anticipation_strength", "offensive_strike_strength",
+        "offensive_follow_through", "offensive_torso_power", "offensive_arm_reach",
+        "offensive_elbow_flex", "offensive_wrist_action", "offensive_stance_compression",
     ):
-        motion.prop(settings, property_name, slider=True)
-
-    row = custom.row(align=True)
-    row.operator(
-        "daf.generate_selected_offensive_draft",
-        text="1. Apply Sliders / Refresh Draft",
-        icon='FILE_REFRESH',
-    )
-    row.operator(
-        "daf.preview_offensive_draft",
-        text="2. Preview Attack",
-        icon='PLAY',
-    )
-    row = custom.row(align=True)
-    row.operator(
-        "daf.reset_offensive_sliders",
-        text="Reset Sliders",
-        icon='LOOP_BACK',
-    )
-    approve = row.operator(
-        "daf.approve_draft",
-        text="3. Save / Approve This Attack",
-        icon='FAKE_USER_ON',
-    )
+        sliders.prop(settings, property_name, slider=True)
+    row = legacy.row(align=True)
+    row.operator("daf.generate_selected_offensive_draft", text="Apply Sliders / Refresh Draft", icon='FILE_REFRESH')
+    row.operator("daf.preview_offensive_draft", text="Preview Attack", icon='PLAY')
+    row = legacy.row(align=True)
+    row.operator("daf.reset_offensive_sliders", text="Reset Sliders", icon='LOOP_BACK')
+    approve = row.operator("daf.approve_draft", text="Save / Approve This Attack", icon='FAKE_USER_ON')
     approve.kind = settings.offensive_preview_kind
-    custom.label(text="Approval is blocked until the refreshed draft has been previewed", icon='LOCKED')
-    custom.label(text="Approved Action + slider recipe stay saved with this character", icon='FILE_BLEND')
-    custom.label(text="Humanoid generator defaults are not changed automatically", icon='INFO')
-
-    suite = offense.box()
-    suite.label(text="Eight-Attack Suite", icon='ACTION')
-    row = suite.row(align=True)
-    row.operator(
-        "daf.generate_humanoid_offensive_suite",
-        text="Generate / Refresh Offensive Suite",
-        icon='ACTION',
-    )
-    row.operator(
-        "daf.validate_humanoid_offensive_suite",
-        text="Validate Suite",
-        icon='CHECKMARK',
-    )
-    suite.label(text="Suite refresh keeps each saved draft/approved character recipe", icon='INFO')
-    suite.label(text="Select each attack above to tune, preview, and approve it", icon='INFO')
-    offense.operator(
-        "daf.ensure_runtime_attachment_sockets",
-        text="Create / Repair Runtime Hand Sockets",
-        icon='CONSTRAINT_BONE',
-    )
-    offense.label(text="Socket helper offsets remain artist-adjustable and idempotent", icon='ORIENTATION_LOCAL')
+    row = legacy.row(align=True)
+    row.operator("daf.generate_humanoid_offensive_suite", text="Generate / Refresh Offensive Suite", icon='ACTION')
+    row.operator("daf.validate_humanoid_offensive_suite", text="Validate Suite", icon='CHECKMARK')
 
 
 def _draw_animation_pack(layout, settings):

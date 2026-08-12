@@ -14,11 +14,11 @@ import bpy
 from .anatomy import persistence as anatomy_persistence
 from .anatomy import skin_and_bones as sbf_handoff
 from .anatomy.profiles import HUMANOID_PROFILE_ID
-from . import offensive_actions
+from . import offensive_actions, offensive_motion
 
 
 ANIMATION_CLIP_SCHEMA = "dreadstone.animation_clip.v1"
-ANIMATION_LIBRARY_BUILD_ID = "2026-08-11.character-variant-families-5.3.0"
+ANIMATION_LIBRARY_BUILD_ID = "2026-08-12.offensive-motion-studio-5.4.0"
 
 CLIP_ID_PROPERTY = "dsb_animation_clip_id"
 CLIP_SCHEMA_PROPERTY = "dsb_animation_clip_schema"
@@ -494,6 +494,13 @@ def mark_draft(action, armature, settings, kind):
     )
     if source_clip_id:
         action["dsb_edit_source_clip_id"] = source_clip_id
+    if action.get(offensive_motion.MOTION_RECIPE_PROPERTY):
+        from . import offensive_motion_studio
+
+        offensive_motion_studio.invalidate_action(
+            action,
+            "Motion Studio Action entered an editable draft session",
+        )
     return action
 
 
@@ -967,6 +974,10 @@ def save_edit(context, armature):
     source_name = source.name
     source_clip_id = ensure_clip_id(source)
     kind = infer_action_kind(source)
+    if draft.get(offensive_motion.MOTION_RECIPE_PROPERTY):
+        from . import offensive_motion_studio
+
+        offensive_motion_studio.require_approval_ready(context, draft)
     temporary_name = "__DSB_REPLACED_" + uuid.uuid4().hex
     source.name = temporary_name
     draft.name = source_name
@@ -1057,6 +1068,10 @@ def export_action_clip(context, armature, action, directory):
     report = compatibility_report(action, armature)
     if report["errors"]:
         raise RuntimeError(" ".join(report["errors"]))
+    if action.get(offensive_motion.MOTION_RECIPE_PROPERTY):
+        from . import offensive_motion_studio
+
+        offensive_motion_studio.require_approval_ready(context, action)
     mark_approved(action, armature, settings, infer_action_kind(action))
     action[CLIP_EXPORT_NAME_PROPERTY] = action.name
     resolved = Path(bpy.path.abspath(str(directory))).resolve()
