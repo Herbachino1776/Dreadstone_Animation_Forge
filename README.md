@@ -1,6 +1,6 @@
 # Dreadstone Animation Forge
 
-Dreadstone Animation Forge `5.4.0` is a proprietary Blender add-on for
+Dreadstone Animation Forge `5.4.1` is a proprietary Blender add-on for
 animation drafting and compatibility-preserving damage authoring. The supported
 release runtime is Blender `5.1.2`.
 
@@ -88,9 +88,19 @@ deliberately for reuse on another compatible humanoid. The existing eight
 body-first generators remain under LEGACY / PROCEDURAL DRAFTING. See the
 [Offensive Motion Studio contract](docs/OFFENSIVE_MOTION_STUDIO_CONTRACT.md).
 
+Forge 5.4.1 makes that workflow natural by default. Choose an Attack, Weapon,
+Target, and **Feel = Natural**, then use **BUILD NATURAL ATTACK**; character-
+specific Auto Fit places the target and selects a legal blade strike point
+without stretching or translating the deform arm. Surface-first contact,
+class-specific sword/mace orientation, compact trajectories, continuous body
+support, and pose-health validation preserve geometric hits while keeping the
+body restrained. Expert target, proxy, trajectory, body, reach, and tolerance
+controls remain in collapsed advanced sections, and 5.4.0 artist-promoted
+masters are never silently rewritten.
+
 ## Install and open
 
-1. Download `Dreadstone_Animation_Forge_v5_4_0.zip`.
+1. Download `Dreadstone_Animation_Forge_v5_4_1.zip`.
 2. In Blender choose **Edit > Preferences > Add-ons > Install from Disk**.
 3. Select the ZIP without extracting it and enable the add-on.
 4. In the 3D Viewport press `N`, open **Dreadstone**, then choose

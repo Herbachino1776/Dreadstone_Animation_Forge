@@ -1,5 +1,38 @@
 # Changelog
 
+## 5.4.1
+
+- Naturalized all five built-in Motion Masters with compact chambers, restrained
+  follow-through, subtle lower-body support, and class-specific blade/blunt
+  orientations while preserving their stable combat Action IDs.
+- Replaced target-center-only contact with entry, top, and side surface anchors.
+  Slash and overhead blades select one legal point on the authored strike
+  segment; thrust tips and blunt heads remain the leading contact region.
+- Added character-specific upper/lower-arm reach measurement, Natural Auto Fit,
+  88% comfortable / 92% warning / 98.5% hard reach policy, a two-bone arm IK
+  chain, and bounded four-degree shoulder support.
+- Removed forced hand translation after no-stretch IK. Motion Studio now solves
+  wrist position through the intact arm, applies hand orientation at the solved
+  endpoint, and never keys location on shoulder/upper-arm/lower-arm/hand deform
+  bones merely to manufacture contact.
+- Replaced the CONTACT sign flip in body support with a family-aware smooth
+  envelope through all trajectory controls. Added pose-health reporting for arm
+  extension, elbow bend, shoulder/torso support, deform translation, solve error,
+  and frame angular continuity; unsafe drafts now fail build or approval.
+- Added Subtle, Natural, and Forceful Feel presets, Reset to Natural, character-
+  adaptive Auto Fit, a concise first-run Attack/Weapon/Target/Feel workflow, and
+  collapsed expert sections without removing viewport control editing or legacy
+  procedural drafting.
+- Improved proxy readability with explicit blade tip/guard/strike segment,
+  blunt head/contact region, intended surface anchor, actual baked closest point,
+  and unchanged neutral runtime socket calibration.
+- Added pure and Blender regressions for Natural Sword/Head and Sword/Torso
+  overheads, mace overhead, compact thrust, opposite slash directions, heavy
+  diagonal reach, surface contact, blade contact selection, continuous support,
+  no deform-chain translation, pose health, approval, persistence, and export
+  compatibility. Automated contact remains geometry evidence, not artistic sign-
+  off.
+
 ## 5.4.0
 
 - Added weapon-first **OFFENSIVE MOTION STUDIO**: editable target dummy and

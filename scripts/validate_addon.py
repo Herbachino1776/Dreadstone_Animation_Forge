@@ -42,13 +42,13 @@ ALL_MODULE_PATHS = tuple(sorted(
     if "__pycache__" not in path.parts
 ))
 
-EXPECTED_VERSION = (5, 4, 0)
+EXPECTED_VERSION = (5, 4, 1)
 EXPECTED_READINESS_BUILD = "2026-07-18.source-contract.1"
-EXPECTED_AUTHORING_BUILD = "2026-08-12.offensive-motion-studio.1"
-EXPECTED_DEFORMATION_BUILD = "2026-08-12.offensive-motion-studio.1"
+EXPECTED_AUTHORING_BUILD = "2026-08-12.offensive-motion-studio-natural.1"
+EXPECTED_DEFORMATION_BUILD = "2026-08-12.offensive-motion-studio-natural.1"
 
 REQUIRED_GUIDE_HEADINGS = (
-    "## 1. Install Dreadstone Animation Forge 5.4.0",
+    "## 1. Install Dreadstone Animation Forge 5.4.1",
     "## 2. Open the Dreadstone panel",
     "## 3. Import and prepare a source GLB",
     "## 4. Use the VIP Damage workflow",
@@ -300,6 +300,8 @@ REQUIRED_OPERATORS = {
     "daf.validate_humanoid_offensive_suite": "Validate Humanoid Offensive Suite",
     "daf.ensure_runtime_attachment_sockets": "Create / Repair Runtime Hand Sockets",
     "daf.motion_studio_build_from_master": "Build From Motion Master",
+    "daf.motion_studio_natural_fit": "Natural Auto Fit",
+    "daf.motion_studio_reset_natural": "Reset to Natural",
     "daf.motion_studio_rebuild_body_solve": "Rebuild Body Solve",
     "daf.motion_studio_jump_key_pose": "Jump to Motion Key Pose",
     "daf.motion_studio_validate_baked_path": "Validate Baked Weapon Path",
@@ -338,7 +340,7 @@ REQUIRED_OPERATORS = {
 REQUIRED_UI_TEXT = {
     "Source Damage Readiness",
     "Damage Segment & Stump Authoring v3.9",
-    "Trauma Field Authoring v5.4.0",
+    "Trauma Field Authoring v5.4.1",
     "Generate Humanoid Idle",
     "Draft Base Pose",
     "Capture Base + Preview Idle",
@@ -545,7 +547,7 @@ def check_extension_manifest() -> None:
         (
             'schema_version = "1.0.0"',
             'id = "dreadstone_animation_forge"',
-            'version = "5.4.0"',
+            'version = "5.4.1"',
             'name = "Dreadstone Animation Forge"',
             'type = "add-on"',
             'blender_version_min = "4.2.0"',
@@ -1051,14 +1053,14 @@ def check_repository_hygiene() -> None:
 
 
 def main() -> int:
-    print("DREADSTONE ANIMATION FORGE v5.4.0 STATIC VALIDATION")
+    print("DREADSTONE ANIMATION FORGE v5.4.1 STATIC VALIDATION")
     print("Blender is not imported; runtime acceptance remains separate.")
 
     sources: dict[str, str] = {}
     trees: dict[str, ast.Module] = {}
     checks: list[tuple[str, Callable[[], None]]] = [
         ("all contract package modules exist", check_module_files),
-        ("Blender extension manifest exists and matches v5.4.0", check_extension_manifest),
+        ("Blender extension manifest exists and matches v5.4.1", check_extension_manifest),
         ("all Python modules parse with ast.parse", lambda: check_parse(sources)),
         ("all Python modules compile with py_compile", check_compile),
         ("add-on/deformation version and build contracts", lambda: check_versions(trees)),

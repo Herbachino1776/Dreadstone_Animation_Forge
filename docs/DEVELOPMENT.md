@@ -165,6 +165,21 @@ save/reload. It must also prove that none animates scale, preserve the exact
 21-bone rest skeleton, keep socket ensure idempotent, persist an
 artist-adjusted grip, and emit the two canonical hand socket records.
 
+Run the 5.4.1 Natural Motion Studio regression:
+
+```text
+blender --background --factory-startup --python tests/blender_offensive_motion_studio_acceptance.py
+```
+
+It must build Sword Overhead to Head and Upper Torso, Mace Overhead, compact
+Sword Thrust, both horizontal slashes, and Heavy Diagonal. Require exact ACTIVE
+surface contact and direction, Natural extension below 92%, continuous body
+support, bounded torso/shoulder response, no deform-arm location curves, no
+one-frame FK step above 45 degrees, actionable impossible-reach blocking,
+current pose-health/geometry/preview proof, approval, promotion, and helper
+save/reopen recovery. Automated evidence does not replace the manual workflows
+in the User Workflow Guide.
+
 The Blender-free cavity suite exercises all six Gore identities, each macro at
 0/25/50/75/100, and the exact reported head-macro regression. Every generated
 internal layer must remain ordered between the measured rim and liner before a
@@ -197,7 +212,7 @@ should be performed only when requested.
 ## Release archive
 
 `python scripts/build_release.py` validates first and writes
-`dist/Dreadstone_Animation_Forge_v5_4_0.zip`. Every package Python file is
+`dist/Dreadstone_Animation_Forge_v5_4_1.zip`. Every package Python file is
 discovered recursively, so new service/operator modules must appear in the
 archive automatically. `dist/`, bytecode, caches, Blender backups, and
 temporary extraction directories are generated artifacts and are not

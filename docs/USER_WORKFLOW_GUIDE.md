@@ -1,14 +1,14 @@
-# Dreadstone Animation Forge 5.4.0 — User Workflow Guide
+# Dreadstone Animation Forge 5.4.1 — User Workflow Guide
 
-- Release archive: `Dreadstone_Animation_Forge_v5_4_0.zip`
+- Release archive: `Dreadstone_Animation_Forge_v5_4_1.zip`
 - Supported release runtime: Blender 5.1.2
 - Damage authoring model: Damage Keys → child Stamp alternatives → strong macros
 - Reuse model: topology-independent Damage Blueprints
 
-## 1. Install Dreadstone Animation Forge 5.4.0
+## 1. Install Dreadstone Animation Forge 5.4.1
 
 In Blender choose **Edit > Preferences > Add-ons > Install from Disk**, select
-`Dreadstone_Animation_Forge_v5_4_0.zip` without extracting it, and enable
+`Dreadstone_Animation_Forge_v5_4_1.zip` without extracting it, and enable
 **Dreadstone Animation Forge**.
 
 ## 2. Open the Dreadstone panel
@@ -296,34 +296,38 @@ For combat motion, open **OFFENSIVE MOTION STUDIO**. This is the primary attack
 workflow. It starts with a target and weapon path instead of guessing arm
 rotations:
 
-1. Choose a **Motion Master**. The initial proof is **1H Overhead**; the five
-   starters also include opposite horizontal slashes, heavy diagonal, and
-   thrust. Click **BUILD FROM MOTION MASTER**.
-2. Under Target Dummy & Zone, choose HEAD, UPPER_TORSO, CENTER_MASS,
-   LOW_TORSO, or CUSTOM. Set editable target height, distance, lateral offset,
-   and volume dimensions. Defaults are Forge authoring dimensions, not fixed
-   Dreadstone player truth.
-3. Choose the Weapon Proxy class and its measured length, grip-to-contact
-   distance, strike segment, and optional head radius. It is only clean
-   authoring geometry; the game still owns the real weapon asset and damage.
-4. Use **ANTICIPATION**, **CONTACT**, and **FOLLOW THROUGH** to jump to the key
-   review states. CONTACT is sacred: at this frozen frame, verify that the red
-   proxy strike segment/contact point actually passes through the selected
-   target volume on the visible plane or line.
-5. Move the orange trajectory controls directly in the viewport when needed,
-   adjust target/proxy/timing values, then click **BUILD / REBUILD BODY SOLVE**.
-   Forge uses temporary constrained arm controls and supporting torso/stance
-   motion, then bakes ordinary canonical FK curves and removes constraints.
-6. Click **PREVIEW**, scrub WINDUP/ACTIVE/RECOVERY with the blue/red/green
-   weapon trail visible, and click **VALIDATE BAKED PATH**. Validation samples
-   the real baked hand, unchanged runtime socket, and configured proxy—not only
-   the pre-bake controls.
-7. Click **APPROVE** only after the current preview and target validation pass.
-   A useful miss reads like `Weapon contact point missed UPPER_TORSO by 0.18 m
-   during ACTIVE`, rather than a generic failure.
-8. After human review, optionally click **PROMOTE TO MOTION MASTER**. Promotion
-   is deliberate and stores the target-relative path for reuse through the
-   solver; it never silently replaces a global default.
+1. In the first visible row choose **Attack**, **Weapon**, **Target**, and
+   **Feel**. Keep **Feel = Natural** and **Target Distance = Auto** for an
+   ordinary starting attack.
+2. Click **BUILD NATURAL ATTACK**. Auto Fit measures this character's actual
+   upper and lower arm, adapts target distance, and (for chopping/slashing
+   blades) chooses one usable point on the authored blade strike segment. It
+   keeps the intended target and attack family; it never stretches or
+   translates the deform arm to manufacture contact.
+3. Click **Jump To Contact**. The yellow marker is the intended first-impact
+   surface point. Confirm the blade segment, mace head, or thrust tip meets the
+   selected target volume. A HEAD overhead is a chopping arc to the head's top
+   surface, not a top-down thrust through its center.
+4. Click **PREVIEW** and scrub WINDUP / ACTIVE / RECOVERY. Require a compact
+   anticipation, connected torso support, planted feet, visible follow-through,
+   and controlled recovery. Use **RESET TO NATURAL** whenever slider edits make
+   the result hard to diagnose.
+5. Click **VALIDATE**. The status combines baked weapon geometry with pose
+   health: arm extension, elbow bend, bounded shoulder/torso support, unexpected
+   deform-bone translation, wrist/contact solve error, and per-frame angular
+   continuity. A warning is reviewable; an impossible reach, dislocation,
+   solver stretch/error, stale proof, discontinuity, or miss is a hard failure.
+6. Click **APPROVE** only after current preview and validation pass. Geometry
+   PASS proves physical targeting, not artistic quality; your visual review is
+   still authoritative.
+7. Open the collapsed **TARGET DETAILS**, **WEAPON GEOMETRY**, **TRAJECTORY /
+   CONTROL POINTS**, **BODY STYLE**, **SOLVER / REACH**, or **VALIDATION
+   TOLERANCES** sections only when needed. Direct orange-control editing remains
+   available in the viewport. **LEGACY / PROCEDURAL DRAFTING** retains the
+   existing eight body-first generators.
+8. After human review, optionally **PROMOTE TO MOTION MASTER**. Promotion is
+   explicit. Existing 5.4.0 promoted masters and approved Actions are never
+   silently rebuilt with 5.4.1 defaults.
 
 Built-in starters are marked geometry valid, not artist approved. A numeric
 PASS proves target contact, ACTIVE timing, plane tolerance, and direction; it
@@ -333,7 +337,8 @@ root lunge. The target is an authored launch relationship, not runtime homing:
 after commitment the baked path is fixed and a player can dodge.
 
 The approved Action stores `dreadstone.offensive_motion_recipe.v1`, current
-`dreadstone.offensive_motion_validation.v1`, and a small optional
+`dreadstone.offensive_motion_validation.v1`,
+`dreadstone.offensive_motion_pose_health.v1`, and a small optional
 `dreadstone.offensive_targeting.v1` sidecar record. The established
 `dreadstone.offensive_action.v1` combat ID, socket, weapon class, commitment,
 and WINDUP/ACTIVE/RECOVERY contract remains unchanged. Helpers live only in
@@ -347,40 +352,46 @@ body-first drafts; **Apply Sliders / Refresh Draft**, **Preview Attack**, and
 migrated. Motion Studio does not require old approved Actions to gain target
 proof retroactively.
 
-### Exact Dread Ram God one-hand overhead acceptance
+### Exact 5.4.1 Natural attack acceptance
 
-Use this manual review before calling the milestone artistically complete:
+For every case, select the canonical humanoid, open **OFFENSIVE MOTION STUDIO**,
+set **Feel = Natural** and **Target Distance = Auto**, click **BUILD NATURAL
+ATTACK**, then use **Jump To Contact**, **PREVIEW**, and **VALIDATE**. Require a
+current geometry PASS and no pose-health failure. A warning still requires
+artist judgment.
 
-1. Open the Dread Ram God authoring `.blend`, select its canonical humanoid,
-   and open **OFFENSIVE MOTION STUDIO**.
-2. Choose **1H Overhead**, **1H Blunt / Mace**, and UPPER_TORSO (or HEAD when
-   that is the deliberate contact). Set realistic target distance and proxy
-   length/contact dimensions for the review mace.
-3. Click **BUILD FROM MOTION MASTER**, then enable Show Target, Show Weapon
-   Trail, and Show Strike Plane / Line.
-4. Click **CONTACT**. In the frozen viewport confirm the mace contact/head and
-   red strike segment physically pass through the selected mathematical target
-   volume on the vertical plane. Do not accept a pass above or beside it.
-5. Click **ANTICIPATION** and scrub WINDUP. Confirm the weapon raises clearly,
-   the silhouette reads overhead, and torso/stance support does not create an
-   impossible shoulder, inverted elbow, collapsed wrist, snap, or foot slide.
-6. Scrub the red ACTIVE trail through CONTACT. Confirm a fast downward crossing
-   rather than uniform speed or a slowdown at impact.
-7. Click **FOLLOW THROUGH**, scrub RECOVERY, and confirm the weapon exits the
-   target, carries momentum, and returns cleanly without a spine discontinuity.
-8. Click **PREVIEW**, then **VALIDATE BAKED PATH**. Require PASS for actual
-   baked FK ACTIVE contact, intended CONTACT, vertical descent, plane tolerance,
-   unchanged socket, no scale channels, exact skeleton, and IN_PLACE root.
-9. If the motion also passes human visual review, click **APPROVE**. Export
-   through the ordinary Animation Pack or Complete Damage path and clean-
-   reimport to confirm no `DSB_MS_*` helpers and the unchanged 21-bone rig.
-10. Only after that review, optionally click **PROMOTE TO MOTION MASTER** and
-    build it on a second compatible humanoid to confirm the target-relative
-    solver workflow.
+1. **Sword Overhead → Head:** choose 1H Overhead / 1H Blade / Head. Confirm a
+   compact raised guard, bent elbow, modest body support, a blade-led chopping
+   arc to the yellow top-surface anchor, target entry during ACTIVE, visible
+   follow-through, and controlled recovery. Reject a hand telescoped above the
+   head, a nearly vertical tip-down plunge, a shoulder wrench, or a snap.
+2. **Sword Overhead → Upper Torso:** change only Target to Upper Torso and
+   rebuild. Confirm the same readable chop at a naturally adapted distance;
+   the blade may meet the torso with any selected point inside the visible red
+   strike segment.
+3. **Mace Overhead → Upper Torso:** change Weapon to 1H Blunt / Mace. Confirm
+   the visible head/contact region leads, the shaft/hand relationship is clear,
+   and the result feels heavier but controlled. The mace does not use a sliding
+   blade contact point.
+4. **Sword Thrust → Center Mass:** choose 1H Thrust / 1H Blade / Center Mass.
+   Confirm a small chamber that does not yank the wrist far behind the torso,
+   forward-aligned blade, bent-to-comfortable extension, tip contact at the
+   front entry surface, modest penetration, and smooth retraction.
+5. **RTL and LTR Slash → Upper Torso:** build both starters with 1H Blade.
+   Confirm each crosses the side-surface anchor in its named direction, uses a
+   moderate side-to-side path and torso response, and exits without an elbow
+   flip or violent twist.
 
-Record visual defects as manual acceptance failures even when geometric tests
-pass. The decisive proof is a believable body supporting a baked mace path that
-actually descends through the authored target during ACTIVE.
+At CONTACT, keep target volume, yellow intended surface anchor, proxy
+tip/head/strike segment, and magenta baked closest point visible. Before
+approval verify the Pose Health details: Natural arm extension should remain
+below the 92% warning threshold, deform-arm translation should be effectively
+zero, solve error must stay within tolerance, and no one-frame chain
+discontinuity may be reported. Export through Animation Pack or Complete Damage
+and clean-reimport to confirm no `DSB_MS_*` helper and the unchanged 21-bone
+runtime rig. Record visual defects as failures even when automated geometry
+passes; the decisive standard is restrained, connected, smooth, reachable,
+believable motion that is still physically aimed at the target.
 
 Click **Create / Repair Runtime Hand Sockets** after `DSB_DAMAGE_RIG` exists.
 Forge creates managed artist-adjustable Empty helpers on `arm_right_hand` and

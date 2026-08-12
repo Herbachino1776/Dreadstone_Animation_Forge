@@ -28,7 +28,7 @@ from .deformation import gltf_validation
 
 AUTHORING_SCHEMA = "dreadstone.damage_authoring.v1"
 AUTHORING_VERSION = (3, 9, 1)
-AUTHORING_BUILD_ID = "2026-08-12.offensive-motion-studio.1"
+AUTHORING_BUILD_ID = "2026-08-12.offensive-motion-studio-natural.1"
 READINESS_SCHEMA = "dreadstone.damage_readiness.v1"
 READINESS_REVISION_REQUIRED = "hierarchical_weight_partition_v3.16.3"
 STATE_TEXT_NAME = "DSB_DAMAGE_AUTHORING_STATE.json"

@@ -1,198 +1,231 @@
 # Offensive Motion Studio contract
 
-Forge release: `5.4.0`
+Forge release: `5.4.1`
 
 ## Product law
 
-The weapon path defines the attack. The body supports that path. Motion Studio
-authors in canonical character-local space (`+Y` forward, `+Z` up, X lateral):
+The 5.4 weapon-first architecture is unchanged:
 
 ```text
 TARGET
-→ WEAPON TRAJECTORY
-→ TEMPORARY CONSTRAINED BODY SOLVE
-→ CANONICAL FK BAKE
-→ ACTUAL BAKED SOCKET/PROXY SAMPLING
-→ PREVIEW
-→ APPROVAL
-→ OPTIONAL MASTER PROMOTION
+-> WEAPON PATH
+-> BODY SOLVE
+-> FK BAKE
+-> BAKED WEAPON PATH VALIDATION
+-> PREVIEW
+-> APPROVAL
 ```
 
-Forge does not implement collision, AI, hit decisions, weapon assets, damage,
-or runtime homing. The target dummy is the relationship for which the animation
-was authored. Before commitment a game may later use the optional launch
-envelope; after commitment the baked animation follows its fixed path and a
-moving player can dodge.
+Forge 5.4.1 adds an equally strict naturalism law: a valid hit must be achieved
+through the intact character chain, never through IK stretch or local
+dislocation of shoulder, upper arm, lower arm, or hand. The body supports the
+weapon path with restrained continuous motion. The weapon still has to contact
+the authored target during ACTIVE on the intended family, plane, and direction.
 
-## Versioned records
+Motion Studio authors in canonical character-local space (`+Y` forward, `+Z`
+up, `+X` anatomical right). It does not implement collision, hit decisions,
+runtime tracking/homing, weapon assets, or damage. After commitment the baked
+path is fixed and a moving target can dodge.
 
-- `dreadstone.offensive_motion_recipe.v1` — persistent per-Action authoring
-  provenance: master, target, proxy, trajectory controls, timing, style, solve,
-  contact frame, and tolerances.
-- `dreadstone.offensive_motion_master.v1` — reusable target-relative weapon
-  trajectory plus defaults. Built-in starters are `BUILT_IN_STARTER`, geometry
-  valid, and explicitly not artist approved. Deliberate promotion creates an
-  artist-approved `PROMOTED_MASTER`.
-- `dreadstone.offensive_motion_master_library.v1` — `.blend`-resident promoted
-  master collection.
-- `dreadstone.offensive_motion_validation.v1` — report for the current baked FK
-  Action and a digest of the trajectory-critical inputs.
-- `dreadstone.offensive_targeting.v1` — small optional runtime companion handoff
-  describing where the attack was authored to connect.
+## Quick Natural workflow and expert access
 
-The established `dreadstone.offensive_action.v1` combat identity, phase,
-commitment, socket, weapon-class, duration, and root-motion contract is
-unchanged. Legacy `dreadstone.offensive_recipe.v1` remains supported and is
-also stamped on Motion Studio Actions for existing authoring integrations.
+The default panel exposes Attack, Weapon, Target, Feel, Target Distance, Build,
+Jump To Contact, Preview, status, Validate, and Approve. `NATURAL` is the default
+Feel; `SUBTLE` and `FORCEFUL` change secondary style behavior without changing
+combat identity, target law, trajectory family, contact correctness, or socket
+contracts. **RESET TO NATURAL** restores the complete restrained style preset.
 
-## Target model and math
+Target details, weapon geometry, trajectory/control points, body style,
+solver/reach, and validation tolerances remain available in collapsed expert
+sections. Orange controls remain directly editable in the viewport. The eight
+existing body-first generators remain under LEGACY / PROCEDURAL DRAFTING.
 
-Editable target properties are height, forward distance, lateral offset,
-target zone, torso radius, zone half-height, head radius, and custom sphere
-height/radius. Zone centers are height-relative defaults, not Dreadstone player
-truth:
+## Versioned records and compatibility
 
-- HEAD: `0.90 × targetHeight`, sphere;
-- UPPER_TORSO: `0.72 × targetHeight`, vertical capsule;
-- CENTER_MASS: `0.58 × targetHeight`, vertical capsule;
-- LOW_TORSO: `0.44 × targetHeight`, vertical capsule;
-- CUSTOM: explicit height and sphere radius.
+- `dreadstone.offensive_motion_recipe.v1` stores per-Action target, proxy,
+  trajectory, timing, style, solver, reach policy, tolerances, contact frame,
+  Feel, and provenance.
+- `dreadstone.offensive_motion_master.v1` stores a reusable target-relative
+  path. The five revised starters carry built-in revision
+  `5.4.1-natural.1` without changing their stable combat Action IDs.
+- `dreadstone.offensive_motion_master_library.v1` stores promoted masters.
+- `dreadstone.offensive_motion_validation.v1` proves the current baked FK
+  socket/proxy path and its trajectory-critical digest.
+- `dreadstone.offensive_motion_pose_health.v1` reports reach and pose safety.
+- `dreadstone.offensive_targeting.v1` remains the optional non-homing runtime
+  launch companion.
 
-Capsule intersection uses the exact closest distance between the weapon strike
-segment and the capsule axis minus target and proxy radii. Sphere intersection
-uses closest point on the weapon segment. THRUST deliberately uses the proxy's
-tip/primary contact point rather than accepting an incidental shaft overlap.
-Viewport wire volumes use the same centers, radii, and capsule half-heights as
-validation.
+The established `dreadstone.offensive_action.v1`, runtime socket calibration,
+phases, weapon class, commitment, root-motion policy, Animation Library, and
+Complete Damage sidecars remain compatible. Existing approved Actions and
+5.4.0 promoted artist masters are not rewritten on load. Copy-on-write
+SHARED / INHERITED / OVERRIDE / REVERT TO SHARED / EDIT SHARED family behavior
+is unchanged; an editable override clears stale validation and pose proof.
 
-## Weapon proxy
+## Target volumes and surface contact
 
-The proxy is an authoring measurement, not an art asset. Supported classes are
-`ONE_HAND_BLADE`, `ONE_HAND_BLUNT`, `SHORT_BLADE`, and architecture-ready
-`TWO_HAND_GENERIC`. Every proxy defines grip, local +Y weapon axis, total
-length, strike-segment start/end, grip-to-primary-contact distance, and optional
-head/contact radius. Proxy objects are parented beneath the existing managed
-hand socket. Motion Studio never alters socket calibration.
+Target zones retain the exact sphere/capsule geometry introduced in 5.4:
 
-## Trajectory and CONTACT
+- HEAD: sphere at `0.90 * targetHeight`;
+- UPPER_TORSO: vertical capsule at `0.72 * targetHeight`;
+- CENTER_MASS: vertical capsule at `0.58 * targetHeight`;
+- LOW_TORSO: vertical capsule at `0.44 * targetHeight`;
+- CUSTOM: explicit sphere height/radius.
 
-Each trajectory contains ordered START, ANTICIPATION, PRE_CONTACT, CONTACT,
-POST_CONTACT, FOLLOW_THROUGH, and END controls. Controls store a target-space
-contact-point position and weapon-axis orientation; monotone frame timing and
-cubic Hermite interpolation produce a smooth editable path. CONTACT is placed
-at the intended target center in starters and remains the principal inspection
-frame.
+CONTACT now means first meaningful impact rather than target-center burial.
+Recipes support `ENTRY_SURFACE`, `TOP_SURFACE`, `SIDE_SURFACE`, and `CENTER`.
+Surface anchors use the same authored volume as validation with a 2 mm numeric
+inset so a sampled first impact is unambiguously intersecting. Thrust defaults
+to the front entry surface, overhead to the top surface, and opposite slashes
+to their appropriate entry side. ACTIVE may then continue through the volume.
+HEAD overhead therefore begins at the head's upper impact surface rather than
+at the skull center.
 
-Trajectory families define expected geometry and direction:
+The viewport shows target volume and center, the yellow intended surface
+anchor, proxy contact geometry, orange controls, strike plane/line, phase-
+colored baked trail, and magenta actual baked closest/contact location.
 
-- `HORIZONTAL`: target-centered horizontal plane and lateral direction;
-- `DIAGONAL_DOWN`: target-centered forward plane and high-to-low direction;
-- `OVERHEAD_VERTICAL`: target-centered sagittal plane and descending direction;
-- `THRUST`: target-centered line and canonical-forward direction;
-- `CUSTOM`: artist-controlled direction without a built-in plane gate.
+## Weapon proxy and contact selection
 
-The viewport shows the target volumes, intended plane/line, weapon proxy,
-orange pose controls, CONTACT marker, phase-colored weapon trail (blue WINDUP,
-red ACTIVE, green RECOVERY), ACTIVE bounds, target center, and closest approach.
+Proxies remain authoring measurements under the neutral managed hand socket.
+Motion Studio never rotates or recalibrates the runtime socket.
 
-## Solve and FK bake
+- `ONE_HAND_BLUNT` shows grip, shaft, and head/contact region. The fixed primary
+  head distance leads contact.
+- `ONE_HAND_BLADE` shows grip, guard, blade direction, tip, and legal strike
+  segment. Slash, overhead, and diagonal Auto Fit choose one constant point
+  within that segment for the attack, preferring comfortable arm posture while
+  preserving the target and authored orientation. Contact never slides outside
+  the segment or races independently along it per frame.
+- `SHORT_BLADE` uses the same blade rule with shorter dimensions.
+- `THRUST` keeps the forward tip/primary contact point fixed; an incidental
+  shaft overlap is not accepted as the thrust hit.
 
-The one-hand solve creates a temporary desired hand/grip target and elbow pole.
-A temporary IK constraint solves the shoulder/upper-arm/lower-arm chain without
-stretch. Temporary two-bone foot targets and knee poles keep both canonical feet
-planted while hips and stance support the strike. The evaluated matrices are
-copied back to ordinary pose bones; the hand matrix is aligned so the unchanged
-runtime socket places the proxy on the desired grip/axis. Hips, spine, chest,
-stance, wrist, and elbow-pole placement provide secondary style support.
+Weapon-class axis profiles prevent one arbitrary orientation from controlling
+every proxy. Normal sword overhead/slash CONTACT is forward-diagonal across the
+target and reads as a chop/arc, not a vertical tip-down plunge. Its ready pose,
+anticipation, contact, and recovery axes form a continuous arc. Thrust remains
+primarily forward. Blunt profiles keep the mace head visibly leading.
 
-Every authored frame is keyed on the existing Skin & Bones semantic mapping.
-Constraints and temporary solve objects are removed immediately. The bake
-asserts exact 21-bone rest/inventory identity, no scale F-Curves, and IN_PLACE
-root translation. Runtime GLBs contain only normal canonical FK animation.
+## Natural Auto Fit and arm reach
 
-## Baked-path validation
+Auto Fit is applied by default to built-in starters. It measures the selected
+canonical upper-arm and lower-arm rest lengths, derives shoulder-to-wrist
+maximum geometric reach, and uses these character-specific thresholds:
 
-Validation samples the real evaluated hand pose, the existing managed socket
-local transform, and the configured proxy from the baked Action. It never
-trusts only the pre-bake control path. ACTIVE is sampled at 0.25-frame steps;
-WINDUP and RECOVERY at no coarser than 0.5 frame.
+- comfortable reach: `88%` of straight arm-chain reach;
+- near-lock warning: above `92%`;
+- hard reachable limit: `98.5%`.
 
-Default documented tolerances are:
+Target distance is searched from the actual character, selected target,
+trajectory family, proxy, and socket. Blade contact is also searched inside the
+legal strike segment. The score prefers the Natural arm-extension target,
+avoids both locked and excessively folded elbows, and, for thrusts, avoids a
+wrist chamber pulled behind the torso. Built-in target distance is therefore a
+seed/provenance value, not a fixed humanoid truth.
 
-- maximum strike plane/line deviation: `0.12 m`;
-- expected direction dot product: at least `0.60`;
-- intended contact navigation window: `2 frames` (the current gate requires
-  actual intersection at the sampled CONTACT state, not merely proximity);
-- overhead descending contribution: at least `60%` of ACTIVE displacement;
-- thrust forward contribution: at least `72%`;
-- horizontal lateral contribution: at least `72%`.
+For a contract-compatible humanoid whose measured arm is shorter than the
+canonical tuning fixture, Auto Fit proportionally compacts non-CONTACT starter
+excursions around the unchanged target-surface CONTACT point (down to a bounded
+64% scale). This prevents a compact-looking weapon control path from folding
+the wrist through the shoulder on a smaller arm while preserving the authored
+target, surface anchor, family, and direction. The applied scale is recorded in
+recipe provenance.
 
-The report includes target contact, ACTIVE contact, intended CONTACT
-intersection, contact time/frame, target clearance or miss distance, closest
-points, plane error, actual/expected directions, and family-specific ratios.
-WINDUP intersection, remaining buried throughout RECOVERY, wrong direction,
-overhead lateral sweeps, and lateral “thrusts” fail. These tolerances constrain
-geometry; they are not an assertion of artistic beauty.
+If no candidate stays inside the hard limit, build fails with actionable text
+such as `TARGET REQUIRES 103% ARM EXTENSION. Move target 0.14 m closer or use
+AUTO FIT.` Forge does not enlarge the target, relax geometry, or translate a
+hand to hide an unreachable relationship.
 
-## Invalidation and approval
+## Arm, shoulder, and body solve
 
-The validation input digest covers the full Motion recipe (target dimensions
-and transform, target zone, proxy, controls, family, contact/timing, solver,
-style, and tolerances), all Action curve samples, the selected runtime socket
-record, and the canonical skeleton/rest matrices. Any material change makes the
-saved proof stale. Entering an editable draft or creating a Character Variant
-override also clears preview, validation, targeting, and approval proof.
+Temporary arm IK owns the anatomical upper arm and lower arm (`chain length 2`)
+with stretch disabled. Shoulder/clavicle support is applied separately and is
+capped at `4 degrees`; it is never an emergency extension link. Wrist position
+comes from the evaluated arm chain. Hand orientation is applied at that solved
+endpoint, so an imperfect orientation/contact solve is reported instead of
+moving the canonical hand away from its parent endpoint.
 
-Motion Studio approval requires current offensive metadata and phases, recipe,
-preview digest, PASS baked validation, ACTIVE and intended CONTACT
-intersection, optional targeting record, compatible socket, exact skeleton,
-no scale channels, and current FK bake recipe digest. Errors lead with useful
-geometry, for example: `Weapon contact point missed UPPER_TORSO by 0.18 m
-during ACTIVE.` Human approval remains authoritative for motion quality.
+The canonical shoulder, upper arm, lower arm, and hand are rotation-driven for
+Motion Studio. Their local locations are neither meaningfully changed nor
+keyed. Other Forge systems retain their existing explicit location policies;
+this is not a global ban on location channels. Root remains IN_PLACE for these
+starters. Runtime sockets remain unchanged.
 
-## Motion Masters and Animation Library
+Body support uses a family-specific C1 smoothstep envelope over START,
+ANTICIPATION, PRE_CONTACT, CONTACT, POST_CONTACT, FOLLOW_THROUGH, and END. It
+passes continuously from the small opposite preload into modest strike support
+and declining follow-through; there is no sign/state flip at CONTACT. Natural
+torso, stance, knee compression, and planted-foot response are intentionally
+small. Forceful may add support but remains subject to the same hard reach,
+translation, solve, and continuity gates.
 
-Five starter masters ship: 1H slash right-to-left, 1H slash left-to-right, 1H
-overhead, 1H heavy diagonal, and 1H thrust. They reuse the existing combat
-Action IDs. An approved reviewed Motion Studio Action can be explicitly
-promoted. Promotion converts its absolute controls back to target-relative
-controls, records source Action/clip provenance, and adds it to the `.blend`
-master library. Building that master on another compatible humanoid runs the
-weapon-first solver again instead of copying raw arm rotations. Ordinary
-approved Actions remain managed by the existing Animation Library.
+## Natural starter behavior
 
-## Character Variant Families
+All five built-ins use compact, segment-bounded smooth interpolation and modest
+target-relative controls:
 
-Shared and inherited Actions retain one shared Motion recipe and validation.
-Motion Studio refuses to replace an existing saved/inherited logical attack.
-The artist must use the existing EDIT, CREATE VARIANT OVERRIDE, or confirmed
-EDIT SHARED workflow. A variant override clones only that Action and its Motion
-record, becomes a draft, and clears preview/validation/targeting. REVERT TO
-SHARED deletes the variant-owned Action and all embedded Motion state with it.
+- Right-to-left and left-to-right slashes keep their opposite direction but
+  reduce lateral windup/follow-through and torso whip.
+- Overhead uses a compact raised/back anticipation, top-surface first impact,
+  forward-diagonal blade chop or head-led mace contact, modest descent, and
+  controlled recovery. HEAD selection does not turn it into a thrust.
+- Heavy diagonal is more committed but keeps a reachable hand, proxy-specific
+  anticipation orientation, and restrained follow-through.
+- Thrust uses a roughly 0.30 m maximum contact-point chamber rather than the
+  5.4 giant withdrawal, forward tip contact at the entry surface, modest
+  penetration, and smooth retraction.
 
-## Helpers, save/reopen, and export
+Trajectory interpolation is smoothstep-linear between authored controls. It is
+C1 at controls and segment-bounded, preventing the cubic overshoot that could
+fold or overextend the shoulder even when control points themselves looked
+reasonable.
 
-All target, proxy, controls, path, plane, and solve helpers are owned by
-`DSB_OFFENSIVE_MOTION_STUDIO`, stamped preview-only with the
-`offensive_motion_studio_helper` authoring role, and excluded from Animation
-Pack and Complete Damage membership. They never become bones or skin joints.
-Creation is idempotent, repair reconstructs from the saved Action recipe, and
-remove affects helpers only. A scene session record allows missing helpers to
-be reconstructed after load; recipes, validation, promotion provenance, and
-helpers themselves persist in `.blend` files.
+## FK bake and pose health
 
-Complete Damage continues to stage temporary zero-time Action clones exactly as
-in 5.2.2. The optional targeting record contains only target zone/offset,
-preferred distance/contact height, axis tolerances, trajectory family, contact
-time, and proxy reach. No helper, IK, tracking, homing, collision, or hit result
-is exported.
+Temporary constraints/helpers are removed after every-frame FK bake. The bake
+asserts exact canonical bone inventory/rest matrices, no scale F-Curves, no
+starter root translation, and no deform-arm location curves. Pose health tracks:
 
-## Compatibility and limits
+- maximum arm extension ratio and minimum elbow bend;
+- maximum bounded shoulder support and torso contribution;
+- maximum unexpected deform-chain translation;
+- maximum per-frame wrist/contact solve error;
+- maximum world-space frame-to-frame angular change and responsible bone/frame.
 
-The eight body-first generators remain unchanged under LEGACY / PROCEDURAL
-DRAFTING. Existing 5.2.x/5.3 Actions and recipes are not migrated or newly
-required to pass target validation. This release polishes one-hand solving;
-`TWO_HAND_GENERIC` establishes proxy/schema architecture but does not claim a
-production two-hand constrained solve. Numeric geometry validates contact, not
-human aesthetic quality; Dread Ram God and the mace overhead require the manual
-acceptance in the User Workflow Guide.
+Hard failures include extension beyond 98.5%, deform translation above
+`0.0001 m`, wrist/contact solve error above `0.015 m`, shoulder support beyond
+the cap, an FK angular step above `45 degrees`, target miss, wrong trajectory
+family/direction, or stale proof. Warnings include extension above 92%, a near-
+locked elbow, high shoulder/torso support, and angular steps above 30 degrees.
+Natural built-ins are expected to remain below the warning reach threshold on
+the canonical acceptance humanoid.
+
+## Baked-path validation and approval
+
+Validation samples the evaluated hand, unchanged socket local transform, and
+configured proxy from the baked Action, not merely the desired controls. ACTIVE
+sampling remains 0.25 frame with exact target/proxy intersection, intended
+CONTACT, plane/line error, direction, overhead descent, thrust forward travel,
+windup/recovery checks, and input digest. Existing default geometric tolerances
+remain `0.12 m` plane/line error, `0.60` direction dot, and a two-frame CONTACT
+navigation window; geometry is not loosened to accommodate naturalism.
+
+Approval requires current recipe, pose health without hard failure, PASS baked
+geometry, ACTIVE and intended CONTACT, current preview proof, compatible socket,
+exact skeleton, no forbidden scale/deform location curves, and current bake
+digest. Promotion remains deliberate and target-relative.
+
+## Helpers, export, and limits
+
+All `DSB_MS_*` target, proxy, control, trail, plane, and solver objects are
+preview-only members of `DSB_OFFENSIVE_MOTION_STUDIO`; they can be repaired
+after reopen and never export as GLB nodes, bones, skin joints, collision, or
+runtime tracking. Complete Damage continues to use zero-time temporary Action
+clones without mutating source Actions.
+
+This release refines production one-hand starters. `TWO_HAND_GENERIC` remains
+schema/proxy architecture, not a claimed two-hand constrained solve. Numeric
+geometry and pose-health metrics catch known failures; they do not establish
+artistic quality. The manual Sword Head/Torso Overhead, Mace Overhead, Thrust,
+and opposite Slash reviews in the User Workflow Guide remain mandatory.

@@ -9,9 +9,10 @@
    mode-aware vertex/face selection and rollback, Stamp alternatives, hybrid
    1.0 + 1.0 components, cohesive Surface Gore macros, distributed nucleus
    geometry, VIP animation edit/overwrite/delete, portable clip compatibility,
-   adaptive Blueprint reuse, validation, export, and clean reimport. For 5.4,
-   also run the Motion Studio overhead/opposite-slash/thrust FK-bake acceptance
-   and manually review Dread Ram God's one-hand mace overhead.
+   adaptive Blueprint reuse, validation, export, and clean reimport. For 5.4.1,
+   also run the Natural Motion Studio sword/mace overhead, opposite-slash,
+   thrust, reach, pose-health, and FK-bake acceptance and manually review the
+   five documented attack workflows.
    Follow `docs/USER_WORKFLOW_GUIDE.md` as the authoritative user procedure.
 5. Run `python scripts/build_release.py` twice and require identical SHA-256
    hashes.
@@ -22,7 +23,7 @@
 
 ## Documentation definition of done
 
-- [x] Version and `Dreadstone_Animation_Forge_v5_4_0.zip` match everywhere.
+- [x] Version and `Dreadstone_Animation_Forge_v5_4_1.zip` match everywhere.
 - [x] Creature Anatomy Profile schema/detection/orientation/persistence tests,
       the exact humanoid mapping comparison, malformed quadruped cases, and
       extracted-ZIP Blender registration pass.

@@ -404,6 +404,20 @@ def main():
     settings.motion_target_distance = 0.62
     motion_result = offensive_motion_studio.build_from_master(context)
     require(motion_result["validation"]["status"] == "PASS", motion_result["validation"].get("errors"))
+    motion_pose_health = offensive_motion.read_json(
+        motion_result["action"],
+        offensive_motion.MOTION_POSE_HEALTH_PROPERTY,
+        "Motion Studio pose health",
+    )
+    require(motion_pose_health["status"] in {"PASS", "WARN"}, motion_pose_health.get("errors"))
+    require(
+        motion_pose_health["maximumArmExtensionRatio"] < 0.92,
+        f"Complete Damage fixture Natural overhead reached {motion_pose_health['maximumArmExtensionRatio']:.1%}.",
+    )
+    require(
+        motion_pose_health["maximumDeformTranslationMeters"] <= 0.0001,
+        "Complete Damage fixture Motion Studio attack translated the deform arm.",
+    )
     offensive_motion_studio.preview_motion(context, start_playback=False)
     motion_action = addon.approve_draft_action(context, "ATTACK_OVERHEAD_ONE_HAND")
     runtime_actions.append(motion_action)
@@ -845,6 +859,8 @@ def main():
         "offensivePhaseContractPreserved": True,
         "offensiveTargetingExported": True,
         "motionStudioHelperCountExcluded": len(motion_helpers),
+        "motionStudioNaturalMaxArmExtension": motion_pose_health["maximumArmExtensionRatio"],
+        "motionStudioDeformTranslationMeters": motion_pose_health["maximumDeformTranslationMeters"],
         "runtimeSocketContractPreserved": True,
         "sourceProvenancePreserved": True,
         "sourceActionsPreserved": True,

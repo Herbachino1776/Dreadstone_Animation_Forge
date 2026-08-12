@@ -140,9 +140,12 @@ def _parent_local(obj, parent, matrix=None):
 
 def _basis_from_y(axis):
     y_axis = Vector(axis).normalized()
-    reference = Vector((0.0, 0.0, 1.0))
+    # Global X is stable through ordinary overhead arcs, including the moment
+    # the weapon axis passes near vertical. The old Z reference switched basis
+    # branches there and could inject a one-frame wrist roll.
+    reference = Vector((1.0, 0.0, 0.0))
     if abs(y_axis.dot(reference)) > 0.94:
-        reference = Vector((1.0, 0.0, 0.0))
+        reference = Vector((0.0, 0.0, 1.0))
     x_axis = y_axis.cross(reference).normalized()
     z_axis = x_axis.cross(y_axis).normalized()
     return Matrix((x_axis, y_axis, z_axis)).transposed()
@@ -290,6 +293,23 @@ def _build_target_helpers(armature, action, recipe):
     center = motion.target_zone_center(target)
     marker = _empty("DSB_MS_TARGET_CENTER", "TARGET_CENTER", action=action, display="SPHERE", size=0.045, color=(1.0, 1.0, 0.0, 1.0))
     _parent_local(marker, armature, Matrix.Translation(center))
+    proxy_radius = float(recipe["proxy"]["headRadiusMeters"] if recipe["proxy"]["class"] == "ONE_HAND_BLUNT" else 0.015)
+    anchor = motion.target_contact_anchor(
+        target,
+        recipe["trajectory"].get("contactAnchor", "CENTER"),
+        recipe["trajectory"]["expectedDirectionLocal"],
+        proxy_radius=proxy_radius,
+    )
+    contact_marker = _empty(
+        "DSB_MS_TARGET_CONTACT_ANCHOR",
+        "TARGET_CONTACT_ANCHOR",
+        action=action,
+        display="CUBE",
+        size=0.065,
+        color=(1.0, 0.78, 0.02, 1.0),
+    )
+    _parent_local(contact_marker, armature, Matrix.Translation(anchor))
+    contact_marker["dsb_motion_contact_anchor"] = str(recipe["trajectory"].get("contactAnchor", "CENTER"))
     return root
 
 
@@ -381,6 +401,25 @@ def _build_proxy_helpers(armature, action, recipe):
             color=(0.55, 0.58, 0.62, 1.0),
         )
         _parent_local(head, socket, Matrix.Translation((0.0, float(proxy["gripToContactMeters"]), 0.0)))
+    else:
+        tip = _empty(
+            "DSB_MS_PROXY_TIP",
+            "PROXY_TIP",
+            action=action,
+            display="CONE",
+            size=0.05,
+            color=(1.0, 0.72, 0.05, 1.0),
+        )
+        _parent_local(tip, socket, Matrix.Translation((0.0, float(proxy["lengthMeters"]), 0.0)))
+        guard = _curve(
+            "DSB_MS_PROXY_GUARD",
+            "PROXY_GUARD",
+            [[(-0.09, 0.035, 0.0), (0.09, 0.035, 0.0)]],
+            action=action,
+            bevel=0.009,
+            color=(0.70, 0.55, 0.18, 1.0),
+        )
+        _parent_local(guard, socket)
     return socket
 
 
@@ -598,14 +637,33 @@ def motion_master_updated(settings, context):
         settings.motion_proxy_strike_start = float(proxy["strikeSegmentStartMeters"])
         settings.motion_proxy_strike_end = float(proxy["strikeSegmentEndMeters"])
         settings.motion_proxy_head_radius = float(proxy["headRadiusMeters"])
+        settings.motion_feel = str(master.get("feel", "CUSTOM"))
+        settings.motion_target_distance_mode = "AUTO" if master["state"] == "BUILT_IN_STARTER" else "MANUAL"
         settings.motion_trajectory_family = master["trajectory"]["family"]
         settings.motion_windup_seconds = float(master["timing"]["windupSeconds"])
         settings.motion_active_seconds = float(master["timing"]["activeSeconds"])
         settings.motion_recovery_seconds = float(master["timing"]["recoverySeconds"])
         for name in motion.DEFAULT_STYLE:
             setattr(settings, "motion_style_" + _style_property_suffix(name), float(master["style"][name]))
+        solver = dict(motion.DEFAULT_SOLVER)
+        solver.update(master.get("solver", {}))
+        settings.motion_solver_pole_side = float(solver["poleSideMeters"])
+        settings.motion_solver_pole_back = float(solver["poleBackMeters"])
+        settings.motion_solver_torso_support = float(solver["torsoSupport"])
+        settings.motion_reach_comfortable_ratio = float(solver["comfortableReachRatio"])
+        settings.motion_reach_warning_ratio = float(solver["warningReachRatio"])
+        settings.motion_reach_hard_ratio = float(solver["hardReachRatio"])
+        settings.motion_shoulder_support_max_degrees = float(solver["maxShoulderSupportDegrees"])
+        tolerances = dict(motion.DEFAULT_TOLERANCES)
+        tolerances.update(master.get("tolerances", {}))
+        settings.motion_tolerance_plane_error = float(tolerances["planeErrorMeters"])
+        settings.motion_tolerance_contact_window = float(tolerances["contactFrameWindowFrames"])
+        settings.motion_tolerance_direction_dot = float(tolerances["directionDotMinimum"])
+        settings.motion_tolerance_sampling_step = float(tolerances["activeSamplingStepFrames"])
     finally:
         _SETTINGS_GUARD = False
+    settings.motion_pose_health_status = "POSE HEALTH — STALE; build selected master"
+    settings.motion_pose_health_detail = ""
     invalidate_active_session(context, "Motion Master changed")
 
 
@@ -615,7 +673,61 @@ def _style_property_suffix(name):
 
 def motion_setting_updated(_settings, context):
     if not _SETTINGS_GUARD:
+        _settings.motion_pose_health_status = "POSE HEALTH — STALE; rebuild body solve"
+        _settings.motion_pose_health_detail = ""
         invalidate_active_session(context, "Motion Studio input changed")
+
+
+def motion_style_updated(settings, context):
+    global _SETTINGS_GUARD
+    if _SETTINGS_GUARD:
+        return
+    _SETTINGS_GUARD = True
+    try:
+        settings.motion_feel = "CUSTOM"
+    finally:
+        _SETTINGS_GUARD = False
+    settings.motion_pose_health_status = "POSE HEALTH — STALE; rebuild body solve"
+    settings.motion_pose_health_detail = ""
+    invalidate_active_session(context, "Custom Motion Studio body style changed")
+
+
+def motion_feel_updated(settings, context):
+    global _SETTINGS_GUARD
+    if _SETTINGS_GUARD:
+        return
+    preset = motion.STYLE_PRESETS.get(str(settings.motion_feel))
+    if preset is None:
+        motion_setting_updated(settings, context)
+        return
+    _SETTINGS_GUARD = True
+    try:
+        for name, value in preset.items():
+            setattr(settings, "motion_style_" + _style_property_suffix(name), float(value))
+    finally:
+        _SETTINGS_GUARD = False
+    settings.motion_pose_health_status = "POSE HEALTH — STALE; rebuild body solve"
+    settings.motion_pose_health_detail = ""
+    invalidate_active_session(context, "Motion feel changed")
+
+
+def motion_proxy_updated(settings, context):
+    global _SETTINGS_GUARD
+    if _SETTINGS_GUARD:
+        return
+    proxy = motion.proxy_defaults(str(settings.motion_proxy_class))
+    _SETTINGS_GUARD = True
+    try:
+        settings.motion_proxy_length = float(proxy["lengthMeters"])
+        settings.motion_proxy_contact = float(proxy["gripToContactMeters"])
+        settings.motion_proxy_strike_start = float(proxy["strikeSegmentStartMeters"])
+        settings.motion_proxy_strike_end = float(proxy["strikeSegmentEndMeters"])
+        settings.motion_proxy_head_radius = float(proxy["headRadiusMeters"])
+    finally:
+        _SETTINGS_GUARD = False
+    settings.motion_pose_health_status = "POSE HEALTH — STALE; rebuild body solve"
+    settings.motion_pose_health_detail = ""
+    invalidate_active_session(context, "Weapon proxy class changed")
 
 
 def motion_display_updated(settings, _context):
@@ -640,6 +752,7 @@ def invalidate_action(action, reason="Motion Studio input changed"):
         return False
     for name in (
         motion.MOTION_VALIDATION_PROPERTY,
+        motion.MOTION_POSE_HEALTH_PROPERTY,
         motion.TARGETING_PROPERTY,
         "dsb_motion_preview_digest",
         "dsb_offensive_previewed_before_approval",
@@ -703,30 +816,82 @@ def _settings_timing(settings):
     }
 
 
+def _settings_solver(settings):
+    return {
+        **motion.DEFAULT_SOLVER,
+        "poleSideMeters": float(settings.motion_solver_pole_side),
+        "poleBackMeters": float(settings.motion_solver_pole_back),
+        "torsoSupport": float(settings.motion_solver_torso_support),
+        "comfortableReachRatio": float(settings.motion_reach_comfortable_ratio),
+        "warningReachRatio": float(settings.motion_reach_warning_ratio),
+        "hardReachRatio": float(settings.motion_reach_hard_ratio),
+        "maxShoulderSupportDegrees": float(settings.motion_shoulder_support_max_degrees),
+    }
+
+
+def _settings_tolerances(settings):
+    return {
+        "planeErrorMeters": float(settings.motion_tolerance_plane_error),
+        "contactFrameWindowFrames": float(settings.motion_tolerance_contact_window),
+        "directionDotMinimum": float(settings.motion_tolerance_direction_dot),
+        "activeSamplingStepFrames": float(settings.motion_tolerance_sampling_step),
+    }
+
+
 def _recipe_from_master_settings(settings, master):
     recipe = motion.instantiate_motion_recipe(
         master,
         target=_settings_target(settings),
         proxy=_settings_proxy(settings),
         style=_settings_style(settings),
+        solver=_settings_solver(settings),
+        tolerances=_settings_tolerances(settings),
     )
+    recipe["feel"] = str(settings.motion_feel)
     recipe["timing"] = _settings_timing(settings)
     recipe["trajectory"]["family"] = str(settings.motion_trajectory_family)
     return recipe
 
 
 def _update_recipe_from_settings(recipe, settings):
-    old_center = motion.target_zone_center(recipe["target"])
+    old_proxy = recipe["proxy"]
+    old_radius = float(old_proxy["headRadiusMeters"] if old_proxy["class"] == "ONE_HAND_BLUNT" else 0.015)
+    anchor_kind = str(recipe["trajectory"].get("contactAnchor", "CENTER"))
+    old_center = motion.target_contact_anchor(
+        recipe["target"], anchor_kind, recipe["trajectory"]["expectedDirectionLocal"], proxy_radius=old_radius
+    )
     new_target = _settings_target(settings)
-    new_center = motion.target_zone_center(new_target)
+    new_proxy = _settings_proxy(settings)
+    new_radius = float(new_proxy["headRadiusMeters"] if new_proxy["class"] == "ONE_HAND_BLUNT" else 0.015)
+    new_center = motion.target_contact_anchor(
+        new_target, anchor_kind, recipe["trajectory"]["expectedDirectionLocal"], proxy_radius=new_radius
+    )
     delta = motion.subtract(new_center, old_center)
     recipe["target"] = new_target
-    recipe["proxy"] = _settings_proxy(settings)
+    proxy_changed = str(old_proxy["class"]) != str(new_proxy["class"])
+    recipe["proxy"] = new_proxy
     recipe["style"] = _settings_style(settings)
+    recipe["feel"] = str(settings.motion_feel)
+    recipe["solver"] = _settings_solver(settings)
+    recipe["tolerances"] = _settings_tolerances(settings)
     recipe["timing"] = _settings_timing(settings)
     recipe["trajectory"]["family"] = str(settings.motion_trajectory_family)
     for control in recipe["trajectory"]["controls"]:
         control["contactPointLocal"] = [round(value, 7) for value in motion.add(control["contactPointLocal"], delta)]
+        if proxy_changed:
+            control["contactDistanceMeters"] = round(
+                motion.default_contact_distance(new_proxy, recipe["trajectory"]["family"]), 7
+            )
+    if proxy_changed:
+        master = motion.BUILTIN_MOTION_MASTERS.get(str(recipe.get("motionMasterId", "")))
+        profile = (
+            master.get("trajectory", {}).get("weaponAxesByProxy", {}).get(str(new_proxy["class"]), {})
+            if master is not None
+            else {}
+        )
+        for control in recipe["trajectory"]["controls"]:
+            if control["id"] in profile:
+                control["weaponAxisLocal"] = [round(value, 7) for value in motion.normalize(profile[control["id"]])]
     return recipe
 
 
@@ -906,45 +1071,230 @@ def validation_input_digest(armature, action, recipe):
     )
 
 
+def _arm_reach_context(armature, mapping, recipe):
+    suffix = "r" if recipe["solver"]["arm"] == "RIGHT" else "l"
+    upper = armature.pose.bones[mapping["upper_arm_" + suffix]]
+    lower = armature.pose.bones[mapping["lower_arm_" + suffix]]
+    model = motion.arm_reach_model(
+        float(upper.bone.length),
+        float(lower.bone.length),
+        comfortable_ratio=float(recipe["solver"].get("comfortableReachRatio", 0.88)),
+        warning_ratio=float(recipe["solver"].get("warningReachRatio", 0.92)),
+        hard_ratio=float(recipe["solver"].get("hardReachRatio", 0.985)),
+    )
+    return suffix, upper, lower, model
+
+
+def _desired_hand_matrix(recipe, pose, socket_local):
+    axis = Vector(pose["weaponAxisLocal"]).normalized()
+    contact = Vector(pose["contactPointLocal"])
+    contact_distance = float(
+        pose.get(
+            "contactDistanceMeters",
+            motion.default_contact_distance(recipe["proxy"], recipe["trajectory"]["family"]),
+        )
+    )
+    grip = contact - axis * contact_distance
+    desired_socket = _basis_from_y(axis).to_4x4()
+    desired_socket.translation = grip
+    return desired_socket @ socket_local.inverted_safe()
+
+
+def _shift_target_distance(recipe, distance):
+    candidate = deepcopy(recipe)
+    old_target = candidate["target"]
+    old_radius = float(candidate["proxy"]["headRadiusMeters"] if candidate["proxy"]["class"] == "ONE_HAND_BLUNT" else 0.015)
+    anchor_kind = str(candidate["trajectory"].get("contactAnchor", "CENTER"))
+    old_anchor = motion.target_contact_anchor(
+        old_target,
+        anchor_kind,
+        candidate["trajectory"]["expectedDirectionLocal"],
+        proxy_radius=old_radius,
+    )
+    candidate["target"] = deepcopy(old_target)
+    candidate["target"]["distanceMeters"] = float(distance)
+    new_anchor = motion.target_contact_anchor(
+        candidate["target"],
+        anchor_kind,
+        candidate["trajectory"]["expectedDirectionLocal"],
+        proxy_radius=old_radius,
+    )
+    delta = motion.subtract(new_anchor, old_anchor)
+    for control in candidate["trajectory"]["controls"]:
+        control["contactPointLocal"] = [round(value, 7) for value in motion.add(control["contactPointLocal"], delta)]
+    return candidate
+
+
+def _fit_blade_contact_distances(recipe, shoulder, reach_model):
+    if recipe["trajectory"]["family"] == "THRUST" or recipe["proxy"]["class"] == "ONE_HAND_BLUNT":
+        fixed = float(recipe["proxy"]["gripToContactMeters"])
+        for control in recipe["trajectory"]["controls"]:
+            control["contactDistanceMeters"] = fixed
+        return recipe
+    proxy = recipe["proxy"]
+    segment_start = float(proxy["strikeSegmentStartMeters"])
+    segment_end = float(proxy["strikeSegmentEndMeters"])
+    maximum_reach = float(reach_model["maximumGeometricReachMeters"])
+    target_ratio = motion.clamp(float(recipe["style"].get("armExtension", 0.87)), 0.78, 0.90)
+    warning_ratio = float(reach_model["warningReachRatio"])
+    preferred = motion.default_contact_distance(proxy, recipe["trajectory"]["family"])
+    best = None
+    for index in range(65):
+        distance = segment_start + (segment_end - segment_start) * (index / 64.0)
+        ratios = [
+            (Vector(control["contactPointLocal"]) - Vector(control["weaponAxisLocal"]).normalized() * distance - Vector(shoulder)).length
+            / max(maximum_reach, 1.0e-8)
+            for control in recipe["trajectory"]["controls"]
+        ]
+        contact_ratio = ratios[motion.CONTROL_IDS.index("CONTACT")]
+        score = abs(contact_ratio - target_ratio) * 3.0
+        score += max(0.0, max(ratios) - warning_ratio) * 140.0
+        score += max(0.0, 0.36 - min(ratios)) * 8.0
+        score += abs(distance - preferred) * 0.01
+        record = (score, distance)
+        if best is None or record[0] < best[0]:
+            best = record
+    selected = round(float(best[1]), 7)
+    # One legal point on the blade is selected for the attack. Sliding that
+    # point independently at every control made the wrist race along the blade
+    # during recovery and could flip the elbow branch.
+    for control in recipe["trajectory"]["controls"]:
+        control["contactDistanceMeters"] = selected
+    return recipe
+
+
+def _desired_reach_samples(recipe, socket_local, shoulder, reach_model, fps):
+    schedule = motion.control_frame_schedule(recipe, fps)
+    values = []
+    frame = float(schedule["START"])
+    while frame <= float(schedule["END"]) + 1.0e-6:
+        pose = motion.interpolate_trajectory(recipe, frame, schedule)
+        desired = _desired_hand_matrix(recipe, pose, socket_local)
+        requirement = motion.reach_requirement(shoulder, desired.translation, reach_model)
+        values.append({
+            "frame": frame,
+            "wristPositionLocal": [float(value) for value in desired.translation],
+            **requirement,
+        })
+        frame += 0.5
+    return values, schedule
+
+
+def auto_fit_recipe(armature, mapping, recipe, socket_local, fps):
+    """Adapt target distance and blade contact point to this character's arm."""
+
+    _suffix, upper, _lower, reach_model = _arm_reach_context(armature, mapping, recipe)
+    shoulder = Vector(upper.bone.head_local)
+    recipe = deepcopy(recipe)
+    # Starter controls were tuned on the canonical acceptance arm (about
+    # 0.777 m shoulder-to-wrist). Scale only the excursion around CONTACT for
+    # shorter characters; the target surface, attack family, and CONTACT itself
+    # remain exact. This keeps compact windup/recovery arcs from consuming the
+    # entire reach budget on a smaller but contract-compatible humanoid.
+    arm_scale = float(reach_model["maximumGeometricReachMeters"]) / 0.7767385
+    excursion_scale = (
+        1.0
+        if arm_scale >= 0.98
+        else motion.clamp(arm_scale * 0.92, 0.64, 0.96)
+    )
+    if excursion_scale < 0.999:
+        contact_point = Vector(next(
+            control["contactPointLocal"]
+            for control in recipe["trajectory"]["controls"]
+            if control["id"] == "CONTACT"
+        ))
+        for control in recipe["trajectory"]["controls"]:
+            point = Vector(control["contactPointLocal"])
+            control["contactPointLocal"] = [
+                round(float(value), 7)
+                for value in contact_point + (point - contact_point) * excursion_scale
+            ]
+        recipe.setdefault("provenance", {})["autoFitExcursionScale"] = round(excursion_scale, 6)
+    family = str(recipe["trajectory"]["family"])
+    minimum, maximum = ((0.68, 1.80) if family == "THRUST" else (0.50, 1.10))
+    target_ratio = motion.clamp(
+        float(recipe["style"].get("armExtension", 0.87)),
+        0.76,
+        float(reach_model["warningReachRatio"]) - 0.01,
+    )
+    best = None
+    steps = int(round((maximum - minimum) / 0.01))
+    for index in range(steps + 1):
+        distance = minimum + index * 0.01
+        candidate = _shift_target_distance(recipe, distance)
+        _fit_blade_contact_distances(candidate, shoulder, reach_model)
+        samples, schedule = _desired_reach_samples(candidate, socket_local, shoulder, reach_model, fps)
+        maximum_ratio = max(value["extensionRatio"] for value in samples)
+        minimum_ratio = min(value["extensionRatio"] for value in samples)
+        contact_sample = min(samples, key=lambda value: abs(value["frame"] - schedule["CONTACT"]))
+        contact_ratio = float(contact_sample["extensionRatio"])
+        warning_target = float(reach_model["warningReachRatio"]) - 0.008
+        score = abs(contact_ratio - target_ratio) * 4.0
+        score += max(0.0, maximum_ratio - warning_target) * 160.0
+        score += max(0.0, 0.70 - contact_ratio) * 8.0
+        # A path that folds the wrist into the shoulder is as unnatural as one
+        # that overextends it and can make a two-bone IK branch flip.
+        score += max(0.0, 0.34 - minimum_ratio) * 12.0
+        if family == "THRUST":
+            contact_wrist_y = float(contact_sample["wristPositionLocal"][1])
+            minimum_wrist_y = min(float(value["wristPositionLocal"][1]) for value in samples)
+            score += max(0.0, 0.22 - contact_wrist_y) * 22.0
+            score += max(0.0, 0.04 - minimum_wrist_y) * 10.0
+        if maximum_ratio > float(reach_model["hardReachRatio"]):
+            score += 1000.0 + (maximum_ratio - float(reach_model["hardReachRatio"])) * 1000.0
+        score -= distance * 0.002
+        record = (score, candidate, maximum_ratio, contact_ratio, samples)
+        if best is None or record[0] < best[0]:
+            best = record
+    _score, fitted, maximum_ratio, contact_ratio, samples = best
+    worst = max(samples, key=lambda value: value["extensionRatio"])
+    if maximum_ratio > float(reach_model["hardReachRatio"]) + 1.0e-6:
+        over = max(0.0, float(worst["distanceMeters"]) - float(reach_model["hardReachMeters"]))
+        raise RuntimeError(
+            f"TARGET REQUIRES {maximum_ratio * 100.0:.0f}% ARM EXTENSION. "
+            f"Move target {over:.2f} m closer or use AUTO FIT with a more compact trajectory "
+            f"(worst frame {float(worst['frame']):.1f})."
+        )
+    fitted.setdefault("provenance", {})["autoFit"] = {
+        "mode": "CHARACTER_ARM_REACH",
+        "targetDistanceMeters": round(float(fitted["target"]["distanceMeters"]), 6),
+        "maximumDesiredExtensionRatio": round(float(maximum_ratio), 6),
+        "contactExtensionRatio": round(float(contact_ratio), 6),
+    }
+    return fitted, reach_model
+
+
 def _apply_body_support(armature, mapping, settings, recipe, frame, schedule):
     from . import rotate, rotate_local
 
     style = recipe["style"]
     torso = float(style["torsoPower"]) * float(recipe["solver"]["torsoSupport"])
     stance = float(style["stanceCompression"])
-    start = float(schedule["START"])
-    contact = float(schedule["CONTACT"])
-    end = float(schedule["END"])
-    if frame <= contact:
-        progress = (float(frame) - start) / max(contact - start, 1.0)
-        power = -math.sin(progress * math.pi * 0.5) * float(style["anticipation"])
-    else:
-        progress = (float(frame) - contact) / max(end - contact, 1.0)
-        power = (
-            math.cos(progress * math.pi * 0.5)
-            * float(style["followThrough"])
-            * (1.0 - progress + progress * float(style["recovery"]))
-        )
+    power = motion.body_support_envelope(recipe, frame, schedule)
     family = recipe["trajectory"]["family"]
     fwd, side, up = (Vector((0.0, 1.0, 0.0)), Vector((-1.0, 0.0, 0.0)), Vector((0.0, 0.0, 1.0)))
     if family == "OVERHEAD_VERTICAL":
         lift = max(0.0, -power)
         descend = max(0.0, power)
-        rotate(armature, mapping, "hips", side, (5.0 * lift - 7.0 * descend) * torso)
-        rotate(armature, mapping, "spine", side, (8.0 * lift - 11.0 * descend) * torso)
-        rotate(armature, mapping, "chest", side, (13.0 * lift - 18.0 * descend) * torso)
+        rotate(armature, mapping, "hips", side, (3.0 * lift - 4.0 * descend) * torso)
+        rotate(armature, mapping, "spine", side, (5.0 * lift - 6.5 * descend) * torso)
+        rotate(armature, mapping, "chest", side, (7.5 * lift - 9.5 * descend) * torso)
     elif family in {"HORIZONTAL", "DIAGONAL_DOWN"}:
         direction = -1.0 if recipe["trajectory"]["expectedDirectionLocal"][0] < 0 else 1.0
-        rotate(armature, mapping, "hips", up, direction * power * 6.0 * torso)
-        rotate(armature, mapping, "spine", up, direction * power * 10.0 * torso)
-        rotate(armature, mapping, "chest", up, direction * power * 16.0 * torso)
+        rotate(armature, mapping, "hips", up, direction * power * 3.5 * torso)
+        rotate(armature, mapping, "spine", up, direction * power * 6.0 * torso)
+        rotate(armature, mapping, "chest", up, direction * power * 9.0 * torso)
         if family == "DIAGONAL_DOWN":
-            rotate(armature, mapping, "chest", side, -abs(power) * 8.0 * torso)
+            rotate(armature, mapping, "chest", side, -abs(power) * 4.5 * torso)
     elif family == "THRUST":
-        rotate(armature, mapping, "hips", side, -power * 3.0 * torso)
-        rotate(armature, mapping, "spine", side, -power * 6.0 * torso)
-        rotate(armature, mapping, "chest", side, -power * 10.0 * torso)
-    knee = abs(power) * 5.0 * stance
+        rotate(armature, mapping, "hips", side, -power * 2.0 * torso)
+        rotate(armature, mapping, "spine", side, -power * 3.5 * torso)
+        rotate(armature, mapping, "chest", side, -power * 5.5 * torso)
+    shoulder_role = "shoulder_r" if recipe["solver"]["arm"] == "RIGHT" else "shoulder_l"
+    shoulder_limit = float(recipe["solver"].get("maxShoulderSupportDegrees", 4.0))
+    shoulder_support = motion.clamp(power * 7.0 * torso, -shoulder_limit, shoulder_limit)
+    rotate(armature, mapping, shoulder_role, side if family in {"OVERHEAD_VERTICAL", "THRUST"} else up, shoulder_support)
+    knee = abs(power) * 3.0 * stance
     rotate(armature, mapping, "thigh_l", side, -knee)
     rotate(armature, mapping, "thigh_r", side, -knee)
     rotate(armature, mapping, "shin_l", side, knee * 1.5)
@@ -955,16 +1305,11 @@ def _apply_body_support(armature, mapping, settings, recipe, frame, schedule):
 
 def _solve_hand_ik(context, armature, mapping, recipe, pose, socket_local, solver_target, pole_target):
     arm_suffix = "r" if recipe["solver"]["arm"] == "RIGHT" else "l"
-    shoulder_bone = armature.pose.bones[mapping["shoulder_" + arm_suffix]]
     upper = armature.pose.bones[mapping["upper_arm_" + arm_suffix]]
     lower = armature.pose.bones[mapping["lower_arm_" + arm_suffix]]
     hand = armature.pose.bones[mapping["hand_" + arm_suffix]]
-    axis = Vector(pose["weaponAxisLocal"]).normalized()
     contact = Vector(pose["contactPointLocal"])
-    grip = contact - axis * float(recipe["proxy"]["gripToContactMeters"])
-    desired_socket = _basis_from_y(axis).to_4x4()
-    desired_socket.translation = grip
-    desired_hand = desired_socket @ socket_local.inverted_safe()
+    desired_hand = _desired_hand_matrix(recipe, pose, socket_local)
     solver_target.matrix_world = armature.matrix_world @ Matrix.Translation(desired_hand.translation)
     shoulder = upper.head.copy()
     elbow_side = 1.0 if arm_suffix == "r" else -1.0
@@ -982,20 +1327,23 @@ def _solve_hand_ik(context, armature, mapping, recipe, pose, socket_local, solve
     constraint.chain_count = int(recipe["solver"]["ikChainLength"])
     constraint.use_stretch = False
     context.view_layer.update()
-    shoulder_matrix = shoulder_bone.matrix.copy()
     upper_matrix = upper.matrix.copy()
     lower_matrix = lower.matrix.copy()
     lower.constraints.remove(constraint)
-    shoulder_bone.matrix = shoulder_matrix
-    context.view_layer.update()
     upper.matrix = upper_matrix
     context.view_layer.update()
     lower.matrix = lower_matrix
     context.view_layer.update()
-    hand.matrix = desired_hand
+    # Position is owned by the solved upper/lower arm. Only copy orientation to
+    # the hand; preserving the natural parent endpoint prevents wrist
+    # dislocation even when exact socket orientation is imperfect.
+    solved_wrist = hand.matrix.translation.copy()
+    oriented_hand = desired_hand.copy()
+    oriented_hand.translation = solved_wrist
+    hand.matrix = oriented_hand
     context.view_layer.update()
     actual_socket = hand.matrix @ socket_local
-    actual_contact = actual_socket @ Vector((0.0, float(recipe["proxy"]["gripToContactMeters"]), 0.0))
+    actual_contact = actual_socket @ Vector((0.0, float(pose["contactDistanceMeters"]), 0.0))
     error = (actual_contact - contact).length
     return error
 
@@ -1057,7 +1405,7 @@ def _set_markers(action, schedule):
 
 
 def _bake_body(context, armature, action, recipe):
-    from . import apply_animation_base_pose, key_pose, map_bones, reset_pose
+    from . import apply_animation_base_pose, map_bones, reset_pose
 
     anatomy_blender.require_generator_capability(armature, "offensive_humanoid", "Offensive Motion Studio")
     skin_and_bones.require_canonical_yplus(armature, label="Offensive Motion Studio")
@@ -1076,6 +1424,21 @@ def _bake_body(context, armature, action, recipe):
     _socket, _hand, socket_local = _socket_context(armature, role)
     fps = context.scene.render.fps / max(context.scene.render.fps_base, 0.001)
     schedule = motion.control_frame_schedule(recipe, fps)
+    _reach_suffix, reach_upper, _reach_lower, reach_model = _arm_reach_context(armature, mapping, recipe)
+    desired_samples, _desired_schedule = _desired_reach_samples(
+        recipe,
+        socket_local,
+        Vector(reach_upper.bone.head_local),
+        reach_model,
+        fps,
+    )
+    desired_worst = max(desired_samples, key=lambda value: value["extensionRatio"])
+    if float(desired_worst["extensionRatio"]) > float(reach_model["hardReachRatio"]) + 1.0e-6:
+        over = max(0.0, float(desired_worst["distanceMeters"]) - float(reach_model["hardReachMeters"]))
+        raise RuntimeError(
+            f"TARGET REQUIRES {float(desired_worst['extensionRatio']) * 100.0:.0f}% ARM EXTENSION. "
+            f"Move target {over:.2f} m closer or use AUTO FIT."
+        )
     recipe["contactFrame"] = int(schedule["CONTACT"])
     context.scene.frame_start = schedule["START"]
     context.scene.frame_end = schedule["END"]
@@ -1093,7 +1456,32 @@ def _bake_body(context, armature, action, recipe):
         foot_targets[foot_suffix] = (target, pole)
     maximum_error = 0.0
     maximum_foot_error = 0.0
+    maximum_extension_ratio = 0.0
+    minimum_elbow_bend = 180.0
+    maximum_shoulder_support = 0.0
+    maximum_torso_contribution = 0.0
+    maximum_deform_translation = 0.0
+    maximum_angular_step = 0.0
+    maximum_angular_step_bone = ""
+    maximum_angular_step_frame = 0
+    maximum_angular_step_extension = 0.0
+    maximum_angular_step_points = {}
     previous_quaternions = {}
+    previous_world_quaternions = {}
+    # Neither deform arm receives local translation curves. The active chain is
+    # solved by rotation; the support arm has no reason to carry zero-valued
+    # location channels either.
+    deform_roles = {
+        role_name
+        for arm_side in ("l", "r")
+        for role_name in (
+            "shoulder_" + arm_side,
+            "upper_arm_" + arm_side,
+            "lower_arm_" + arm_side,
+            "hand_" + arm_side,
+        )
+        if role_name in mapping
+    }
     try:
         for frame in range(schedule["START"], schedule["END"] + 1):
             context.scene.frame_set(frame)
@@ -1110,6 +1498,34 @@ def _bake_body(context, armature, action, recipe):
                 maximum_error,
                 _solve_hand_ik(context, armature, mapping, recipe, pose, socket_local, solver_target, pole_target),
             )
+            shoulder_point = Vector(armature.pose.bones[mapping["upper_arm_" + suffix]].head)
+            elbow_point = Vector(armature.pose.bones[mapping["lower_arm_" + suffix]].head)
+            wrist_point = Vector(armature.pose.bones[mapping["hand_" + suffix]].head)
+            requirement = motion.reach_requirement(shoulder_point, wrist_point, reach_model)
+            maximum_extension_ratio = max(maximum_extension_ratio, float(requirement["extensionRatio"]))
+            minimum_elbow_bend = min(
+                minimum_elbow_bend,
+                motion.elbow_bend_degrees(shoulder_point, elbow_point, wrist_point),
+            )
+            shoulder_pose = armature.pose.bones[mapping["shoulder_" + suffix]]
+            maximum_shoulder_support = max(
+                maximum_shoulder_support,
+                math.degrees(abs(float(shoulder_pose.rotation_quaternion.angle))),
+            )
+            maximum_torso_contribution = max(
+                maximum_torso_contribution,
+                *[
+                    math.degrees(abs(float(armature.pose.bones[mapping[body_role]].rotation_quaternion.angle)))
+                    for body_role in ("hips", "spine", "chest")
+                ],
+            )
+            maximum_deform_translation = max(
+                maximum_deform_translation,
+                *[
+                    float(armature.pose.bones[mapping[deform_role]].location.length)
+                    for deform_role in deform_roles
+                ],
+            )
             # Matrix decomposition may choose either quaternion hemisphere for
             # equivalent rotations.  Make every baked pose continuous before
             # key insertion so subframe playback cannot take a 360-degree arc
@@ -1121,8 +1537,34 @@ def _bake_body(context, armature, action, recipe):
                 previous = previous_quaternions.get(bone_name)
                 if previous is not None:
                     pose_bone.rotation_quaternion.make_compatible(previous)
+                world_quaternion = pose_bone.matrix.to_quaternion().normalized()
+                previous_world = previous_world_quaternions.get(bone_name)
+                if previous_world is not None:
+                    world_quaternion.make_compatible(previous_world)
+                    angular_step = math.degrees(abs(float(previous_world.rotation_difference(world_quaternion).angle)))
+                    if angular_step > maximum_angular_step:
+                        maximum_angular_step = angular_step
+                        maximum_angular_step_bone = bone_name
+                        maximum_angular_step_frame = int(frame)
+                        maximum_angular_step_extension = float(requirement["extensionRatio"])
+                        maximum_angular_step_points = {
+                            "shoulder": [round(float(value), 6) for value in shoulder_point],
+                            "elbow": [round(float(value), 6) for value in elbow_point],
+                            "wrist": [round(float(value), 6) for value in wrist_point],
+                        }
                 previous_quaternions[bone_name] = pose_bone.rotation_quaternion.copy()
-            key_pose(armature, mapping, frame)
+                previous_world_quaternions[bone_name] = world_quaternion.copy()
+            keyed = set()
+            for mapped_role, bone_name in mapping.items():
+                if bone_name in keyed:
+                    continue
+                keyed.add(bone_name)
+                pose_bone = armature.pose.bones.get(bone_name)
+                if pose_bone is None:
+                    continue
+                pose_bone.keyframe_insert("rotation_quaternion", frame=frame, group=bone_name)
+                if mapped_role not in deform_roles:
+                    pose_bone.keyframe_insert("location", frame=frame, group=bone_name)
     finally:
         for bone in armature.pose.bones:
             for constraint in list(bone.constraints):
@@ -1139,6 +1581,19 @@ def _bake_body(context, armature, action, recipe):
 
     if any(str(curve.data_path).endswith(".scale") for curve in iter_action_fcurves(action)):
         raise RuntimeError("Motion Studio FK bake created forbidden scale animation.")
+    deform_bone_names = {mapping[role] for role in deform_roles}
+    deform_location_curves = [
+        curve
+        for curve in iter_action_fcurves(action)
+        if any(curve.data_path == f'pose.bones["{bone_name}"].location' for bone_name in deform_bone_names)
+    ]
+    if deform_location_curves:
+        maximum_curve_translation = max(
+            abs(float(point.co[1]))
+            for curve in deform_location_curves
+            for point in curve.keyframe_points
+        )
+        maximum_deform_translation = max(maximum_deform_translation, maximum_curve_translation)
     root_name = mapping["root"]
     root_locations = [
         point.co[1]
@@ -1152,6 +1607,59 @@ def _bake_body(context, armature, action, recipe):
     action["dsb_motion_solver_max_foot_error_m"] = float(maximum_foot_error)
     action["dsb_motion_canonical_skeleton_digest"] = before
     action["dsb_motion_bake_recipe_digest"] = motion.stable_digest(recipe)
+    pose_errors = []
+    pose_warnings = []
+    translation_tolerance = float(recipe["solver"].get("deformTranslationToleranceMeters", 0.0001))
+    solve_tolerance = float(recipe["solver"].get("solveErrorToleranceMeters", 0.015))
+    if maximum_extension_ratio > float(reach_model["hardReachRatio"]) + 1.0e-6:
+        pose_errors.append(f"ARM REQUIRES {maximum_extension_ratio * 100.0:.0f}% EXTENSION; hard limit is {float(reach_model['hardReachRatio']) * 100.0:.1f}%.")
+    elif maximum_extension_ratio > float(reach_model["warningReachRatio"]):
+        pose_warnings.append(f"ARM EXTENSION {maximum_extension_ratio * 100.0:.0f}% — near lock.")
+    if minimum_elbow_bend < 8.0:
+        pose_warnings.append(f"ELBOW BEND {minimum_elbow_bend:.1f}° — near locked arm.")
+    if maximum_deform_translation > translation_tolerance:
+        pose_errors.append(
+            f"DEFORM ARM TRANSLATION {maximum_deform_translation:.6f} m exceeds {translation_tolerance:.6f} m."
+        )
+    if maximum_error > solve_tolerance:
+        pose_errors.append(f"WRIST / CONTACT SOLVE ERROR {maximum_error:.3f} m exceeds {solve_tolerance:.3f} m.")
+    shoulder_limit = float(recipe["solver"].get("maxShoulderSupportDegrees", 4.0))
+    if maximum_shoulder_support > shoulder_limit + 0.1:
+        pose_errors.append(f"SHOULDER SUPPORT {maximum_shoulder_support:.1f}° exceeds {shoulder_limit:.1f}° cap.")
+    elif maximum_shoulder_support > shoulder_limit * 0.80:
+        pose_warnings.append(f"SHOULDER SUPPORT HIGH — {maximum_shoulder_support:.1f}°.")
+    if maximum_torso_contribution > 18.0:
+        pose_warnings.append(f"TORSO ROTATION HIGH — {maximum_torso_contribution:.1f}°.")
+    if maximum_angular_step > 45.0:
+        pose_errors.append(
+            f"FK CHAIN DISCONTINUITY {maximum_angular_step:.1f}° in one frame "
+            f"({maximum_angular_step_bone}, frame {maximum_angular_step_frame}, "
+            f"arm extension {maximum_angular_step_extension * 100.0:.1f}%)."
+        )
+    elif maximum_angular_step > 30.0:
+        pose_warnings.append(f"FRAME ANGULAR CHANGE HIGH — {maximum_angular_step:.1f}°.")
+    pose_health = {
+        "schema": motion.MOTION_POSE_HEALTH_SCHEMA,
+        "status": "FAIL" if pose_errors else "WARN" if pose_warnings else "PASS",
+        "reachModel": {key: round(float(value), 7) for key, value in reach_model.items()},
+        "maximumArmExtensionRatio": round(maximum_extension_ratio, 7),
+        "minimumElbowBendDegrees": round(minimum_elbow_bend, 5),
+        "maximumShoulderSupportDegrees": round(maximum_shoulder_support, 5),
+        "maximumTorsoContributionDegrees": round(maximum_torso_contribution, 5),
+        "maximumDeformTranslationMeters": round(maximum_deform_translation, 8),
+        "maximumWristContactSolveErrorMeters": round(maximum_error, 8),
+        "maximumFrameAngularChangeDegrees": round(maximum_angular_step, 5),
+        "maximumFrameAngularChangeBone": maximum_angular_step_bone,
+        "maximumFrameAngularChangeFrame": maximum_angular_step_frame,
+        "maximumFrameAngularChangeExtensionRatio": round(maximum_angular_step_extension, 7),
+        "maximumFrameAngularChangeChainPoints": maximum_angular_step_points,
+        "errors": pose_errors,
+        "warnings": pose_warnings,
+    }
+    motion.stamp_json(action, motion.MOTION_POSE_HEALTH_PROPERTY, pose_health)
+    action["dsb_motion_pose_health_status"] = pose_health["status"]
+    if pose_errors:
+        raise RuntimeError("Motion Studio pose safety failed: " + " ".join(pose_errors))
     return schedule
 
 
@@ -1174,8 +1682,10 @@ def sample_baked_weapon_path(context, armature, action, recipe):
             context.view_layer.update()
             socket_matrix = hand.matrix @ socket_local
             proxy = recipe["proxy"]
+            pose = motion.interpolate_trajectory(recipe, frame, schedule)
+            contact_distance = float(pose["contactDistanceMeters"])
             grip = socket_matrix.translation
-            contact = socket_matrix @ Vector((0.0, float(proxy["gripToContactMeters"]), 0.0))
+            contact = socket_matrix @ Vector((0.0, contact_distance, 0.0))
             strike_start = socket_matrix @ Vector((0.0, float(proxy["strikeSegmentStartMeters"]), 0.0))
             strike_end = socket_matrix @ Vector((0.0, float(proxy["strikeSegmentEndMeters"]), 0.0))
             axis = (socket_matrix.to_3x3() @ Vector((0.0, 1.0, 0.0))).normalized()
@@ -1188,6 +1698,7 @@ def sample_baked_weapon_path(context, armature, action, recipe):
                 "strikeStartLocal": [float(value) for value in strike_start],
                 "strikeEndLocal": [float(value) for value in strike_end],
                 "weaponAxisLocal": [float(value) for value in axis],
+                "contactDistanceMeters": contact_distance,
             })
             frame += step if phase == "ACTIVE" else max(0.5, step)
     finally:
@@ -1239,6 +1750,16 @@ def validate_baked_action(context, action=None, *, sync_inputs=True, rebuild_vis
     digest = validation_input_digest(armature, action, recipe)
     samples = sample_baked_weapon_path(context, armature, action, recipe)
     report = motion.validate_baked_trajectory(recipe, samples, input_digest=digest)
+    pose_health = motion.read_json(action, motion.MOTION_POSE_HEALTH_PROPERTY, "Motion Studio pose health")
+    report["poseHealth"] = pose_health
+    report["warnings"] = list((pose_health or {}).get("warnings", []))
+    if pose_health is None:
+        report.setdefault("errors", []).append("Motion Studio pose-health proof is missing; rebuild the body solve.")
+        report["status"] = "FAIL"
+    elif pose_health.get("status") == "FAIL":
+        report.setdefault("errors", []).extend(str(value) for value in pose_health.get("errors", []))
+        report["status"] = "FAIL"
+    _cache_pose_health(context.scene.daf_settings, pose_health)
     _store_validation(action, report)
     if rebuild_visuals:
         build_helpers(armature, action, recipe, samples=samples, validation=report)
@@ -1266,8 +1787,87 @@ def _stamp_action_contract(action, recipe, fps):
     return metadata
 
 
+def _apply_fit_to_settings(settings, recipe):
+    global _SETTINGS_GUARD
+    _SETTINGS_GUARD = True
+    try:
+        settings.motion_target_distance = float(recipe["target"]["distanceMeters"])
+        for name, value in recipe["style"].items():
+            setattr(settings, "motion_style_" + _style_property_suffix(name), float(value))
+    finally:
+        _SETTINGS_GUARD = False
+
+
+def _cache_pose_health(settings, report):
+    if not report:
+        settings.motion_pose_health_status = "POSE HEALTH — MISSING"
+        settings.motion_pose_health_detail = "Rebuild the body solve"
+        return
+    status = str(report.get("status", "UNKNOWN"))
+    settings.motion_pose_health_status = (
+        f"POSE {status} · arm {float(report.get('maximumArmExtensionRatio', 0.0)) * 100.0:.1f}% · "
+        f"elbow {float(report.get('minimumElbowBendDegrees', 0.0)):.1f}° · "
+        f"shoulder {float(report.get('maximumShoulderSupportDegrees', 0.0)):.1f}°"
+    )
+    settings.motion_pose_health_detail = (
+        f"torso {float(report.get('maximumTorsoContributionDegrees', 0.0)):.1f}° · "
+        f"deform move {float(report.get('maximumDeformTranslationMeters', 0.0)):.6f} m · "
+        f"solve {float(report.get('maximumWristContactSolveErrorMeters', 0.0)):.4f} m · "
+        f"frame step {float(report.get('maximumFrameAngularChangeDegrees', 0.0)):.1f}°"
+    )
+
+
+def natural_fit_settings(context):
+    from . import find_armature, map_bones
+
+    settings = context.scene.daf_settings
+    master = available_masters(context.scene).get(str(settings.motion_master_id or "builtin_1h_overhead"))
+    if master is None:
+        raise RuntimeError("Choose an available Motion Master.")
+    armature = find_armature(context)
+    mapping = map_bones(armature, settings)
+    recipe = _recipe_from_master_settings(settings, master)
+    role = "MAIN_HAND_R" if recipe["solver"]["arm"] == "RIGHT" else "MAIN_HAND_L"
+    _socket, _hand, socket_local = _socket_context(armature, role)
+    fps = context.scene.render.fps / max(context.scene.render.fps_base, 0.001)
+    fitted, reach_model = auto_fit_recipe(armature, mapping, recipe, socket_local, fps)
+    _apply_fit_to_settings(settings, fitted)
+    settings.motion_target_distance_mode = "AUTO"
+    settings.motion_validation_status = (
+        f"AUTO FIT — {fitted['target']['distanceMeters']:.2f} m · "
+        f"comfortable reach {reach_model['comfortableReachMeters']:.2f} m"
+    )
+    invalidate_active_session(context, "Natural Auto Fit changed the target relationship")
+    settings.motion_pose_health_status = "POSE HEALTH — STALE; build Natural Fit"
+    settings.motion_pose_health_detail = ""
+    return {"recipe": fitted, "reachModel": reach_model}
+
+
+def reset_to_natural(context):
+    global _SETTINGS_GUARD
+    settings = context.scene.daf_settings
+    _SETTINGS_GUARD = True
+    try:
+        settings.motion_feel = "NATURAL"
+        settings.motion_target_distance_mode = "AUTO"
+        for name, value in motion.STYLE_PRESETS["NATURAL"].items():
+            setattr(settings, "motion_style_" + _style_property_suffix(name), float(value))
+        settings.motion_solver_torso_support = float(motion.DEFAULT_SOLVER["torsoSupport"])
+        settings.motion_reach_comfortable_ratio = float(motion.DEFAULT_SOLVER["comfortableReachRatio"])
+        settings.motion_reach_warning_ratio = float(motion.DEFAULT_SOLVER["warningReachRatio"])
+        settings.motion_reach_hard_ratio = float(motion.DEFAULT_SOLVER["hardReachRatio"])
+        settings.motion_shoulder_support_max_degrees = float(motion.DEFAULT_SOLVER["maxShoulderSupportDegrees"])
+    finally:
+        _SETTINGS_GUARD = False
+    invalidate_active_session(context, "Reset to Natural")
+    settings.motion_validation_status = "RESET TO NATURAL — build to apply character reach fit"
+    settings.motion_pose_health_status = "POSE HEALTH — STALE; build Natural defaults"
+    settings.motion_pose_health_detail = ""
+    return motion.STYLE_PRESETS["NATURAL"]
+
+
 def build_from_master(context):
-    from . import find_armature
+    from . import find_armature, map_bones
 
     settings = context.scene.daf_settings
     master = available_masters(context.scene).get(str(settings.motion_master_id or "builtin_1h_overhead"))
@@ -1276,14 +1876,24 @@ def build_from_master(context):
     armature = find_armature(context)
     recipe = _recipe_from_master_settings(settings, master)
     fps = context.scene.render.fps / max(context.scene.render.fps_base, 0.001)
+    if str(settings.motion_target_distance_mode) == "AUTO":
+        mapping = map_bones(armature, settings)
+        role = "MAIN_HAND_R" if recipe["solver"]["arm"] == "RIGHT" else "MAIN_HAND_L"
+        _socket, _hand, socket_local = _socket_context(armature, role)
+        recipe, _reach_model = auto_fit_recipe(armature, mapping, recipe, socket_local, fps)
+        _apply_fit_to_settings(settings, recipe)
     schedule = motion.control_frame_schedule(recipe, fps)
     recipe["contactFrame"] = int(schedule["CONTACT"])
     action = _new_or_replace_draft(context, armature, recipe["actionKind"])
     _stamp_action_contract(action, recipe, fps)
     _bake_body(context, armature, action, recipe)
+    pose_health = motion.read_json(action, motion.MOTION_POSE_HEALTH_PROPERTY, "Motion Studio pose health")
     motion.stamp_motion_recipe(action, recipe)
     action["dsb_motion_bake_recipe_digest"] = motion.stable_digest(recipe)
     animation_library.mark_draft(action, armature, settings, recipe["actionKind"])
+    motion.stamp_json(action, motion.MOTION_POSE_HEALTH_PROPERTY, pose_health)
+    action["dsb_motion_pose_health_status"] = pose_health["status"]
+    _cache_pose_health(settings, pose_health)
     settings.offensive_preview_kind = recipe["actionKind"]
     validation = validate_baked_action(context, action, sync_inputs=False, rebuild_visuals=True)
     _store_session(action, recipe)
@@ -1314,9 +1924,13 @@ def rebuild_body_solve(context):
     recipe["contactFrame"] = int(schedule["CONTACT"])
     _stamp_action_contract(action, recipe, fps)
     _bake_body(context, armature, action, recipe)
+    pose_health = motion.read_json(action, motion.MOTION_POSE_HEALTH_PROPERTY, "Motion Studio pose health")
     motion.stamp_motion_recipe(action, recipe)
     action["dsb_motion_bake_recipe_digest"] = motion.stable_digest(recipe)
     animation_library.mark_draft(action, armature, settings, recipe["actionKind"])
+    motion.stamp_json(action, motion.MOTION_POSE_HEALTH_PROPERTY, pose_health)
+    action["dsb_motion_pose_health_status"] = pose_health["status"]
+    _cache_pose_health(settings, pose_health)
     validation = validate_baked_action(context, action, sync_inputs=False, rebuild_visuals=True)
     _store_session(action, recipe)
     context.scene.frame_set(recipe["contactFrame"])
@@ -1389,6 +2003,25 @@ def approval_errors(context, action, *, armature=None):
         errors.append("APPROVAL BLOCKED: canonical skeleton inventory/rest matrices changed after the FK bake.")
     if any(str(curve.data_path).endswith(".scale") for curve in iter_action_fcurves(action)):
         errors.append("APPROVAL BLOCKED: Motion Studio Action contains scale animation.")
+    pose_health = motion.read_json(action, motion.MOTION_POSE_HEALTH_PROPERTY, "Motion Studio pose health")
+    if pose_health is None:
+        errors.append("APPROVAL BLOCKED: Motion Studio pose-health proof is missing.")
+    elif pose_health.get("status") == "FAIL":
+        errors.append("APPROVAL BLOCKED: " + str((pose_health.get("errors") or ["pose-health validation failed."])[0]))
+    deform_names = {
+        mapping_name
+        for arm_side in ("l", "r")
+        for role_name in (
+            "shoulder_" + arm_side,
+            "upper_arm_" + arm_side,
+            "lower_arm_" + arm_side,
+            "hand_" + arm_side,
+        )
+        for mapping_name in [skin_and_bones.forge_mapping(armature).get(role_name, "")]
+        if mapping_name
+    }
+    if any(curve.data_path in {f'pose.bones["{name}"].location' for name in deform_names} for curve in iter_action_fcurves(action)):
+        errors.append("APPROVAL BLOCKED: Motion Studio Action animates local translation on the deform arm chain.")
     return errors
 
 
@@ -1488,6 +2121,12 @@ def recover_sessions():
         samples = sample_baked_weapon_path(bpy.context, armature, action, recipe)
         validation = motion.read_json(action, motion.MOTION_VALIDATION_PROPERTY, "Motion Studio validation")
         build_helpers(armature, action, recipe, samples=samples, validation=validation)
+    settings = getattr(bpy.context.scene, "daf_settings", None)
+    if settings is not None:
+        _cache_pose_health(
+            settings,
+            motion.read_json(action, motion.MOTION_POSE_HEALTH_PROPERTY, "Motion Studio pose health"),
+        )
     return state
 
 
@@ -1522,6 +2161,40 @@ class _MotionOperator(Operator):
         if settings is not None:
             settings.motion_validation_status = "ERROR — " + str(exc)
         return {"CANCELLED"}
+
+
+class DAF_OT_motion_studio_natural_fit(_MotionOperator):
+    bl_idname = "daf.motion_studio_natural_fit"
+    bl_label = "Natural Auto Fit"
+    bl_description = "Measure the canonical arm and choose a comfortable target distance and legal blade contact point"
+    bl_options = {"REGISTER", "UNDO"}
+
+    def execute(self, context):
+        try:
+            result = natural_fit_settings(context)
+            self.report(
+                {"INFO"},
+                f"Natural fit: target {result['recipe']['target']['distanceMeters']:.2f} m; "
+                f"comfortable arm reach {result['reachModel']['comfortableReachMeters']:.2f} m.",
+            )
+            return {"FINISHED"}
+        except Exception as exc:
+            return self.failed(exc)
+
+
+class DAF_OT_motion_studio_reset_natural(_MotionOperator):
+    bl_idname = "daf.motion_studio_reset_natural"
+    bl_label = "Reset to Natural"
+    bl_description = "Restore restrained Natural body style and character-adaptive target fitting"
+    bl_options = {"REGISTER", "UNDO"}
+
+    def execute(self, context):
+        try:
+            reset_to_natural(context)
+            self.report({"INFO"}, "Motion Studio style reset to Natural; build to apply Auto Fit.")
+            return {"FINISHED"}
+        except Exception as exc:
+            return self.failed(exc)
 
 
 class DAF_OT_motion_studio_build_from_master(_MotionOperator):
@@ -1675,6 +2348,8 @@ class DAF_OT_motion_studio_remove_helpers(_MotionOperator):
 
 
 CLASSES = (
+    DAF_OT_motion_studio_natural_fit,
+    DAF_OT_motion_studio_reset_natural,
     DAF_OT_motion_studio_build_from_master,
     DAF_OT_motion_studio_rebuild_body_solve,
     DAF_OT_motion_studio_jump_key_pose,
@@ -1692,6 +2367,7 @@ __all__ = (
     "MOTION_STUDIO_COLLECTION",
     "MOTION_STUDIO_HELPER_ROLE",
     "approval_errors",
+    "auto_fit_recipe",
     "available_masters",
     "build_from_master",
     "build_helpers",
@@ -1700,15 +2376,20 @@ __all__ = (
     "invalidate_active_session",
     "motion_master_items",
     "motion_master_updated",
+    "motion_feel_updated",
+    "motion_proxy_updated",
+    "motion_style_updated",
     "motion_display_updated",
     "motion_setting_updated",
     "on_action_approved",
+    "natural_fit_settings",
     "preview_motion",
     "promote_current_master",
     "rebuild_body_solve",
     "recover_sessions",
     "register_handlers",
     "remove_helpers",
+    "reset_to_natural",
     "require_approval_ready",
     "sample_baked_weapon_path",
     "validate_baked_action",

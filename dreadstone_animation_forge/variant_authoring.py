@@ -622,6 +622,7 @@ def create_action_override(context, action):
             "dsb_offensive_previewed_before_approval",
             "dsb_offensive_character_recipe",
             offensive_motion.MOTION_VALIDATION_PROPERTY,
+            offensive_motion.MOTION_POSE_HEALTH_PROPERTY,
             offensive_motion.TARGETING_PROPERTY,
             "dsb_motion_preview_digest",
         ):

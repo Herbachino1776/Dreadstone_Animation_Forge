@@ -246,6 +246,11 @@ def main():
     )
     offensive_motion.stamp_json(
         shared,
+        offensive_motion.MOTION_POSE_HEALTH_PROPERTY,
+        {"schema": offensive_motion.MOTION_POSE_HEALTH_SCHEMA, "status": "PASS", "errors": [], "warnings": []},
+    )
+    offensive_motion.stamp_json(
+        shared,
         offensive_motion.TARGETING_PROPERTY,
         {"schema": offensive_motion.TARGETING_SCHEMA, "targetZone": "UPPER_TORSO"},
     )
@@ -259,6 +264,7 @@ def main():
     )
     require(
         offensive_motion.MOTION_VALIDATION_PROPERTY not in override
+        and offensive_motion.MOTION_POSE_HEALTH_PROPERTY not in override
         and offensive_motion.TARGETING_PROPERTY not in override
         and not bool(override.get("dsb_offensive_previewed", True))
         and str(override.get("dsb_motion_validation_status", "")) == "STALE",
@@ -266,6 +272,7 @@ def main():
     )
     require(
         offensive_motion.MOTION_VALIDATION_PROPERTY in shared
+        and offensive_motion.MOTION_POSE_HEALTH_PROPERTY in shared
         and offensive_motion.TARGETING_PROPERTY in shared,
         "Creating a variant override mutated shared Motion Studio provenance.",
     )

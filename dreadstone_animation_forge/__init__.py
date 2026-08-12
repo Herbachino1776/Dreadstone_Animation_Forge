@@ -1,7 +1,7 @@
 bl_info = {
     "name": "Dreadstone Animation Forge",
     "author": "Dreadstone Black",
-    "version": (5, 4, 0),
+    "version": (5, 4, 1),
     "blender": (3, 6, 0),
     "location": "3D Viewport > Sidebar > Dreadstone",
     "description": "Animation authoring, protected damage assets, and registered-region trauma-field shape-key authoring.",
@@ -1275,6 +1275,24 @@ def _motion_setting_updated(self, context):
         module.motion_setting_updated(self, context)
 
 
+def _motion_style_updated(self, context):
+    module = sys.modules.get(f"{__package__}.offensive_motion_studio")
+    if module is not None:
+        module.motion_style_updated(self, context)
+
+
+def _motion_feel_updated(self, context):
+    module = sys.modules.get(f"{__package__}.offensive_motion_studio")
+    if module is not None:
+        module.motion_feel_updated(self, context)
+
+
+def _motion_proxy_updated(self, context):
+    module = sys.modules.get(f"{__package__}.offensive_motion_studio")
+    if module is not None:
+        module.motion_proxy_updated(self, context)
+
+
 def _motion_display_updated(self, context):
     module = sys.modules.get(f"{__package__}.offensive_motion_studio")
     if module is not None:
@@ -1331,7 +1349,12 @@ class DAFSettings(PropertyGroup):
     ui_body_arm_trauma_open: BoolProperty(default=False)
     ui_compound_trauma_open: BoolProperty(default=False)
     ui_offensive_open: BoolProperty(default=True)
+    ui_motion_target_details_open: BoolProperty(default=False)
+    ui_motion_weapon_geometry_open: BoolProperty(default=False)
+    ui_motion_trajectory_open: BoolProperty(default=False)
     ui_motion_style_open: BoolProperty(default=False)
+    ui_motion_solver_open: BoolProperty(default=False)
+    ui_motion_validation_open: BoolProperty(default=False)
     ui_legacy_offensive_open: BoolProperty(default=False)
     ui_offensive_custom_open: BoolProperty(default=True)
     ui_mace_guard_open: BoolProperty(default=False)
@@ -1885,6 +1908,28 @@ class DAFSettings(PropertyGroup):
         items=_motion_master_items,
         update=_motion_master_updated,
     )
+    motion_feel: EnumProperty(
+        name="Feel",
+        description="High-level secondary motion style; target geometry and combat identity do not change",
+        items=[
+            ("SUBTLE", "Subtle", "Very restrained body support and comfortable elbow bend"),
+            ("NATURAL", "Natural", "Production default: compact, connected, and human"),
+            ("FORCEFUL", "Forceful", "More committed secondary motion within the same hard reach law"),
+            ("CUSTOM", "Custom", "Use the advanced body-style values directly"),
+        ],
+        default="NATURAL",
+        update=_motion_feel_updated,
+    )
+    motion_target_distance_mode: EnumProperty(
+        name="Target Distance",
+        description="Use measured character arm reach or keep the entered distance",
+        items=[
+            ("AUTO", "Auto (Natural Fit)", "Adapt target distance and blade contact point to this character"),
+            ("MANUAL", "Manual", "Keep the explicit target distance and enforce hard reach limits"),
+        ],
+        default="AUTO",
+        update=_motion_setting_updated,
+    )
     motion_target_zone: EnumProperty(
         name="Target Zone",
         items=[
@@ -1914,7 +1959,7 @@ class DAFSettings(PropertyGroup):
             ("TWO_HAND_GENERIC", "2H Generic (Architecture)", "Two-hand proxy representation; polished two-hand solve is future work"),
         ],
         default="ONE_HAND_BLUNT",
-        update=_motion_setting_updated,
+        update=_motion_proxy_updated,
     )
     motion_proxy_length: FloatProperty(name="Proxy Length", default=0.74, min=0.15, max=3.0, unit='LENGTH', update=_motion_setting_updated)
     motion_proxy_contact: FloatProperty(name="Grip to Contact", default=0.64, min=0.05, max=3.0, unit='LENGTH', update=_motion_setting_updated)
@@ -1936,18 +1981,31 @@ class DAFSettings(PropertyGroup):
     motion_windup_seconds: FloatProperty(name="WINDUP Seconds", default=0.58, min=0.10, max=2.50, unit='TIME', update=_motion_setting_updated)
     motion_active_seconds: FloatProperty(name="ACTIVE Seconds", default=0.26, min=0.08, max=1.00, unit='TIME', update=_motion_setting_updated)
     motion_recovery_seconds: FloatProperty(name="RECOVERY Seconds", default=0.66, min=0.10, max=3.00, unit='TIME', update=_motion_setting_updated)
-    motion_style_anticipation: FloatProperty(name="Anticipation", default=1.0, min=0.0, max=2.0, update=_motion_setting_updated)
-    motion_style_torso_power: FloatProperty(name="Torso Power", default=1.0, min=0.0, max=2.0, update=_motion_setting_updated)
-    motion_style_stance_compression: FloatProperty(name="Stance Compression", default=1.0, min=0.0, max=2.0, update=_motion_setting_updated)
-    motion_style_follow_through: FloatProperty(name="Follow Through", default=1.0, min=0.0, max=2.0, update=_motion_setting_updated)
-    motion_style_recovery: FloatProperty(name="Recovery", default=1.0, min=0.0, max=2.0, update=_motion_setting_updated)
-    motion_style_arm_extension: FloatProperty(name="Arm Extension", default=1.0, min=0.0, max=2.0, update=_motion_setting_updated)
-    motion_style_elbow_style: FloatProperty(name="Elbow Style", default=1.0, min=0.0, max=2.0, update=_motion_setting_updated)
-    motion_style_wrist_style: FloatProperty(name="Wrist Style", default=1.0, min=0.0, max=2.0, update=_motion_setting_updated)
+    motion_style_anticipation: FloatProperty(name="Anticipation", default=0.70, min=0.0, max=2.0, update=_motion_style_updated)
+    motion_style_torso_power: FloatProperty(name="Torso Power", default=0.54, min=0.0, max=2.0, update=_motion_style_updated)
+    motion_style_stance_compression: FloatProperty(name="Stance Compression", default=0.26, min=0.0, max=2.0, update=_motion_style_updated)
+    motion_style_follow_through: FloatProperty(name="Follow Through", default=0.64, min=0.0, max=2.0, update=_motion_style_updated)
+    motion_style_recovery: FloatProperty(name="Recovery", default=0.86, min=0.0, max=2.0, update=_motion_style_updated)
+    motion_style_arm_extension: FloatProperty(name="Arm Extension", default=0.87, min=0.0, max=2.0, update=_motion_style_updated)
+    motion_style_elbow_style: FloatProperty(name="Elbow Style", default=1.06, min=0.0, max=2.0, update=_motion_style_updated)
+    motion_style_wrist_style: FloatProperty(name="Wrist Style", default=0.62, min=0.0, max=2.0, update=_motion_style_updated)
+    motion_solver_pole_side: FloatProperty(name="Elbow Pole Side", default=0.36, min=0.05, max=2.0, unit='LENGTH', update=_motion_setting_updated)
+    motion_solver_pole_back: FloatProperty(name="Elbow Pole Back", default=0.08, min=-1.0, max=1.0, unit='LENGTH', update=_motion_setting_updated)
+    motion_solver_torso_support: FloatProperty(name="Torso Support", default=0.72, min=0.0, max=2.0, update=_motion_setting_updated)
+    motion_reach_comfortable_ratio: FloatProperty(name="Comfortable Reach", default=0.88, min=0.70, max=0.94, subtype='FACTOR', update=_motion_setting_updated)
+    motion_reach_warning_ratio: FloatProperty(name="Near-Lock Warning", default=0.92, min=0.70, max=0.97, subtype='FACTOR', update=_motion_setting_updated)
+    motion_reach_hard_ratio: FloatProperty(name="Hard Reach Limit", default=0.985, min=0.90, max=0.9995, subtype='FACTOR', update=_motion_setting_updated)
+    motion_shoulder_support_max_degrees: FloatProperty(name="Shoulder Support Cap (Degrees)", default=4.0, min=0.0, max=12.0, update=_motion_setting_updated)
+    motion_tolerance_plane_error: FloatProperty(name="Plane / Line Error", default=0.12, min=0.01, max=0.30, unit='LENGTH', update=_motion_setting_updated)
+    motion_tolerance_contact_window: FloatProperty(name="Contact Frame Window", default=2.0, min=0.0, max=5.0, update=_motion_setting_updated)
+    motion_tolerance_direction_dot: FloatProperty(name="Direction Dot Minimum", default=0.60, min=0.20, max=0.99, update=_motion_setting_updated)
+    motion_tolerance_sampling_step: FloatProperty(name="ACTIVE Sampling Step", default=0.25, min=0.10, max=1.0, update=_motion_setting_updated)
     motion_show_target: BoolProperty(name="Show Target", default=True, update=_motion_display_updated)
     motion_show_trail: BoolProperty(name="Show Weapon Trail", default=True, update=_motion_display_updated)
     motion_show_plane: BoolProperty(name="Show Strike Plane / Line", default=True, update=_motion_display_updated)
     motion_validation_status: StringProperty(name="Motion Studio Status", default="NO MOTION STUDIO ACTION", options={'HIDDEN'})
+    motion_pose_health_status: StringProperty(name="Pose Health", default="POSE HEALTH — NOT BUILT", options={'HIDDEN'})
+    motion_pose_health_detail: StringProperty(name="Pose Health Detail", default="", options={'HIDDEN'})
 
     # Backward-compatible body-first recipe. Values are persisted into every
     # legacy generated/approved Action rather than changing global defaults.
@@ -2191,7 +2249,7 @@ class DAFSettings(PropertyGroup):
     last_damage_manifest_path: StringProperty(default="", options={'HIDDEN'})
     last_damage_validation_path: StringProperty(default="", options={'HIDDEN'})
 
-    # Trauma Field Authoring v5.4.0.
+    # Trauma Field Authoring v5.4.1.
     deformation_region: EnumProperty(
         name="Active Region",
         items=_deformation_region_items,
@@ -7403,7 +7461,7 @@ class DAF_PT_legacy_panel(Panel):
             layout,
             s,
             "ui_deformation_authoring_open",
-            "Trauma Field Authoring v5.4.0",
+            "Trauma Field Authoring v5.4.1",
         )
         if opened:
             configure_property_box(box)

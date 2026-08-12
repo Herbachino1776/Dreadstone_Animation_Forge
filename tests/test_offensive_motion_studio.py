@@ -73,6 +73,16 @@ class TargetVolumeTests(unittest.TestCase):
             self.assertEqual("SPHERE", volume["type"])
             self.assertGreater(volume["radiusMeters"], 0.0)
 
+    def test_surface_contact_anchors_are_first_impact_not_target_center(self):
+        target = copy.deepcopy(MOTION.DEFAULT_TARGET)
+        target["zone"] = "HEAD"
+        center = MOTION.target_zone_center(target)
+        top = MOTION.target_contact_anchor(target, "TOP_SURFACE", (0.0, 0.0, -1.0), proxy_radius=0.015)
+        entry = MOTION.target_contact_anchor(target, "ENTRY_SURFACE", (0.0, 1.0, 0.0), proxy_radius=0.015)
+        self.assertGreater(top[2], center[2] + target["headRadiusMeters"])
+        self.assertLess(entry[1], center[1] - target["headRadiusMeters"])
+        self.assertAlmostEqual(center[0], top[0])
+
 
 class MotionMasterTests(unittest.TestCase):
     def test_five_builtin_starters_are_versioned_and_not_artist_approved(self):
@@ -82,6 +92,9 @@ class MotionMasterTests(unittest.TestCase):
             self.assertEqual([], MOTION.validate_motion_master(master))
             self.assertEqual("BUILT_IN_STARTER", master["state"])
             self.assertFalse(master["artistApproved"])
+            self.assertEqual("5.4.1-natural.1", master["builtInRevision"])
+            self.assertEqual("NATURAL", master["feel"])
+            self.assertEqual(2, master["solver"]["ikChainLength"])
             kinds.add(master["actionKind"])
         self.assertIn("ATTACK_OVERHEAD_ONE_HAND", kinds)
         self.assertIn("ATTACK_THRUST_ONE_HAND", kinds)
@@ -134,6 +147,92 @@ class MotionMasterTests(unittest.TestCase):
         self.assertGreater(MOTION.point_volume_distance(samples[-1]["contactPointLocal"], volume)[0] - proxy_radius, 0.0)
         self.assertTrue(thrust_report["activeContact"])
 
+    def test_natural_starters_are_compact_and_use_surface_contact(self):
+        overhead = recipe("builtin_1h_overhead")
+        thrust = recipe("builtin_1h_thrust")
+        overhead_controls = {value["id"]: value for value in overhead["trajectory"]["controls"]}
+        thrust_controls = {value["id"]: value for value in thrust["trajectory"]["controls"]}
+        overhead_anchor = MOTION.target_contact_anchor(
+            overhead["target"], "TOP_SURFACE", overhead["trajectory"]["expectedDirectionLocal"],
+            proxy_radius=overhead["proxy"]["headRadiusMeters"],
+        )
+        thrust_anchor = MOTION.target_contact_anchor(
+            thrust["target"], "ENTRY_SURFACE", thrust["trajectory"]["expectedDirectionLocal"],
+            proxy_radius=0.015,
+        )
+        for expected, actual in zip(overhead_anchor, overhead_controls["CONTACT"]["contactPointLocal"]):
+            self.assertAlmostEqual(expected, actual, places=7)
+        for expected, actual in zip(thrust_anchor, thrust_controls["CONTACT"]["contactPointLocal"]):
+            self.assertAlmostEqual(expected, actual, places=7)
+        self.assertLess(overhead_controls["ANTICIPATION"]["contactPointLocal"][2] - overhead_anchor[2], 0.45)
+        self.assertLess(
+            thrust_anchor[1] - thrust_controls["ANTICIPATION"]["contactPointLocal"][1],
+            0.35,
+        )
+
+    def test_sword_overhead_is_a_chop_not_a_vertical_plunge(self):
+        master = MOTION.BUILTIN_MOTION_MASTERS["builtin_1h_overhead"]
+        value = MOTION.instantiate_motion_recipe(
+            master,
+            target={"zone": "HEAD"},
+            proxy=MOTION.proxy_defaults("ONE_HAND_BLADE"),
+        )
+        contact = next(control for control in value["trajectory"]["controls"] if control["id"] == "CONTACT")
+        axis = MOTION.normalize(contact["weaponAxisLocal"])
+        self.assertGreater(axis[1], 0.75)
+        self.assertLess(abs(axis[2]), 0.65)
+        self.assertEqual("TOP_SURFACE", value["trajectory"]["contactAnchor"])
+        self.assertGreaterEqual(contact["contactDistanceMeters"], value["proxy"]["strikeSegmentStartMeters"])
+        self.assertLessEqual(contact["contactDistanceMeters"], value["proxy"]["strikeSegmentEndMeters"])
+
+
+class NaturalismMathTests(unittest.TestCase):
+    def test_feel_presets_change_style_not_combat_or_target_law(self):
+        master = MOTION.BUILTIN_MOTION_MASTERS["builtin_1h_overhead"]
+        natural = MOTION.instantiate_motion_recipe(master)
+        forceful = MOTION.instantiate_motion_recipe(master, style=MOTION.STYLE_PRESETS["FORCEFUL"])
+        self.assertEqual(natural["actionKind"], forceful["actionKind"])
+        self.assertEqual(natural["target"], forceful["target"])
+        self.assertEqual(natural["trajectory"], forceful["trajectory"])
+        self.assertNotEqual(natural["style"], forceful["style"])
+
+    def test_character_arm_reach_model_keeps_a_soft_and_hard_boundary(self):
+        model = MOTION.arm_reach_model(0.42, 0.36)
+        self.assertAlmostEqual(0.78, model["maximumGeometricReachMeters"])
+        self.assertAlmostEqual(0.88, model["comfortableReachRatio"])
+        self.assertAlmostEqual(0.92, model["warningReachRatio"])
+        self.assertAlmostEqual(0.985, model["hardReachRatio"])
+        self.assertEqual("COMFORTABLE", MOTION.reach_requirement((0, 0, 0), (0, 0.60, 0), model)["status"])
+        self.assertEqual("WARNING", MOTION.reach_requirement((0, 0, 0), (0, 0.73, 0), model)["status"])
+        self.assertEqual("IMPOSSIBLE", MOTION.reach_requirement((0, 0, 0), (0, 0.78, 0), model)["status"])
+
+    def test_blade_contact_selection_never_leaves_authored_segment(self):
+        proxy = MOTION.proxy_defaults("ONE_HAND_BLADE")
+        selected = MOTION.select_strike_contact_distance(
+            (0.0, 0.72, 1.62),
+            (0.0, 0.89, -0.45),
+            (0.24, 0.0, 1.43),
+            proxy,
+            0.68,
+            target_reach_meters=0.66,
+        )
+        self.assertGreaterEqual(selected, proxy["strikeSegmentStartMeters"])
+        self.assertLessEqual(selected, proxy["strikeSegmentEndMeters"])
+
+    def test_support_envelope_is_continuous_around_every_phase_key(self):
+        value = recipe("builtin_1h_overhead")
+        schedule = MOTION.control_frame_schedule(value, 24.0)
+        for key in MOTION.CONTROL_IDS[1:-1]:
+            frame = float(schedule[key])
+            left = MOTION.body_support_envelope(value, frame - 1.0e-4, schedule)
+            exact = MOTION.body_support_envelope(value, frame, schedule)
+            right = MOTION.body_support_envelope(value, frame + 1.0e-4, schedule)
+            self.assertLess(abs(left - exact), 1.0e-5, key)
+            self.assertLess(abs(right - exact), 1.0e-5, key)
+        contact = float(schedule["CONTACT"])
+        values = [MOTION.body_support_envelope(value, contact + offset, schedule) for offset in (-1.0, 0.0, 1.0)]
+        self.assertLess(max(abs(values[index + 1] - values[index]) for index in range(2)), 0.16)
+
     def test_miss_is_reported_in_meters_for_selected_zone(self):
         value = recipe("builtin_1h_overhead")
         samples = MOTION.ideal_trajectory_samples(value)
@@ -147,6 +246,22 @@ class MotionMasterTests(unittest.TestCase):
 
 
 class PersistenceAndTargetingTests(unittest.TestCase):
+    def test_540_master_and_recipe_keep_fixed_grip_contact_semantics(self):
+        legacy_master = copy.deepcopy(MOTION.BUILTIN_MOTION_MASTERS["builtin_1h_overhead"])
+        legacy_master.pop("builtInRevision", None)
+        legacy_master["state"] = "PROMOTED_MASTER"
+        legacy_master["artistApproved"] = True
+        legacy_master["proxy"] = MOTION.proxy_defaults("ONE_HAND_BLADE")
+        legacy_master["proxy"]["gripToContactMeters"] = 0.70
+        legacy_master["trajectory"].pop("weaponAxesByProxy", None)
+        value = MOTION.instantiate_motion_recipe(legacy_master)
+        self.assertTrue(all(control["contactDistanceMeters"] == 0.70 for control in value["trajectory"]["controls"]))
+        for control in value["trajectory"]["controls"]:
+            control.pop("contactDistanceMeters")
+        schedule = MOTION.control_frame_schedule(value, 24.0)
+        pose = MOTION.interpolate_trajectory(value, schedule["CONTACT"], schedule)
+        self.assertEqual(0.70, pose["contactDistanceMeters"])
+
     def test_recipe_schema_round_trip_and_critical_digest_invalidation(self):
         value = recipe("builtin_1h_overhead")
         self.assertEqual([], MOTION.validate_motion_recipe(value))
@@ -170,13 +285,11 @@ class PersistenceAndTargetingTests(unittest.TestCase):
         self.assertNotIn("guarantee", str(targeting).lower())
 
     def test_custom_targeting_tolerances_follow_the_validated_sphere(self):
-        value = recipe("builtin_1h_thrust")
-        value["target"].update({"zone": "CUSTOM", "customRadiusMeters": 0.11})
-        center = MOTION.target_zone_center(value["target"])
-        for control in value["trajectory"]["controls"]:
-            control["contactPointLocal"][2] = center[2] + (
-                0.0 if control["id"] == "CONTACT" else control["contactPointLocal"][2] - 1.044
-            )
+        value = MOTION.instantiate_motion_recipe(
+            MOTION.BUILTIN_MOTION_MASTERS["builtin_1h_thrust"],
+            target={"zone": "CUSTOM", "customRadiusMeters": 0.11},
+        )
+        value["contactFrame"] = MOTION.control_frame_schedule(value, 24.0)["CONTACT"]
         report = MOTION.validate_baked_trajectory(value, MOTION.ideal_trajectory_samples(value))
         targeting = MOTION.targeting_metadata(value, report)
         self.assertEqual(0.11, targeting["horizontalToleranceMeters"])
