@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import math
 import sys
 import tempfile
 from pathlib import Path
@@ -310,6 +311,7 @@ def main():
     )[0] - float(recipe["proxy"]["headRadiusMeters"])
     require(end_clearance > 0.0, "Overhead weapon did not leave the target by the end of recovery.")
     maximum_foot_drift = 0.0
+    maximum_foot_rotation_drift = 0.0
     for frame in range(schedule["START"], schedule["END"] + 1):
         context.scene.frame_set(frame)
         context.view_layer.update()
@@ -319,7 +321,23 @@ def main():
                 maximum_foot_drift,
                 (foot.head - foot.bone.head_local).length,
             )
+            maximum_foot_rotation_drift = max(
+                maximum_foot_rotation_drift,
+                math.degrees(abs(float(
+                    foot.bone.matrix_local.to_quaternion().rotation_difference(
+                        foot.matrix.to_quaternion()
+                    ).angle
+                ))),
+            )
     require(maximum_foot_drift < 0.01, f"Body support introduced {maximum_foot_drift:.3f} m of foot drift.")
+    require(
+        maximum_foot_rotation_drift < 1.0,
+        f"Body support rotated a planted foot {maximum_foot_rotation_drift:.1f} degrees.",
+    )
+    require(
+        overhead_pose["maximumFootRotationDriftDegrees"] < 1.0,
+        f"Pose health missed planted-foot rotation: {overhead_pose}.",
+    )
     support_values = [
         offensive_motion.body_support_envelope(recipe, schedule["CONTACT"] + offset, schedule)
         for offset in (-1, 0, 1)
@@ -551,6 +569,7 @@ def main():
         "overheadPlaneErrorMeters": overhead_report["planeErrorMeters"],
         "overheadContactTimeSeconds": overhead_report["contactTimeSeconds"],
         "maximumFootDriftMeters": maximum_foot_drift,
+        "maximumFootRotationDriftDegrees": maximum_foot_rotation_drift,
         "targetAndCurveInvalidation": True,
         "animationPackTargeting": True,
         "contactNavigationRevealsGeometry": True,

@@ -1368,17 +1368,19 @@ def _solve_hand_ik(context, armature, mapping, recipe, pose, socket_local, solve
     return error
 
 
-def _solve_planted_feet(context, armature, mapping, targets):
-    """Keep canonical feet at their rest-space anchors while hips support the strike."""
+def _solve_planted_feet(context, armature, mapping, targets, planted_matrices):
+    """Keep canonical feet at their authored base-pose transforms."""
 
     maximum_error = 0.0
+    maximum_rotation_error = 0.0
     for suffix in ("l", "r"):
         thigh = armature.pose.bones[mapping["thigh_" + suffix]]
         shin = armature.pose.bones[mapping["shin_" + suffix]]
         foot = armature.pose.bones[mapping["foot_" + suffix]]
         target, pole = targets[suffix]
-        rest_anchor = Vector(foot.bone.head_local)
-        target.matrix_world = armature.matrix_world @ Matrix.Translation(rest_anchor)
+        planted_matrix = planted_matrices[suffix]
+        planted_anchor = planted_matrix.translation.copy()
+        target.matrix_world = armature.matrix_world @ Matrix.Translation(planted_anchor)
         knee_anchor = Vector(thigh.bone.head_local)
         pole.matrix_world = armature.matrix_world @ Matrix.Translation(
             knee_anchor + Vector((0.0, 0.55, -0.25))
@@ -1397,8 +1399,20 @@ def _solve_planted_feet(context, armature, mapping, targets):
         context.view_layer.update()
         shin.matrix = shin_matrix
         context.view_layer.update()
-        maximum_error = max(maximum_error, (Vector(foot.head) - rest_anchor).length)
-    return maximum_error
+        # The leg IK owns ankle position, not foot orientation. Without this
+        # counter-rotation the terminal foot inherits the IK chain's roll and
+        # can visibly yaw 90 degrees while its head still passes drift checks.
+        solved_head = Vector(foot.head)
+        oriented_foot = planted_matrix.copy()
+        oriented_foot.translation = solved_head
+        foot.matrix = oriented_foot
+        context.view_layer.update()
+        maximum_error = max(maximum_error, (Vector(foot.head) - planted_anchor).length)
+        rotation_error = planted_matrix.to_quaternion().rotation_difference(
+            foot.matrix.to_quaternion()
+        ).angle
+        maximum_rotation_error = max(maximum_rotation_error, math.degrees(abs(float(rotation_error))))
+    return maximum_error, maximum_rotation_error
 
 
 def _set_baked_interpolation(action):
@@ -1476,6 +1490,7 @@ def _bake_body(context, armature, action, recipe):
         foot_targets[foot_suffix] = (target, pole)
     maximum_error = 0.0
     maximum_foot_error = 0.0
+    maximum_foot_rotation_error = 0.0
     maximum_extension_ratio = 0.0
     minimum_elbow_bend = 180.0
     maximum_shoulder_support = 0.0
@@ -1507,12 +1522,18 @@ def _bake_body(context, armature, action, recipe):
             context.scene.frame_set(frame)
             reset_pose(armature, mapping)
             apply_animation_base_pose(armature, mapping, "IDLE")
+            context.view_layer.update()
+            planted_foot_matrices = {
+                foot_suffix: armature.pose.bones[mapping["foot_" + foot_suffix]].matrix.copy()
+                for foot_suffix in ("l", "r")
+            }
             _apply_body_support(armature, mapping, context.scene.daf_settings, recipe, frame, schedule)
             context.view_layer.update()
-            maximum_foot_error = max(
-                maximum_foot_error,
-                _solve_planted_feet(context, armature, mapping, foot_targets),
+            foot_error, foot_rotation_error = _solve_planted_feet(
+                context, armature, mapping, foot_targets, planted_foot_matrices
             )
+            maximum_foot_error = max(maximum_foot_error, foot_error)
+            maximum_foot_rotation_error = max(maximum_foot_rotation_error, foot_rotation_error)
             pose = motion.interpolate_trajectory(recipe, frame, schedule)
             maximum_error = max(
                 maximum_error,
@@ -1625,6 +1646,7 @@ def _bake_body(context, armature, action, recipe):
         raise RuntimeError("Motion Studio starter masters must remain IN_PLACE; root translation changed.")
     action["dsb_motion_solver_max_contact_error_m"] = float(maximum_error)
     action["dsb_motion_solver_max_foot_error_m"] = float(maximum_foot_error)
+    action["dsb_motion_solver_max_foot_rotation_error_deg"] = float(maximum_foot_rotation_error)
     action["dsb_motion_canonical_skeleton_digest"] = before
     action["dsb_motion_bake_recipe_digest"] = motion.stable_digest(recipe)
     pose_errors = []
@@ -1643,6 +1665,12 @@ def _bake_body(context, armature, action, recipe):
         )
     if maximum_error > solve_tolerance:
         pose_errors.append(f"WRIST / CONTACT SOLVE ERROR {maximum_error:.3f} m exceeds {solve_tolerance:.3f} m.")
+    if maximum_foot_error > 0.01:
+        pose_errors.append(f"PLANTED FOOT DRIFT {maximum_foot_error:.3f} m exceeds 0.010 m.")
+    if maximum_foot_rotation_error > 1.0:
+        pose_errors.append(
+            f"PLANTED FOOT ROTATION DRIFT {maximum_foot_rotation_error:.1f} degrees exceeds 1.0 degree."
+        )
     shoulder_limit = float(recipe["solver"].get("maxShoulderSupportDegrees", 4.0))
     if maximum_shoulder_support > shoulder_limit + 0.1:
         pose_errors.append(f"SHOULDER SUPPORT {maximum_shoulder_support:.1f}° exceeds {shoulder_limit:.1f}° cap.")
@@ -1668,6 +1696,8 @@ def _bake_body(context, armature, action, recipe):
         "maximumTorsoContributionDegrees": round(maximum_torso_contribution, 5),
         "maximumDeformTranslationMeters": round(maximum_deform_translation, 8),
         "maximumWristContactSolveErrorMeters": round(maximum_error, 8),
+        "maximumFootDriftMeters": round(maximum_foot_error, 8),
+        "maximumFootRotationDriftDegrees": round(maximum_foot_rotation_error, 5),
         "maximumFrameAngularChangeDegrees": round(maximum_angular_step, 5),
         "maximumFrameAngularChangeBone": maximum_angular_step_bone,
         "maximumFrameAngularChangeFrame": maximum_angular_step_frame,

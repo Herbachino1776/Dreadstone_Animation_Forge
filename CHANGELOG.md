@@ -2,6 +2,9 @@
 
 ## 5.4.1
 
+- Fixed planted feet inheriting leg-IK roll and visibly turning sideways during
+  attacks; the bake now preserves the authored base-pose foot orientation and
+  fails pose health if position or rotation drifts.
 - Reorganized attacks as a macro-first **ATTACK ANIMATION VIP STUDIO**. Simple
   horizontal/vertical aim and five bounded motion macros feed one **REFRESH
   ATTACK** action; all raw target, weapon, trajectory, body, solver, validation,

@@ -160,8 +160,10 @@ ANTICIPATION, PRE_CONTACT, CONTACT, POST_CONTACT, FOLLOW_THROUGH, and END. It
 passes continuously from the small opposite preload into modest strike support
 and declining follow-through; there is no sign/state flip at CONTACT. Natural
 torso, stance, knee compression, and planted-foot response are intentionally
-small. Forceful may add support but remains subject to the same hard reach,
-translation, solve, and continuity gates.
+small. Leg IK may hold ankle position but never owns terminal foot orientation:
+each foot retains its authored IDLE base-pose transform. Position or orientation
+drift is a pose-health failure. Forceful may add support but remains subject to
+the same hard reach, translation, solve, and continuity gates.
 
 ## Natural starter behavior
 
