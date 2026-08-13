@@ -231,10 +231,13 @@ class StaticContractTests(unittest.TestCase):
     def test_motion_studio_quick_first_ui_and_advanced_sections(self) -> None:
         panels = (ROOT / "dreadstone_animation_forge" / "ui" / "panels.py").read_text(encoding="utf-8")
         for label in (
-            "QUICK NATURAL ATTACK",
-            "BUILD NATURAL ATTACK",
-            "JUMP TO CONTACT",
-            "VALIDATION STATUS",
+            "ATTACK ANIMATION VIP STUDIO",
+            "VIP MACROS",
+            "REFRESH ATTACK",
+            "ADVANCED - TRAJECTORY, BODY & SOLVER",
+            "YOUR ATTACK",
+            "CONTACT",
+            "VALIDATE",
             "TARGET DETAILS",
             "WEAPON GEOMETRY",
             "TRAJECTORY / CONTROL POINTS",

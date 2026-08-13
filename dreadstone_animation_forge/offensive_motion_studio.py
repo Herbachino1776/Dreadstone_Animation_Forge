@@ -678,6 +678,14 @@ def motion_setting_updated(_settings, context):
         invalidate_active_session(context, "Motion Studio input changed")
 
 
+def motion_macro_updated(settings, context):
+    if not _SETTINGS_GUARD:
+        settings.motion_validation_status = "VIP CHANGES READY - click REFRESH ATTACK"
+        settings.motion_pose_health_status = "POSE HEALTH - refresh required"
+        settings.motion_pose_health_detail = ""
+        invalidate_active_session(context, "VIP attack macro changed")
+
+
 def motion_style_updated(settings, context):
     global _SETTINGS_GUARD
     if _SETTINGS_GUARD:
@@ -838,6 +846,18 @@ def _settings_tolerances(settings):
     }
 
 
+def _settings_vip_macros(settings):
+    return {
+        "horizontalAim": float(settings.motion_macro_horizontal_aim),
+        "verticalAim": float(settings.motion_macro_vertical_aim),
+        "windup": float(settings.motion_macro_windup),
+        "strikePower": float(settings.motion_macro_strike_power),
+        "bodyMotion": float(settings.motion_macro_body_motion),
+        "followThrough": float(settings.motion_macro_follow_through),
+        "armRelax": float(settings.motion_macro_arm_relax),
+    }
+
+
 def _recipe_from_master_settings(settings, master):
     recipe = motion.instantiate_motion_recipe(
         master,
@@ -850,7 +870,7 @@ def _recipe_from_master_settings(settings, master):
     recipe["feel"] = str(settings.motion_feel)
     recipe["timing"] = _settings_timing(settings)
     recipe["trajectory"]["family"] = str(settings.motion_trajectory_family)
-    return recipe
+    return motion.apply_vip_macros(recipe, _settings_vip_macros(settings))
 
 
 def _update_recipe_from_settings(recipe, settings):
@@ -1857,6 +1877,13 @@ def reset_to_natural(context):
         settings.motion_reach_warning_ratio = float(motion.DEFAULT_SOLVER["warningReachRatio"])
         settings.motion_reach_hard_ratio = float(motion.DEFAULT_SOLVER["hardReachRatio"])
         settings.motion_shoulder_support_max_degrees = float(motion.DEFAULT_SOLVER["maxShoulderSupportDegrees"])
+        settings.motion_macro_horizontal_aim = float(motion.VIP_MACRO_DEFAULTS["horizontalAim"])
+        settings.motion_macro_vertical_aim = float(motion.VIP_MACRO_DEFAULTS["verticalAim"])
+        settings.motion_macro_windup = float(motion.VIP_MACRO_DEFAULTS["windup"])
+        settings.motion_macro_strike_power = float(motion.VIP_MACRO_DEFAULTS["strikePower"])
+        settings.motion_macro_body_motion = float(motion.VIP_MACRO_DEFAULTS["bodyMotion"])
+        settings.motion_macro_follow_through = float(motion.VIP_MACRO_DEFAULTS["followThrough"])
+        settings.motion_macro_arm_relax = float(motion.VIP_MACRO_DEFAULTS["armRelax"])
     finally:
         _SETTINGS_GUARD = False
     invalidate_active_session(context, "Reset to Natural")
@@ -1899,6 +1926,16 @@ def build_from_master(context):
     _store_session(action, recipe)
     context.scene.frame_set(recipe["contactFrame"])
     return {"action": action, "recipe": recipe, "validation": validation}
+
+
+def refresh_vip_attack(context, *, start_playback=True):
+    """Rebuild from the selected starter and immediately show the result."""
+
+    result = build_from_master(context)
+    result["preview"] = None
+    if result["validation"]["status"] == "PASS":
+        result["preview"] = preview_motion(context, start_playback=start_playback)
+    return result
 
 
 def rebuild_body_solve(context):
@@ -2213,6 +2250,23 @@ class DAF_OT_motion_studio_build_from_master(_MotionOperator):
             return self.failed(exc)
 
 
+class DAF_OT_motion_studio_refresh_vip(_MotionOperator):
+    bl_idname = "daf.motion_studio_refresh_vip"
+    bl_label = "Refresh VIP Attack"
+    bl_description = "Apply the simple aim and motion macros, rebuild safely, and preview the updated attack"
+    bl_options = {"REGISTER", "UNDO"}
+
+    def execute(self, context):
+        try:
+            result = refresh_vip_attack(context, start_playback=True)
+            report = result["validation"]
+            level = "INFO" if report["status"] == "PASS" else "WARNING"
+            self.report({level}, f"Refreshed {result['action'].name}; baked-path {report['status']}.")
+            return {"FINISHED"}
+        except Exception as exc:
+            return self.failed(exc)
+
+
 class DAF_OT_motion_studio_rebuild_body_solve(_MotionOperator):
     bl_idname = "daf.motion_studio_rebuild_body_solve"
     bl_label = "Rebuild Body Solve"
@@ -2351,6 +2405,7 @@ CLASSES = (
     DAF_OT_motion_studio_natural_fit,
     DAF_OT_motion_studio_reset_natural,
     DAF_OT_motion_studio_build_from_master,
+    DAF_OT_motion_studio_refresh_vip,
     DAF_OT_motion_studio_rebuild_body_solve,
     DAF_OT_motion_studio_jump_key_pose,
     DAF_OT_motion_studio_validate_baked_path,
@@ -2376,6 +2431,7 @@ __all__ = (
     "invalidate_active_session",
     "motion_master_items",
     "motion_master_updated",
+    "motion_macro_updated",
     "motion_feel_updated",
     "motion_proxy_updated",
     "motion_style_updated",
@@ -2386,6 +2442,7 @@ __all__ = (
     "preview_motion",
     "promote_current_master",
     "rebuild_body_solve",
+    "refresh_vip_attack",
     "recover_sessions",
     "register_handlers",
     "remove_helpers",

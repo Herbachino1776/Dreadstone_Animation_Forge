@@ -187,6 +187,38 @@ class MotionMasterTests(unittest.TestCase):
 
 
 class NaturalismMathTests(unittest.TestCase):
+    def test_vip_aim_macro_redirects_thrust_around_exact_contact(self):
+        base = recipe("builtin_1h_thrust")
+        tuned = MOTION.apply_vip_macros(base, {"horizontalAim": 60.0, "verticalAim": 20.0})
+        expected = tuned["trajectory"]["expectedDirectionLocal"]
+        self.assertGreater(expected[0], 0.25)
+        self.assertGreater(expected[1], 0.85)
+        contact = next(control for control in tuned["trajectory"]["controls"] if control["id"] == "CONTACT")
+        anchor = MOTION.target_contact_anchor(tuned["target"], "ENTRY_SURFACE", expected, proxy_radius=0.015)
+        for actual, wanted in zip(contact["contactPointLocal"], anchor):
+            self.assertAlmostEqual(actual, wanted, places=6)
+        report = MOTION.validate_baked_trajectory(tuned, MOTION.ideal_trajectory_samples(tuned))
+        self.assertEqual("PASS", report["status"], report["errors"])
+
+    def test_neutral_vip_macros_preserve_natural_motion_and_relaxation_is_bounded(self):
+        base = recipe("builtin_1h_overhead")
+        neutral = MOTION.apply_vip_macros(base, MOTION.VIP_MACRO_DEFAULTS)
+        self.assertEqual(base["trajectory"], neutral["trajectory"])
+        self.assertEqual(base["style"], neutral["style"])
+        relaxed = MOTION.apply_vip_macros(base, {"armRelax": 100.0, "bodyMotion": 0.0})
+        self.assertLess(relaxed["style"]["armExtension"], base["style"]["armExtension"])
+        self.assertGreater(relaxed["style"]["elbowStyle"], base["style"]["elbowStyle"])
+        self.assertLess(relaxed["solver"]["torsoSupport"], base["solver"]["torsoSupport"])
+
+    def test_vip_aim_extremes_keep_every_builtin_geometry_valid(self):
+        for master_id in MOTION.BUILTIN_MOTION_MASTERS:
+            for horizontal, vertical in ((-100.0, -100.0), (100.0, 100.0)):
+                tuned = MOTION.apply_vip_macros(
+                    recipe(master_id), {"horizontalAim": horizontal, "verticalAim": vertical}
+                )
+                report = MOTION.validate_baked_trajectory(tuned, MOTION.ideal_trajectory_samples(tuned))
+                self.assertEqual("PASS", report["status"], (master_id, report["errors"]))
+
     def test_feel_presets_change_style_not_combat_or_target_law(self):
         master = MOTION.BUILTIN_MOTION_MASTERS["builtin_1h_overhead"]
         natural = MOTION.instantiate_motion_recipe(master)

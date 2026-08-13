@@ -88,14 +88,16 @@ deliberately for reuse on another compatible humanoid. The existing eight
 body-first generators remain under LEGACY / PROCEDURAL DRAFTING. See the
 [Offensive Motion Studio contract](docs/OFFENSIVE_MOTION_STUDIO_CONTRACT.md).
 
-Forge 5.4.1 makes that workflow natural by default. Choose an Attack, Weapon,
-Target, and **Feel = Natural**, then use **BUILD NATURAL ATTACK**; character-
-specific Auto Fit places the target and selects a legal blade strike point
+Forge 5.4.1 makes that workflow natural and macro-first. In **ATTACK ANIMATION
+VIP STUDIO**, choose an Attack, Weapon, and Target; adjust simple horizontal or
+vertical aim, Windup, Strike Power, Body Motion, Follow Through, or Arm
+Relaxation, then use **REFRESH ATTACK**. Character-specific Auto Fit places the
+target and selects a legal blade strike point
 without stretching or translating the deform arm. Surface-first contact,
 class-specific sword/mace orientation, compact trajectories, continuous body
 support, and pose-health validation preserve geometric hits while keeping the
 body restrained. Expert target, proxy, trajectory, body, reach, and tolerance
-controls remain in collapsed advanced sections, and 5.4.0 artist-promoted
+controls remain behind one collapsed Advanced section, and 5.4.0 artist-promoted
 masters are never silently rewritten.
 
 ## Install and open

@@ -1657,144 +1657,120 @@ def _draw_offensive_animation_540_reference(layout, settings):
 
 
 def _draw_offensive_animation(layout, settings):
-    """5.4.1 quick-first Motion Studio UI with collapsed expert controls."""
+    """Macro-first VIP attack workflow with one expert disclosure."""
 
     offense = _animation_foldout(
-        layout, settings, "ui_offensive_open", "OFFENSIVE MOTION STUDIO", icon='ACTION'
+        layout, settings, "ui_offensive_open", "ATTACK ANIMATION VIP STUDIO", icon='ACTION'
     )
     if offense is None:
         return
-    offense.label(text="TARGET > WEAPON PATH > BODY SOLVE > FK BAKE > VALIDATE", icon='TRACKING')
+    offense.label(text="OFFENSIVE MOTION STUDIO - pick, adjust, refresh", icon='FAVORITES')
 
     quick = offense.box()
-    quick.label(text="QUICK NATURAL ATTACK", icon='ARMATURE_DATA')
+    quick.label(text="YOUR ATTACK", icon='ARMATURE_DATA')
     quick.prop(settings, "motion_master_id", text="Attack")
     quick.prop(settings, "motion_proxy_class", text="Weapon")
     quick.prop(settings, "motion_target_zone", text="Target")
-    quick.prop(settings, "motion_feel", text="Feel")
-    quick.prop(settings, "motion_target_distance_mode")
-    if settings.motion_target_distance_mode == "MANUAL":
-        quick.prop(settings, "motion_target_distance")
-    else:
-        quick.label(text=f"Auto Fit preview distance: {settings.motion_target_distance:.2f} m", icon='CONSTRAINT_BONE')
-    fit_row = quick.row(align=True)
-    fit_row.operator("daf.motion_studio_natural_fit", text="AUTO FIT", icon='CONSTRAINT_BONE')
-    fit_row.operator("daf.motion_studio_reset_natural", text="RESET TO NATURAL", icon='LOOP_BACK')
-    quick.operator(
-        "daf.motion_studio_build_from_master",
-        text="BUILD NATURAL ATTACK" if settings.motion_feel == "NATURAL" else "BUILD ATTACK",
-        icon='ARMATURE_DATA',
-    )
+    macros = offense.box()
+    macros.label(text="VIP MACROS", icon='MODIFIER')
+    macros.prop(settings, "motion_macro_horizontal_aim", text="Horizontal Aim  (Left / Right)", slider=True)
+    macros.prop(settings, "motion_macro_vertical_aim", text="Vertical Aim  (Down / Up)", slider=True)
+    macros.separator()
+    for property_name in (
+        "motion_macro_windup", "motion_macro_strike_power", "motion_macro_body_motion",
+        "motion_macro_follow_through", "motion_macro_arm_relax",
+    ):
+        macros.prop(settings, property_name, slider=True)
+    macros.label(text="Move a slider, then refresh. Contact and reach safety stay enforced.", icon='INFO')
+    row = macros.row(align=True)
+    row.operator("daf.motion_studio_reset_natural", text="RESET MACROS", icon='LOOP_BACK')
+    row.operator("daf.motion_studio_refresh_vip", text="REFRESH ATTACK", icon='FILE_REFRESH')
 
-    contact = offense.box()
-    contact.label(text="CONTACT", icon='MARKER_HLT')
-    row = contact.row(align=True)
-    jump = row.operator("daf.motion_studio_jump_key_pose", text="JUMP TO CONTACT", icon='MARKER_HLT')
+    review = offense.box()
+    row = review.row(align=True)
+    jump = row.operator("daf.motion_studio_jump_key_pose", text="CONTACT", icon='MARKER_HLT')
     jump.pose = "CONTACT"
     row.operator("daf.motion_studio_preview", text="PREVIEW", icon='PLAY')
-    contact.label(text="Yellow cube = intended surface impact; magenta = baked closest point", icon='INFO')
-
-    proof = offense.box()
-    proof.label(text="VALIDATION STATUS", icon='CHECKMARK')
-    proof.label(text=str(settings.motion_validation_status)[:120], icon='INFO')
-    proof.label(text=str(settings.motion_pose_health_status)[:120], icon='POSE_HLT')
-    if settings.motion_pose_health_detail:
-        proof.label(text=str(settings.motion_pose_health_detail)[:120], icon='INFO')
-    row = proof.row(align=True)
+    row = review.row(align=True)
     row.operator("daf.motion_studio_validate_baked_path", text="VALIDATE", icon='CHECKMARK')
     row.operator("daf.motion_studio_approve", text="APPROVE", icon='FAKE_USER_ON')
+    review.label(text=str(settings.motion_validation_status)[:120], icon='INFO')
+    review.label(text=str(settings.motion_pose_health_status)[:120], icon='POSE_HLT')
 
-    target = _animation_foldout(
-        offense, settings, "ui_motion_target_details_open", "TARGET DETAILS", icon='OUTLINER_OB_EMPTY'
+    advanced = _animation_foldout(
+        offense, settings, "ui_motion_advanced_open", "ADVANCED - TRAJECTORY, BODY & SOLVER", icon='SETTINGS'
     )
-    if target is not None:
-        target.prop(settings, "motion_target_distance")
-        target.prop(settings, "motion_target_height")
-        target.prop(settings, "motion_target_lateral")
-        target.prop(settings, "motion_target_radius")
-        target.prop(settings, "motion_target_half_height")
-        target.prop(settings, "motion_target_head_radius")
-        if settings.motion_target_zone == "CUSTOM":
-            target.prop(settings, "motion_custom_target_height")
-            target.prop(settings, "motion_custom_target_radius")
-        target.label(text="Surface anchors use the exact target sphere or capsule", icon='INFO')
+    if advanced is None:
+        return
 
-    proxy = _animation_foldout(
-        offense, settings, "ui_motion_weapon_geometry_open", "WEAPON GEOMETRY", icon='EMPTY_AXIS'
-    )
-    if proxy is not None:
-        proxy.prop(settings, "motion_proxy_length")
-        proxy.prop(settings, "motion_proxy_contact")
-        proxy.prop(settings, "motion_proxy_strike_start")
-        proxy.prop(settings, "motion_proxy_strike_end")
-        proxy.prop(settings, "motion_proxy_head_radius")
-        proxy.label(text="Blade segment may contact; thrust tip and mace head stay fixed", icon='INFO')
-        proxy.label(text="Production socket calibration remains unchanged", icon='ORIENTATION_LOCAL')
+    target = advanced.box()
+    target.label(text="TARGET DETAILS", icon='OUTLINER_OB_EMPTY')
+    target.prop(settings, "motion_target_distance_mode")
+    target.prop(settings, "motion_target_distance")
+    target.prop(settings, "motion_target_height")
+    target.prop(settings, "motion_target_lateral")
+    target.prop(settings, "motion_target_radius")
+    target.prop(settings, "motion_target_half_height")
+    target.prop(settings, "motion_target_head_radius")
+    if settings.motion_target_zone == "CUSTOM":
+        target.prop(settings, "motion_custom_target_height")
+        target.prop(settings, "motion_custom_target_radius")
+    target.operator("daf.motion_studio_natural_fit", text="NATURAL AUTO FIT", icon='CONSTRAINT_BONE')
 
-    trajectory = _animation_foldout(
-        offense, settings, "ui_motion_trajectory_open", "TRAJECTORY / CONTROL POINTS", icon='CURVE_PATH'
-    )
-    if trajectory is not None:
-        trajectory.prop(settings, "motion_trajectory_family")
-        pose_row = trajectory.row(align=True)
-        for pose, label in (
-            ("ANTICIPATION", "ANTICIPATION"),
-            ("CONTACT", "CONTACT"),
-            ("FOLLOW_THROUGH", "FOLLOW THROUGH"),
-        ):
-            jump = pose_row.operator("daf.motion_studio_jump_key_pose", text=label, icon='MARKER_HLT')
-            jump.pose = pose
-        display = trajectory.row(align=True)
-        display.prop(settings, "motion_show_target", toggle=True)
-        display.prop(settings, "motion_show_trail", toggle=True)
-        display.prop(settings, "motion_show_plane", toggle=True)
-        trajectory.prop(settings, "motion_windup_seconds")
-        trajectory.prop(settings, "motion_active_seconds")
-        trajectory.prop(settings, "motion_recovery_seconds")
-        trajectory.operator("daf.motion_studio_rebuild_body_solve", text="REBUILD EDITED CONTROLS", icon='FILE_REFRESH')
-        trajectory.label(text="Orange arrows remain directly editable in the viewport", icon='ORIENTATION_LOCAL')
+    proxy = advanced.box()
+    proxy.label(text="WEAPON GEOMETRY", icon='EMPTY_AXIS')
+    for property_name in (
+        "motion_proxy_length", "motion_proxy_contact", "motion_proxy_strike_start",
+        "motion_proxy_strike_end", "motion_proxy_head_radius",
+    ):
+        proxy.prop(settings, property_name)
 
-    style = _animation_foldout(offense, settings, "ui_motion_style_open", "BODY STYLE", icon='POSE_HLT')
-    if style is not None:
-        style.prop(settings, "motion_feel")
-        for property_name in (
-            "motion_style_anticipation", "motion_style_torso_power",
-            "motion_style_stance_compression", "motion_style_follow_through",
-            "motion_style_recovery", "motion_style_arm_extension",
-            "motion_style_elbow_style", "motion_style_wrist_style",
-        ):
-            style.prop(settings, property_name, slider=True)
-        style.operator("daf.motion_studio_reset_natural", text="RESET TO NATURAL", icon='LOOP_BACK')
+    trajectory = advanced.box()
+    trajectory.label(text="TRAJECTORY / CONTROL POINTS", icon='CURVE_PATH')
+    trajectory.prop(settings, "motion_trajectory_family")
+    for property_name in ("motion_windup_seconds", "motion_active_seconds", "motion_recovery_seconds"):
+        trajectory.prop(settings, property_name)
+    display = trajectory.row(align=True)
+    display.prop(settings, "motion_show_target", toggle=True)
+    display.prop(settings, "motion_show_trail", toggle=True)
+    display.prop(settings, "motion_show_plane", toggle=True)
+    trajectory.operator("daf.motion_studio_rebuild_body_solve", text="REBUILD EDITED CONTROLS", icon='FILE_REFRESH')
+    trajectory.operator("daf.motion_studio_build_from_master", text="BUILD FROM MOTION MASTER", icon='ARMATURE_DATA')
 
-    solver = _animation_foldout(
-        offense, settings, "ui_motion_solver_open", "SOLVER / REACH", icon='CONSTRAINT_BONE'
-    )
-    if solver is not None:
-        solver.prop(settings, "motion_solver_pole_side")
-        solver.prop(settings, "motion_solver_pole_back")
-        solver.prop(settings, "motion_solver_torso_support")
-        solver.prop(settings, "motion_reach_comfortable_ratio")
-        solver.prop(settings, "motion_reach_warning_ratio")
-        solver.prop(settings, "motion_reach_hard_ratio")
-        solver.prop(settings, "motion_shoulder_support_max_degrees")
-        solver.label(text="IK owns upper arm + forearm; shoulder support is capped", icon='INFO')
+    style = advanced.box()
+    style.label(text="BODY STYLE", icon='POSE_HLT')
+    style.prop(settings, "motion_feel")
+    for property_name in (
+        "motion_style_anticipation", "motion_style_torso_power", "motion_style_stance_compression",
+        "motion_style_follow_through", "motion_style_recovery", "motion_style_arm_extension",
+        "motion_style_elbow_style", "motion_style_wrist_style",
+    ):
+        style.prop(settings, property_name, slider=True)
 
-    validation = _animation_foldout(
-        offense, settings, "ui_motion_validation_open", "VALIDATION TOLERANCES", icon='CHECKMARK'
-    )
-    if validation is not None:
-        validation.prop(settings, "motion_tolerance_plane_error")
-        validation.prop(settings, "motion_tolerance_contact_window")
-        validation.prop(settings, "motion_tolerance_direction_dot")
-        validation.prop(settings, "motion_tolerance_sampling_step")
-        validation.operator("daf.motion_studio_promote_master", text="PROMOTE TO MOTION MASTER", icon='ASSET_MANAGER')
-        helper_row = validation.row(align=True)
-        helper_row.operator("daf.motion_studio_repair_helpers", text="Repair Helpers", icon='FILE_REFRESH')
-        helper_row.operator("daf.motion_studio_remove_helpers", text="Remove Helpers", icon='HIDE_ON')
-        validation.operator("daf.ensure_runtime_attachment_sockets", text="Create / Repair Runtime Hand Sockets", icon='CONSTRAINT_BONE')
+    solver = advanced.box()
+    solver.label(text="SOLVER / REACH", icon='CONSTRAINT_BONE')
+    for property_name in (
+        "motion_solver_pole_side", "motion_solver_pole_back", "motion_solver_torso_support",
+        "motion_reach_comfortable_ratio", "motion_reach_warning_ratio", "motion_reach_hard_ratio",
+        "motion_shoulder_support_max_degrees",
+    ):
+        solver.prop(settings, property_name)
+
+    validation = advanced.box()
+    validation.label(text="VALIDATION TOLERANCES", icon='CHECKMARK')
+    for property_name in (
+        "motion_tolerance_plane_error", "motion_tolerance_contact_window",
+        "motion_tolerance_direction_dot", "motion_tolerance_sampling_step",
+    ):
+        validation.prop(settings, property_name)
+    validation.operator("daf.motion_studio_promote_master", text="PROMOTE TO MOTION MASTER", icon='ASSET_MANAGER')
+    helper_row = validation.row(align=True)
+    helper_row.operator("daf.motion_studio_repair_helpers", text="Repair Helpers", icon='FILE_REFRESH')
+    helper_row.operator("daf.motion_studio_remove_helpers", text="Remove Helpers", icon='HIDE_ON')
+    validation.operator("daf.ensure_runtime_attachment_sockets", text="Create / Repair Runtime Hand Sockets", icon='CONSTRAINT_BONE')
 
     legacy = _animation_foldout(
-        offense, settings, "ui_legacy_offensive_open", "LEGACY / PROCEDURAL DRAFTING", icon='SETTINGS'
+        advanced, settings, "ui_legacy_offensive_open", "LEGACY / PROCEDURAL DRAFTING", icon='SETTINGS'
     )
     if legacy is None:
         return

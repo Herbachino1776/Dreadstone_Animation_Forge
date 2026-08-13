@@ -27,18 +27,21 @@ up, `+X` anatomical right). It does not implement collision, hit decisions,
 runtime tracking/homing, weapon assets, or damage. After commitment the baked
 path is fixed and a moving target can dodge.
 
-## Quick Natural workflow and expert access
+## VIP macro workflow and expert access
 
-The default panel exposes Attack, Weapon, Target, Feel, Target Distance, Build,
-Jump To Contact, Preview, status, Validate, and Approve. `NATURAL` is the default
-Feel; `SUBTLE` and `FORCEFUL` change secondary style behavior without changing
-combat identity, target law, trajectory family, contact correctness, or socket
-contracts. **RESET TO NATURAL** restores the complete restrained style preset.
+The default panel exposes Attack, Weapon, Target, horizontal/vertical aim,
+Windup, Strike Power, Body Motion, Follow Through, Arm Relaxation, one Refresh
+Attack action, Contact, Preview, status, Validate, and Approve. Aim rotates the
+path around the recalculated first-impact surface anchor; it does not move the
+weapon off target. Neutral macro values preserve the built-in Natural recipe.
+Refresh rebuilds from that starter, runs character Auto Fit, validates the FK
+path, and starts preview when validation passes.
 
 Target details, weapon geometry, trajectory/control points, body style,
-solver/reach, and validation tolerances remain available in collapsed expert
-sections. Orange controls remain directly editable in the viewport. The eight
-existing body-first generators remain under LEGACY / PROCEDURAL DRAFTING.
+solver/reach, validation tolerances, and Legacy drafting remain behind one
+collapsed Advanced section. Orange controls remain directly editable in the
+viewport. `SUBTLE`, `NATURAL`, `FORCEFUL`, and raw expert values remain available
+there; existing Actions and promoted masters are never silently rewritten.
 
 ## Versioned records and compatibility
 

@@ -292,40 +292,44 @@ Analyze the rig, draft idle/walk/collapse/hurt or mace head-guard Actions,
 inspect them, and use the explicit Version/Approve controls. Generated Actions
 do not animate bone scale. Approved Actions and NLA-used Actions are protected.
 
-For combat motion, open **OFFENSIVE MOTION STUDIO**. This is the primary attack
+For combat motion, open **ATTACK ANIMATION VIP STUDIO**. This is the primary attack
 workflow. It starts with a target and weapon path instead of guessing arm
 rotations:
 
-1. In the first visible row choose **Attack**, **Weapon**, **Target**, and
-   **Feel**. Keep **Feel = Natural** and **Target Distance = Auto** for an
-   ordinary starting attack.
-2. Click **BUILD NATURAL ATTACK**. Auto Fit measures this character's actual
+1. Choose **Attack**, **Weapon**, and **Target**.
+2. Adjust only the macro you need. **Horizontal Aim** and **Vertical Aim** turn
+   the whole authored path around its exact impact point. Windup, Strike Power,
+   Body Motion, Follow Through, and Arm Relaxation drive restrained secondary
+   motion without bypassing reach or contact validation.
+3. Click **REFRESH ATTACK**. Auto Fit measures this character's actual
    upper and lower arm, adapts target distance, and (for chopping/slashing
    blades) chooses one usable point on the authored blade strike segment. It
    keeps the intended target and attack family; it never stretches or
-   translates the deform arm to manufacture contact.
-3. Click **Jump To Contact**. The yellow marker is the intended first-impact
+   translates the deform arm to manufacture contact. Refresh also starts the
+   updated preview.
+4. Click **CONTACT**. The yellow marker is the intended first-impact
    surface point. Confirm the blade segment, mace head, or thrust tip meets the
    selected target volume. A HEAD overhead is a chopping arc to the head's top
    surface, not a top-down thrust through its center.
-4. Click **PREVIEW** and scrub WINDUP / ACTIVE / RECOVERY. Require a compact
+5. Click **PREVIEW** and scrub WINDUP / ACTIVE / RECOVERY. Require a compact
    anticipation, connected torso support, planted feet, visible follow-through,
    and controlled recovery. Use **RESET TO NATURAL** whenever slider edits make
    the result hard to diagnose.
-5. Click **VALIDATE**. The status combines baked weapon geometry with pose
+6. Click **VALIDATE**. The status combines baked weapon geometry with pose
    health: arm extension, elbow bend, bounded shoulder/torso support, unexpected
    deform-bone translation, wrist/contact solve error, and per-frame angular
    continuity. A warning is reviewable; an impossible reach, dislocation,
    solver stretch/error, stale proof, discontinuity, or miss is a hard failure.
-6. Click **APPROVE** only after current preview and validation pass. Geometry
+7. Click **APPROVE** only after current preview and validation pass. Geometry
    PASS proves physical targeting, not artistic quality; your visual review is
    still authoritative.
-7. Open the collapsed **TARGET DETAILS**, **WEAPON GEOMETRY**, **TRAJECTORY /
-   CONTROL POINTS**, **BODY STYLE**, **SOLVER / REACH**, or **VALIDATION
-   TOLERANCES** sections only when needed. Direct orange-control editing remains
+8. Open the single collapsed **ADVANCED - TRAJECTORY, BODY & SOLVER** section
+   only when needed. It contains Target Details, Weapon Geometry, Trajectory /
+   Control Points, Body Style, Solver / Reach, Validation Tolerances, and Legacy
+   drafting. Direct orange-control editing remains
    available in the viewport. **LEGACY / PROCEDURAL DRAFTING** retains the
    existing eight body-first generators.
-8. After human review, optionally **PROMOTE TO MOTION MASTER**. Promotion is
+9. After human review, optionally **PROMOTE TO MOTION MASTER**. Promotion is
    explicit. Existing 5.4.0 promoted masters and approved Actions are never
    silently rebuilt with 5.4.1 defaults.
 
@@ -354,9 +358,9 @@ proof retroactively.
 
 ### Exact 5.4.1 Natural attack acceptance
 
-For every case, select the canonical humanoid, open **OFFENSIVE MOTION STUDIO**,
-set **Feel = Natural** and **Target Distance = Auto**, click **BUILD NATURAL
-ATTACK**, then use **Jump To Contact**, **PREVIEW**, and **VALIDATE**. Require a
+For every case, select the canonical humanoid, open **ATTACK ANIMATION VIP
+STUDIO**, leave the macros centered, click **REFRESH ATTACK**, then use
+**CONTACT**, **PREVIEW**, and **VALIDATE**. Require a
 current geometry PASS and no pose-health failure. A warning still requires
 artist judgment.
 

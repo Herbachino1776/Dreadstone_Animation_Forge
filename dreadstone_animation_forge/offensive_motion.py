@@ -527,6 +527,76 @@ def target_contact_anchor(
     raise ValueError(f"Unsupported target contact anchor {anchor!r}.")
 
 
+VIP_MACRO_DEFAULTS = {
+    "horizontalAim": 0.0,
+    "verticalAim": 0.0,
+    "windup": 50.0,
+    "strikePower": 50.0,
+    "bodyMotion": 50.0,
+    "followThrough": 50.0,
+    "armRelax": 50.0,
+}
+
+
+def apply_vip_macros(recipe: Mapping[str, Any], macros: Mapping[str, Any]) -> dict[str, Any]:
+    """Apply artist-facing aim and feel macros without changing contact law."""
+
+    result = deepcopy(recipe)
+    values = dict(VIP_MACRO_DEFAULTS)
+    values.update({key: float(value) for key, value in dict(macros or {}).items() if key in values})
+    horizontal = clamp(values["horizontalAim"], -100.0, 100.0)
+    vertical = clamp(values["verticalAim"], -100.0, 100.0)
+    trajectory = result["trajectory"]
+    family = str(trajectory["family"])
+    # Thrust/overhead families can be redirected substantially. Crossing arcs
+    # stay deliberately tighter so a macro cannot swing WINDUP through target.
+    aim_scale = 1.0 if family in {"THRUST", "OVERHEAD_VERTICAL"} else (1.0 / 6.0)
+    yaw = math.radians(horizontal * 0.30 * aim_scale)
+    pitch = math.radians(vertical * 0.18 * aim_scale)
+
+    def rotate(value):
+        x, y, z = vector(value)
+        cos_yaw, sin_yaw = math.cos(yaw), math.sin(yaw)
+        x, y = x * cos_yaw + y * sin_yaw, -x * sin_yaw + y * cos_yaw
+        cos_pitch, sin_pitch = math.cos(pitch), math.sin(pitch)
+        return (x, y * cos_pitch - z * sin_pitch, y * sin_pitch + z * cos_pitch)
+
+    old_direction = normalize(trajectory["expectedDirectionLocal"])
+    new_direction = normalize(rotate(old_direction))
+    proxy = result["proxy"]
+    proxy_radius = float(proxy["headRadiusMeters"] if proxy["class"] == "ONE_HAND_BLUNT" else 0.015)
+    anchor_kind = str(trajectory.get("contactAnchor", "CENTER"))
+    old_anchor = target_contact_anchor(result["target"], anchor_kind, old_direction, proxy_radius=proxy_radius)
+    new_anchor = target_contact_anchor(result["target"], anchor_kind, new_direction, proxy_radius=proxy_radius)
+    trajectory["expectedDirectionLocal"] = [round(value, 7) for value in new_direction]
+    for control in trajectory["controls"]:
+        offset = subtract(control["contactPointLocal"], old_anchor)
+        control["contactPointLocal"] = [round(value, 7) for value in add(new_anchor, rotate(offset))]
+        control["weaponAxisLocal"] = [round(value, 7) for value in normalize(rotate(control["weaponAxisLocal"]))]
+
+    def centered(name):
+        return (clamp(values[name], 0.0, 100.0) - 50.0) / 50.0
+
+    windup = centered("windup")
+    power = centered("strikePower")
+    body = centered("bodyMotion")
+    follow = centered("followThrough")
+    relax = centered("armRelax")
+    style = result["style"]
+    style["anticipation"] = clamp(float(style["anticipation"]) * (1.0 + 0.25 * windup), 0.0, 2.0)
+    style["torsoPower"] = clamp(float(style["torsoPower"]) * (1.0 + 0.35 * body + 0.12 * power), 0.0, 2.0)
+    style["stanceCompression"] = clamp(float(style["stanceCompression"]) * (1.0 + 0.35 * body), 0.0, 2.0)
+    style["followThrough"] = clamp(float(style["followThrough"]) * (1.0 + 0.30 * follow), 0.0, 2.0)
+    style["wristStyle"] = clamp(float(style["wristStyle"]) * (1.0 + 0.20 * power), 0.0, 2.0)
+    style["armExtension"] = clamp(float(style["armExtension"]) * (1.0 - 0.09 * relax), 0.0, 2.0)
+    style["elbowStyle"] = clamp(float(style["elbowStyle"]) * (1.0 + 0.11 * relax), 0.0, 2.0)
+    result["timing"]["windupSeconds"] = clamp(float(result["timing"]["windupSeconds"]) * (1.0 + 0.18 * windup), 0.10, 2.50)
+    result["timing"]["activeSeconds"] = clamp(float(result["timing"]["activeSeconds"]) * (1.0 - 0.12 * power), 0.08, 1.00)
+    result["solver"]["torsoSupport"] = clamp(float(result["solver"]["torsoSupport"]) * (1.0 + 0.25 * body), 0.0, 2.0)
+    result.setdefault("provenance", {})["vipMacros"] = {key: round(value, 3) for key, value in values.items()}
+    return result
+
+
 def arm_reach_model(
     upper_arm_length: float,
     lower_arm_length: float,

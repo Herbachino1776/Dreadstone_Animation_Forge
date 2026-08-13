@@ -2,6 +2,10 @@
 
 ## 5.4.1
 
+- Reorganized attacks as a macro-first **ATTACK ANIMATION VIP STUDIO**. Simple
+  horizontal/vertical aim and five bounded motion macros feed one **REFRESH
+  ATTACK** action; all raw target, weapon, trajectory, body, solver, validation,
+  and legacy controls now sit behind one collapsed Advanced section.
 - Naturalized all five built-in Motion Masters with compact chambers, restrained
   follow-through, subtle lower-body support, and class-specific blade/blunt
   orientations while preserving their stable combat Action IDs.

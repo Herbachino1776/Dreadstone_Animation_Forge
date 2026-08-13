@@ -1275,6 +1275,12 @@ def _motion_setting_updated(self, context):
         module.motion_setting_updated(self, context)
 
 
+def _motion_macro_updated(self, context):
+    module = sys.modules.get(f"{__package__}.offensive_motion_studio")
+    if module is not None:
+        module.motion_macro_updated(self, context)
+
+
 def _motion_style_updated(self, context):
     module = sys.modules.get(f"{__package__}.offensive_motion_studio")
     if module is not None:
@@ -1349,6 +1355,7 @@ class DAFSettings(PropertyGroup):
     ui_body_arm_trauma_open: BoolProperty(default=False)
     ui_compound_trauma_open: BoolProperty(default=False)
     ui_offensive_open: BoolProperty(default=True)
+    ui_motion_advanced_open: BoolProperty(default=False)
     ui_motion_target_details_open: BoolProperty(default=False)
     ui_motion_weapon_geometry_open: BoolProperty(default=False)
     ui_motion_trajectory_open: BoolProperty(default=False)
@@ -1907,6 +1914,41 @@ class DAFSettings(PropertyGroup):
         description="Built-in starter or deliberately promoted target/trajectory master",
         items=_motion_master_items,
         update=_motion_master_updated,
+    )
+    motion_macro_horizontal_aim: FloatProperty(
+        name="Horizontal Aim",
+        description="Turn the attack path left or right around the exact contact point",
+        default=0.0, min=-100.0, max=100.0, update=_motion_macro_updated,
+    )
+    motion_macro_vertical_aim: FloatProperty(
+        name="Vertical Aim",
+        description="Tilt the attack path lower or higher around the exact contact point",
+        default=0.0, min=-100.0, max=100.0, update=_motion_macro_updated,
+    )
+    motion_macro_windup: FloatProperty(
+        name="Windup",
+        description="Shorten or deepen anticipation without editing trajectory controls",
+        default=50.0, min=0.0, max=100.0, subtype='PERCENTAGE', update=_motion_macro_updated,
+    )
+    motion_macro_strike_power: FloatProperty(
+        name="Strike Power",
+        description="Adjust strike speed and secondary wrist/torso support within safety limits",
+        default=50.0, min=0.0, max=100.0, subtype='PERCENTAGE', update=_motion_macro_updated,
+    )
+    motion_macro_body_motion: FloatProperty(
+        name="Body Motion",
+        description="Reduce or increase restrained torso and stance support",
+        default=50.0, min=0.0, max=100.0, subtype='PERCENTAGE', update=_motion_macro_updated,
+    )
+    motion_macro_follow_through: FloatProperty(
+        name="Follow Through",
+        description="Reduce or increase follow-through while keeping the same target contact",
+        default=50.0, min=0.0, max=100.0, subtype='PERCENTAGE', update=_motion_macro_updated,
+    )
+    motion_macro_arm_relax: FloatProperty(
+        name="Arm Relaxation",
+        description="Favor a softer bent elbow over maximum straight-arm extension",
+        default=50.0, min=0.0, max=100.0, subtype='PERCENTAGE', update=_motion_macro_updated,
     )
     motion_feel: EnumProperty(
         name="Feel",
