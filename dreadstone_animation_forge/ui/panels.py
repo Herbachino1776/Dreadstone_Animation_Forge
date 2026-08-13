@@ -1664,7 +1664,7 @@ def _draw_offensive_animation(layout, settings):
     )
     if offense is None:
         return
-    offense.label(text="OFFENSIVE MOTION STUDIO - pick, adjust, refresh", icon='FAVORITES')
+    offense.label(text="OFFENSIVE MOTION STUDIO - pick, adjust, refresh", icon='ACTION')
 
     quick = offense.box()
     quick.label(text="YOUR ATTACK", icon='ARMATURE_DATA')

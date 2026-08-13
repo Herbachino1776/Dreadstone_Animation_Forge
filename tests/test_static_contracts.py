@@ -230,6 +230,7 @@ class StaticContractTests(unittest.TestCase):
 
     def test_motion_studio_quick_first_ui_and_advanced_sections(self) -> None:
         panels = (ROOT / "dreadstone_animation_forge" / "ui" / "panels.py").read_text(encoding="utf-8")
+        self.assertNotIn("icon='FAVORITES'", panels)
         for label in (
             "ATTACK ANIMATION VIP STUDIO",
             "VIP MACROS",
