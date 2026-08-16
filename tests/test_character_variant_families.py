@@ -621,6 +621,28 @@ class StaticIntegrationTests(unittest.TestCase):
         ):
             self.assertIn(marker, source)
 
+    def test_projection_bridge_uses_only_the_bound_source_rig_in_rest_pose(self):
+        source = (PACKAGE / "variant_authoring.py").read_text(encoding="utf-8")
+        for marker in (
+            "def _skin_and_bones_projection_armature(",
+            "def _validated_skin_and_bones_projection_armature(",
+            "def _neutralize_skin_and_bones_projection_pose(",
+            "def _prepare_skin_and_bones_projection_snapshot(",
+            "SBF_PROJECTION_VISIBILITY_SCHEMA",
+            'rig.data.pose_position = "REST"',
+            'obj.name == "DSB_DAMAGE_RIG"',
+            "rig.data is damage.data",
+            "and getattr(obj, \"data\", None) is rig.data",
+            'rig.get("sbf_production_rig", False)',
+            '"rigPosePosition"',
+            '"rigData"',
+            '"targetData"',
+            "recovery state is corrupt",
+            "clone.use_fake_user = True",
+        ):
+            self.assertIn(marker, source)
+        self.assertNotIn("bpy.ops.pose.transforms_clear", source)
+
     def test_export_keeps_zero_time_staging_and_adds_variant_provenance(self):
         runtime = (PACKAGE / "runtime_export.py").read_text(encoding="utf-8")
         damage = (PACKAGE / "damage_authoring.py").read_text(encoding="utf-8")

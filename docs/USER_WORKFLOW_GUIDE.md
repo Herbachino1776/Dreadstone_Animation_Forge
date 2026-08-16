@@ -1,14 +1,14 @@
-# Dreadstone Animation Forge 5.4.5 — User Workflow Guide
+# Dreadstone Animation Forge 6.0.0 — User Workflow Guide
 
-- Release archive: `Dreadstone_Animation_Forge_v5_4_5.zip`
+- Release archive: `Dreadstone_Animation_Forge_v6_0_0.zip`
 - Supported release runtime: Blender 5.1.2
 - Damage authoring model: Damage Keys → child Stamp alternatives → strong macros
 - Reuse model: topology-independent Damage Blueprints
 
-## 1. Install Dreadstone Animation Forge 5.4.5
+## 1. Install Dreadstone Animation Forge 6.0.0
 
 In Blender choose **Edit > Preferences > Add-ons > Install from Disk**, select
-`Dreadstone_Animation_Forge_v5_4_5.zip` without extracting it, and enable
+`Dreadstone_Animation_Forge_v6_0_0.zip` without extracting it, and enable
 **Dreadstone Animation Forge**.
 
 ## 2. Open the Dreadstone panel
@@ -44,9 +44,15 @@ through more texture projections. No Skin & Bones family handoff is required.
 3. For another four-view projection, use the embedded **PROJECT WITH SKIN &
    BONES** steps: **LOAD 4-VIEW FOLDER**, **BUILD / REFRESH PREVIEW**, **BAKE
    FINAL TEXTURE**, then **USE FINAL ON THIS LOOK**. Forge temporarily reveals
-   `SBF_CLEAN_CHARACTER` and hides the derived Damage pieces so the preview is
-   actually visible. Detailed alignment and repair remain in the Skin & Bones
-   tab. Skin & Bones family approval is not required for this Forge-owned route.
+   `SBF_CLEAN_CHARACTER`, evaluates only its provenance-verified S&B production
+   rig in the neutral rest pose, and hides the derived Damage pieces so the
+   preview is actually visible and matches neutral four-view plates. Returning
+   to the finished look restores the S&B rig's prior display pose. It never
+   changes `DSB_DAMAGE_RIG`, the current Action/frame, or either authored hand
+   socket. Inactive look materials/images are kept inside the `.blend`, so they
+   remain available after save/reopen. Detailed alignment and repair remain in
+   the Skin & Bones tab. Skin & Bones family approval is not required for this
+   Forge-owned route.
    Alternatively, paint the packed image or choose one already-finished UV Base
    Color image. A folder of front/back/left/right plates is source art, not a
    model texture.
@@ -71,6 +77,10 @@ animation, Damage geometry, or socket position/rotation.
 Look switching restores each Damage mesh's authored intact visibility. Detached
 heads/limbs, stumps, gore, and other damage-only pieces do not become visible
 merely because the appearance changed.
+
+If a projection preview shows the new skin only on the face or chest while the
+old skin remains on bent limbs, rebuild it through step 2B. Forge now reasserts
+the neutral S&B source rig immediately before both preview and bake.
 
 ### Import compatible Skin & Bones family exports
 
@@ -413,7 +423,7 @@ body-first drafts; **Apply Sliders / Refresh Draft**, **Preview Attack**, and
 migrated. Motion Studio does not require old approved Actions to gain target
 proof retroactively.
 
-### Exact 5.4.5 production attack acceptance
+### Exact 6.0.0 production attack acceptance
 
 For every case, select the canonical humanoid, open **ATTACK ANIMATION
 STUDIO**, choose inputs, adjust **LET ME COOK** controls, and click **GENERATE &

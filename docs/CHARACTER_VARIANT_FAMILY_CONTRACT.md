@@ -1,6 +1,6 @@
 # Character Variant Family contract
 
-Forge release: `5.4.5`
+Forge release: `6.0.0`
 
 Forge schema: `dreadstone.character_variant_family.v1`
 
@@ -96,15 +96,28 @@ export until **SAVE CURRENT LOOK** or **SAVE + EXPORT** snapshots it again.
 
 The optional Skin & Bones projection bridge is a narrow editor integration, not
 a second family model. **LOAD 4-VIEW FOLDER** reveals S&B's original full-body
-mesh and hides Forge's derived Damage pieces; **BUILD / REFRESH PREVIEW** and
-**BAKE FINAL TEXTURE** invoke the installed S&B operators; **USE FINAL ON THIS
-LOOK** copies the resulting final Base Color into the active Forge-owned look and
-restores the intact Damage preview. Forge never treats `DSB_DAMAGE_RIG` as a
-projection mesh, never requires S&B family approval for this native finished-
-character route, and never touches socket transforms. The manual alternative
+mesh on its target-linked, `sbf_production_rig`-proven armature in `REST` and
+hides Forge's derived Damage pieces; **BUILD / REFRESH PREVIEW** and **BAKE FINAL
+TEXTURE** reassert that neutral evaluation before invoking the installed S&B
+operators. **USE FINAL ON THIS LOOK** copies the resulting final Base Color into
+the active Forge-owned look, restores the source rig's prior display pose, and
+restores the intact Damage preview. Forge refuses a target connected to
+`DSB_DAMAGE_RIG`, a generated Damage rig, or an Armature datablock used by any
+second object. The versioned display-recovery snapshot migrates the older
+visibility-only state; corrupt, mismatched, or unresolvable recovery data blocks
+before either rig is changed and is retained for safe recovery. Forge never
+clears the source rig's stored pose/Action, changes the scene frame, requires S&B
+family approval for this native finished-character route, or touches socket
+transforms. The manual alternative
 accepts exactly one final UV image and explicitly rejects a four-view source
 folder. Camera projection and calibration remain Skin & Bones work; Forge owns
 the saved finished look and resolved shipping character.
+
+Every Forge-owned look material and image carries an explicit Blender fake user.
+This keeps inactive looks alive through save/reopen even though only one palette
+can occupy the runtime body slots at a time. Replacing an owned snapshot removes
+that retention only after the replacement is installed, so it does not create a
+growing orphan-data trail.
 
 This route is intentionally for texture/material iteration on the same finished
 body. A Skin & Bones GLB cannot be joined to a native Forge texture family, and

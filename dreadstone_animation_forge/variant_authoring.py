@@ -35,6 +35,8 @@ ACTIVE_EXPORT_PROPERTY = "dsb_active_appearance_variant_id"
 TEXTURE_OWNER_PROPERTY = "dsb_texture_variant_owned"
 TEXTURE_SOURCE_PROPERTY = "dsb_texture_variant_source"
 SBF_PROJECTION_VISIBILITY_PROPERTY = "dsb_sbf_projection_visibility_json"
+SBF_PROJECTION_VISIBILITY_SCHEMA = "dreadstone.sbf_projection_display.v1"
+SBF_PROJECTION_VISIBILITY_SCHEMA_VERSION = 1
 
 
 def _scene(scene=None):
@@ -471,6 +473,7 @@ def _clone_variant_image(image, family_id, variant_id, cache):
     clone[TEXTURE_OWNER_PROPERTY] = variant_id
     clone[OBJECT_FAMILY_PROPERTY] = family_id
     clone[TEXTURE_SOURCE_PROPERTY] = image.name
+    clone.use_fake_user = True
     if clone.packed_file is None:
         try:
             clone.pack()
@@ -493,6 +496,7 @@ def _clone_variant_material(material, family_id, variant_id, material_cache, ima
     clone[TEXTURE_OWNER_PROPERTY] = variant_id
     clone[OBJECT_FAMILY_PROPERTY] = family_id
     clone[TEXTURE_SOURCE_PROPERTY] = material.name
+    clone.use_fake_user = True
     node_tree = getattr(clone, "node_tree", None)
     if node_tree is not None:
         for node in node_tree.nodes:
@@ -721,20 +725,16 @@ def _apply_runtime_material_slots(appearance):
 def _release_owned_appearance(appearance):
     for name in appearance.get("ownedMaterials", []):
         material = bpy.data.materials.get(str(name))
-        if (
-            material is not None
-            and bool(material.get(TEXTURE_OWNER_PROPERTY, ""))
-            and material.users == 0
-        ):
-            bpy.data.materials.remove(material)
+        if material is not None and bool(material.get(TEXTURE_OWNER_PROPERTY, "")):
+            material.use_fake_user = False
+            if material.users == 0:
+                bpy.data.materials.remove(material)
     for name in appearance.get("ownedImages", []):
         image = bpy.data.images.get(str(name))
-        if (
-            image is not None
-            and bool(image.get(TEXTURE_OWNER_PROPERTY, ""))
-            and image.users == 0
-        ):
-            bpy.data.images.remove(image)
+        if image is not None and bool(image.get(TEXTURE_OWNER_PROPERTY, "")):
+            image.use_fake_user = False
+            if image.users == 0:
+                bpy.data.images.remove(image)
 
 
 def switch_variant(variant_id, scene=None):
@@ -1174,22 +1174,263 @@ def _skin_and_bones_projection_target(context):
     return settings, target
 
 
-def _restore_skin_and_bones_projection_visibility(scene):
+def _validated_skin_and_bones_projection_armature(rig):
+    """Prove a source rig can be switched at Armature-datablock scope."""
+
+    if rig is None or getattr(rig, "type", "") != "ARMATURE":
+        raise RuntimeError("Skin & Bones projection recovery cannot resolve its source armature.")
+    damage_rigs = [
+        obj
+        for obj in bpy.data.objects
+        if getattr(obj, "type", "") == "ARMATURE"
+        and (
+            obj.name == "DSB_DAMAGE_RIG"
+            or str(obj.get("dsb_damage_role", "")) == "authoring_rig"
+        )
+    ]
+    aliases = [
+        obj
+        for obj in bpy.data.objects
+        if obj is not rig
+        and getattr(obj, "type", "") == "ARMATURE"
+        and getattr(obj, "data", None) is rig.data
+    ]
+    if (
+        bool(rig.get("dsb_damage_generated", False))
+        or any(rig is damage or rig.data is damage.data for damage in damage_rigs)
+    ):
+        raise RuntimeError(
+            "Skin & Bones projection cannot neutralize DSB_DAMAGE_RIG or an "
+            "armature sharing its data. Bind the original S&B production rig instead."
+        )
+    if aliases:
+        raise RuntimeError(
+            "Skin & Bones projection cannot neutralize an Armature datablock shared "
+            "by another object ("
+            + ", ".join(sorted(obj.name for obj in aliases))
+            + "). Make the intended S&B production rig unambiguous first."
+        )
+    if not bool(rig.get("sbf_production_rig", False)):
+        raise RuntimeError(
+            "The armature bound to the Skin & Bones Target Mesh lacks the shipped "
+            "sbf_production_rig proof. Forge will not neutralize an unproven rig."
+        )
+    return rig
+
+
+def _skin_and_bones_projection_armature(target):
+    """Resolve the one armature bound to S&B's projection target, if any."""
+
+    candidates = []
+    parent = getattr(target, "parent", None)
+    if parent is not None and getattr(parent, "type", "") == "ARMATURE":
+        candidates.append(parent)
+    for modifier in getattr(target, "modifiers", ()):
+        if getattr(modifier, "type", "") != "ARMATURE":
+            continue
+        rig = getattr(modifier, "object", None)
+        if rig is not None and rig not in candidates:
+            candidates.append(rig)
+    if not candidates:
+        return None
+    if len(candidates) != 1:
+        raise RuntimeError(
+            "Skin & Bones Target Mesh is bound to multiple armatures. "
+            "Choose its single original production rig before projection."
+        )
+    return _validated_skin_and_bones_projection_armature(candidates[0])
+
+
+def _neutralize_skin_and_bones_projection_pose(context, target):
+    """Evaluate source plates on S&B's neutral body without touching Forge's rig."""
+
+    rig = _skin_and_bones_projection_armature(target)
+    if rig is None:
+        return None, None
+    previous = str(rig.data.pose_position)
+    rig.data.pose_position = "REST"
+    try:
+        context.view_layer.update()
+    except (AttributeError, RuntimeError):
+        pass
+    return rig, previous
+
+
+def _load_skin_and_bones_projection_snapshot(scene):
     raw = str(scene.get(SBF_PROJECTION_VISIBILITY_PROPERTY, ""))
     if not raw:
         return None
     try:
         snapshot = json.loads(raw)
-    except (TypeError, ValueError, json.JSONDecodeError):
-        snapshot = {}
-    target = bpy.data.objects.get(str(snapshot.get("target", "")))
-    if target is not None:
-        target.hide_viewport = bool(snapshot.get("hideViewport", True))
-        target.hide_render = bool(snapshot.get("hideRender", True))
+    except (TypeError, ValueError, json.JSONDecodeError) as exc:
+        raise RuntimeError(
+            "Skin & Bones projection recovery state is corrupt. "
+            "Forge did not change either rig; restore or remove the saved recovery property explicitly."
+        ) from exc
+    if not isinstance(snapshot, dict) or not str(snapshot.get("target", "")):
+        raise RuntimeError(
+            "Skin & Bones projection recovery state is incomplete. "
+            "Forge did not change either rig."
+        )
+    schema = str(snapshot.get("schema", ""))
+    try:
+        schema_version = int(snapshot.get("schemaVersion", 0))
+    except (TypeError, ValueError) as exc:
+        raise RuntimeError(
+            "Skin & Bones projection recovery state has an invalid schema version. "
+            "Forge did not change either rig."
+        ) from exc
+    if schema and (
+        schema != SBF_PROJECTION_VISIBILITY_SCHEMA
+        or schema_version != SBF_PROJECTION_VISIBILITY_SCHEMA_VERSION
+    ):
+        raise RuntimeError(
+            "Skin & Bones projection recovery state uses an unsupported schema. "
+            "Forge did not change either rig."
+        )
+    if not schema and any(
+        key in snapshot
+        for key in ("schemaVersion", "targetData", "rig", "rigData", "rigPosePosition")
+    ):
+        raise RuntimeError(
+            "Skin & Bones projection recovery state mixes legacy and versioned fields. "
+            "Forge did not change either rig."
+        )
+    if schema:
+        rig_name = str(snapshot.get("rig", ""))
+        rig_data = str(snapshot.get("rigData", ""))
+        pose_position = str(snapshot.get("rigPosePosition", ""))
+        if bool(rig_name or rig_data or pose_position) and not (
+            rig_name and rig_data and pose_position in {"POSE", "REST"}
+        ):
+            raise RuntimeError(
+                "Skin & Bones projection recovery state has incomplete source-rig identity. "
+                "Forge did not change either rig."
+            )
+    return snapshot
+
+
+def _projection_snapshot_object(snapshot, name_key, data_key, object_type, label):
+    name = str(snapshot.get(name_key, ""))
+    data_name = str(snapshot.get(data_key, ""))
+    value = bpy.data.objects.get(name) if name else None
+    if (
+        value is not None
+        and getattr(value, "type", "") == object_type
+        and (not data_name or getattr(getattr(value, "data", None), "name", "") == data_name)
+    ):
+        return value
+    if data_name:
+        matches = [
+            obj
+            for obj in bpy.data.objects
+            if getattr(obj, "type", "") == object_type
+            and getattr(getattr(obj, "data", None), "name", "") == data_name
+        ]
+        if len(matches) == 1:
+            return matches[0]
+    raise RuntimeError(
+        f"Skin & Bones projection recovery cannot safely resolve its saved {label}. "
+        "The recovery state was retained; restore the original object/data identity and try again."
+    )
+
+
+def _projection_snapshot_matches(snapshot, target, rig):
+    target_name = str(snapshot.get("target", ""))
+    target_data = str(snapshot.get("targetData", ""))
+    target_matches = target_name == target.name
+    if not target_matches and target_data == target.data.name:
+        matches = [
+            obj
+            for obj in bpy.data.objects
+            if getattr(obj, "type", "") == "MESH"
+            and getattr(getattr(obj, "data", None), "name", "") == target_data
+        ]
+        target_matches = len(matches) == 1 and matches[0] is target
+    if not target_matches:
+        return False
+    if not str(snapshot.get("schema", "")):
+        return True
+    saved_rig = str(snapshot.get("rig", ""))
+    saved_data = str(snapshot.get("rigData", ""))
+    if rig is None:
+        return not saved_rig and not saved_data
+    return (
+        (saved_rig == rig.name or saved_data == rig.data.name)
+        and saved_data == rig.data.name
+    )
+
+
+def _projection_snapshot_payload(target, rig, *, visibility=None):
+    visibility = visibility or {}
+    return {
+        "schema": SBF_PROJECTION_VISIBILITY_SCHEMA,
+        "schemaVersion": SBF_PROJECTION_VISIBILITY_SCHEMA_VERSION,
+        "target": target.name,
+        "targetData": target.data.name,
+        "hideViewport": bool(visibility.get("hideViewport", target.hide_viewport)),
+        "hideRender": bool(visibility.get("hideRender", target.hide_render)),
+        "hidden": bool(visibility.get("hidden", target.hide_get())),
+        "rig": getattr(rig, "name", ""),
+        "rigData": getattr(getattr(rig, "data", None), "name", ""),
+        "rigPosePosition": str(rig.data.pose_position) if rig is not None else "",
+    }
+
+
+def _prepare_skin_and_bones_projection_snapshot(scene, target, rig):
+    snapshot = _load_skin_and_bones_projection_snapshot(scene)
+    if snapshot is not None and not _projection_snapshot_matches(snapshot, target, rig):
+        _restore_skin_and_bones_projection_visibility(scene)
+        snapshot = None
+    if snapshot is None:
+        snapshot = _projection_snapshot_payload(target, rig)
+        scene[SBF_PROJECTION_VISIBILITY_PROPERTY] = model.stable_json(snapshot)
+        return snapshot
+    if not str(snapshot.get("schema", "")):
+        # Migrate the visibility-only state shipped before 6.0.0 without
+        # overwriting its original hidden/display values.
+        snapshot = _projection_snapshot_payload(target, rig, visibility=snapshot)
+        scene[SBF_PROJECTION_VISIBILITY_PROPERTY] = model.stable_json(snapshot)
+    return snapshot
+
+
+def _restore_skin_and_bones_projection_visibility(scene):
+    snapshot = _load_skin_and_bones_projection_snapshot(scene)
+    if snapshot is None:
+        return None
+    target = _projection_snapshot_object(
+        snapshot,
+        "target",
+        "targetData",
+        "MESH",
+        "projection target",
+    )
+    if str(snapshot.get("schema", "")) and str(snapshot.get("rig", "")):
+        rig = _projection_snapshot_object(
+            snapshot,
+            "rig",
+            "rigData",
+            "ARMATURE",
+            "source armature",
+        )
+        _validated_skin_and_bones_projection_armature(rig)
+        pose_position = str(snapshot.get("rigPosePosition", ""))
+        if pose_position not in {"POSE", "REST"}:
+            raise RuntimeError(
+                "Skin & Bones projection recovery has no valid saved pose mode. "
+                "The recovery state was retained."
+            )
+        rig.data.pose_position = pose_position
         try:
-            target.hide_set(bool(snapshot.get("hidden", True)))
-        except RuntimeError:
+            bpy.context.view_layer.update()
+        except (AttributeError, RuntimeError):
             pass
+    target.hide_viewport = bool(snapshot.get("hideViewport", True))
+    target.hide_render = bool(snapshot.get("hideRender", True))
+    try:
+        target.hide_set(bool(snapshot.get("hidden", True)))
+    except RuntimeError:
+        pass
     del scene[SBF_PROJECTION_VISIBILITY_PROPERTY]
     return target
 
@@ -1206,39 +1447,49 @@ def enter_skin_and_bones_projection(context):
         raise RuntimeError("Click EDIT / TWEAK THIS LOOK before projecting a replacement texture.")
     _settings, target = _skin_and_bones_projection_target(context)
     scene = context.scene
-    if not str(scene.get(SBF_PROJECTION_VISIBILITY_PROPERTY, "")):
-        scene[SBF_PROJECTION_VISIBILITY_PROPERTY] = model.stable_json(
-            {
-                "target": target.name,
-                "hideViewport": bool(target.hide_viewport),
-                "hideRender": bool(target.hide_render),
-                "hidden": bool(target.hide_get()),
-            }
-        )
-    for obj in list(getattr(context, "selected_objects", ())):
-        try:
-            obj.select_set(False)
-        except RuntimeError:
-            pass
-    for body in _appearance_body_objects():
-        try:
-            body.hide_set(True)
-            body.select_set(False)
-        except RuntimeError:
-            pass
-        body.hide_viewport = True
-        body.hide_render = True
-    target.hide_viewport = False
-    target.hide_render = False
+    rig = _skin_and_bones_projection_armature(target)
+    _prepare_skin_and_bones_projection_snapshot(scene, target, rig)
     try:
-        target.hide_set(False)
-        target.select_set(True)
-        context.view_layer.objects.active = target
-    except (AttributeError, RuntimeError):
-        pass
-    _use_material_preview(context)
+        neutral_rig, _previous_pose = _neutralize_skin_and_bones_projection_pose(context, target)
+        for obj in list(getattr(context, "selected_objects", ())):
+            try:
+                obj.select_set(False)
+            except RuntimeError:
+                pass
+        for body in _appearance_body_objects():
+            try:
+                body.hide_set(True)
+                body.select_set(False)
+            except RuntimeError:
+                pass
+            body.hide_viewport = True
+            body.hide_render = True
+        target.hide_viewport = False
+        target.hide_render = False
+        try:
+            target.hide_set(False)
+            target.select_set(True)
+            context.view_layer.objects.active = target
+        except (AttributeError, RuntimeError):
+            pass
+        _use_material_preview(context)
+    except Exception as exc:
+        _restore_runtime_body_visibility()
+        try:
+            _restore_skin_and_bones_projection_visibility(scene)
+        except Exception as recovery_exc:
+            raise RuntimeError(
+                "Skin & Bones projection entry failed and automatic recovery could not "
+                f"finish: {recovery_exc}"
+            ) from exc
+        raise
     context.scene.daf_settings.variant_family_status = (
-        f"SKIN & BONES PROJECTION BODY — {target.name}; load sources or rebuild preview"
+        f"SKIN & BONES PROJECTION BODY — {target.name}"
+        + (
+            f" on neutral {neutral_rig.name}; load sources or rebuild preview"
+            if neutral_rig is not None
+            else "; load sources or rebuild preview"
+        )
     )
     return target
 
@@ -2685,7 +2936,7 @@ class DAF_OT_replace_forge_texture_image(_VariantOperator):
 class DAF_OT_load_sbf_projection_folder(_VariantOperator):
     bl_idname = "daf.load_sbf_projection_folder"
     bl_label = "Load Four-View Projection Folder"
-    bl_description = "Reveal Skin & Bones' full-body projection target, hide Forge's derived Damage pieces, and choose front/back/left/right source images"
+    bl_description = "Show Skin & Bones' full-body target on its verified neutral production rig, hide Forge's derived Damage pieces, and choose front/back/left/right source images"
     bl_options = {"REGISTER", "UNDO"}
 
     def execute(self, context):
@@ -2712,7 +2963,7 @@ class DAF_OT_load_sbf_projection_folder(_VariantOperator):
 class DAF_OT_build_sbf_projection_preview(_VariantOperator):
     bl_idname = "daf.build_sbf_projection_preview"
     bl_label = "Build or Refresh Projection Preview"
-    bl_description = "Run Skin & Bones One-Click Best Preview on its visible full-body source mesh"
+    bl_description = "Reassert the verified Skin & Bones rig's neutral pose, then run One-Click Best Preview on its visible full-body source mesh"
     bl_options = {"REGISTER", "UNDO"}
 
     def execute(self, context):

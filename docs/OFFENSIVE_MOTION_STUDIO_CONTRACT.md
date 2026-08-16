@@ -1,6 +1,6 @@
 # Offensive Motion Studio contract
 
-Forge release: `5.4.5`
+Forge release: `6.0.0`
 
 ## Product law
 
@@ -16,7 +16,7 @@ TARGET
 -> APPROVAL
 ```
 
-Forge 5.4.5 keeps the 5.4.1 intact-chain law and makes pose quality part of the
+Forge 6.0.0 keeps the 5.4.1 intact-chain law and makes pose quality part of the
 production gate. A valid hit must be achieved without IK stretch or local
 dislocation of shoulder, upper arm, lower arm, or hand; the wrist path must stay
 inside a safe reach annulus, and the baked chain must remain continuous. The

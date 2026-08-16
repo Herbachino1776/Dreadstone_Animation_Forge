@@ -2145,7 +2145,7 @@ def _draw_character_variants(layout, context, settings):
             projection = active_box.box()
             projection.label(text="PROJECT WITH SKIN & BONES", icon='SHADING_RENDERED')
             projection.label(
-                text="Forge will show the full projection body and hide damage-only pieces.",
+                text="Forge shows the full projection body neutral and hides damage-only pieces.",
                 icon='HIDE_OFF',
             )
             sources = sum(

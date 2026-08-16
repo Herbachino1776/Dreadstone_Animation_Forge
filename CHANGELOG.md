@@ -1,5 +1,29 @@
 # Changelog
 
+## 6.0.0
+
+- Published the finished-character look workflow at the requested 6.0 major
+  release boundary. Existing 5.4.5 projects and all persisted/exported v1
+  contracts remain backward compatible; no 5.4.6 package was released.
+- Fixed four-view look projection retaining the old skin across bent limbs when
+  the hidden Skin & Bones production body was still displaying a posed rig.
+  **LOAD 4-VIEW FOLDER**, **BUILD / REFRESH PREVIEW**, and **BAKE FINAL
+  TEXTURE** now evaluate the target-linked, provenance-verified S&B production
+  rig in its neutral rest pose.
+- Projection mode snapshots and restores the S&B rig's previous display pose.
+  It never clears stored pose transforms or Actions and explicitly refuses to
+  neutralize `DSB_DAMAGE_RIG`, a generated Damage rig, or any Armature datablock
+  used by another object. Legacy visibility snapshots migrate in place; corrupt
+  or unresolvable recovery state blocks safely instead of losing the saved pose.
+- Variant-owned materials and images now retain explicit Blender fake users so
+  inactive looks survive save/reopen and remain switchable without duplicating
+  body geometry, Actions, or Damage data.
+- Expanded finished-character acceptance to preserve all 21 runtime pose
+  matrices, the shared Action, current frame, both authored hand-socket
+  transforms/contracts, Damage visibility, and zero-copy look authoring across
+  projection entry, preview/bake re-entry, active-projection save/reopen,
+  final-image transfer, and ordinary save/reopen.
+
 ## 5.4.5
 
 - Replaced the competing top-level family choices with one ordered **LOOK
