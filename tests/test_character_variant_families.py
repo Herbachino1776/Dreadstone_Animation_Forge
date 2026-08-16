@@ -775,8 +775,11 @@ class StaticIntegrationTests(unittest.TestCase):
     def test_finished_source_proof_repair_is_explicit_and_transactional(self):
         source = (PACKAGE / "damage_authoring.py").read_text(encoding="utf-8")
         self.assertIn("def restore_finished_source_transform_proof(", source)
+        self.assertIn("def restore_finished_source_geometry_proof(", source)
+        self.assertIn("Protected source coordinates did not restore source readiness", source)
         self.assertIn('bl_idname = "daf.restore_finished_source_transform"', source)
         self.assertIn("source.matrix_world = previous", source)
+        self.assertIn("vertex.co = coordinate", source)
 
 
 if __name__ == "__main__":

@@ -2367,6 +2367,131 @@ def restore_finished_source_transform_proof(context):
         raise
 
 
+def restore_finished_source_geometry_proof(context, state=None):
+    """Restore forbidden source-coordinate drift from the protected finished copy.
+
+    Native look projection is texture-only.  This repair is allowed only when
+    vertex/edge/polygon identity and relevant skin weights remain exact and the
+    protected copy still matches the stored source contract.  It never repairs
+    topology, weights, shape keys, or an intentional technical-body change.
+    """
+
+    from . import damage_readiness
+
+    state = state or _load_state()
+    source = bpy.data.objects.get(str(state.get("source_object_name", "")))
+    if source is None or source.type != 'MESH':
+        raise RuntimeError(
+            "Source geometry drift cannot be repaired because the registered original source mesh is missing."
+        )
+    expected_mesh_name = str(state.get("source_mesh_datablock_name", ""))
+    if expected_mesh_name and source.data.name != expected_mesh_name:
+        raise RuntimeError(
+            "Source geometry drift cannot be repaired because the registered source mesh datablock was replaced."
+        )
+    protected = bpy.data.objects.get(str(state.get("protected_source_mesh", "")))
+    if protected is None or protected.type != 'MESH' or not bool(
+        protected.get("dsb_damage_generated", False)
+    ):
+        raise RuntimeError(
+            "The finished authoring state has no valid protected source geometry proof."
+        )
+    relevant = state.get("relevant_vertex_groups") or None
+    source_analysis, _source_topology = damage_readiness.analyze_mesh_object(
+        source, relevant
+    )
+    protected_analysis, _protected_topology = damage_readiness.analyze_mesh_object(
+        protected, relevant
+    )
+    current = source_analysis.get("fingerprints") or {}
+    proof = protected_analysis.get("fingerprints") or {}
+    expected = state.get("source_fingerprints") or {}
+    if current.get("topology_sha256") == expected.get("topology_sha256"):
+        return {"status": "UNCHANGED", "source": source.name}
+    if source.data.shape_keys is not None or protected.data.shape_keys is not None:
+        raise RuntimeError(
+            "Source geometry drift cannot be repaired while source/protected shape keys exist."
+        )
+    if current.get("vertex_group_sha256") != expected.get("vertex_group_sha256"):
+        raise RuntimeError(
+            "Source geometry drift also changed skin weights; rebuild or deliberately re-author the technical body."
+        )
+    if (
+        proof.get("source_contract_topology_sha256")
+        != expected.get("source_contract_topology_sha256")
+        or proof.get("source_contract_weight_sha256")
+        != expected.get("source_contract_weight_sha256")
+    ):
+        raise RuntimeError(
+            "Protected source geometry no longer matches the finished authoring proof."
+        )
+    source_mesh = source.data
+    protected_mesh = protected.data
+    same_connectivity = (
+        len(source_mesh.vertices) == len(protected_mesh.vertices)
+        and len(source_mesh.edges) == len(protected_mesh.edges)
+        and len(source_mesh.polygons) == len(protected_mesh.polygons)
+        and all(
+            tuple(edge.vertices) == tuple(protected_mesh.edges[edge.index].vertices)
+            for edge in source_mesh.edges
+        )
+        and all(
+            tuple(polygon.vertices)
+            == tuple(protected_mesh.polygons[polygon.index].vertices)
+            for polygon in source_mesh.polygons
+        )
+    )
+    if not same_connectivity:
+        raise RuntimeError(
+            "Source topology/connectivity changed; texture approval cannot repair a technical-body edit."
+        )
+    previous = [vertex.co.copy() for vertex in source_mesh.vertices]
+    try:
+        for vertex, protected_vertex in zip(
+            source_mesh.vertices, protected_mesh.vertices
+        ):
+            vertex.co = protected_vertex.co
+        source_mesh.update()
+        context.view_layer.update()
+        restored, _topology = damage_readiness.analyze_mesh_object(source, relevant)
+        restored_fingerprints = restored.get("fingerprints") or {}
+        if (
+            restored_fingerprints.get("topology_sha256")
+            != expected.get("topology_sha256")
+            or restored_fingerprints.get("vertex_group_sha256")
+            != expected.get("vertex_group_sha256")
+        ):
+            raise RuntimeError(
+                "Protected source coordinates did not restore the stored readiness proof."
+            )
+        readiness = damage_readiness.validate_source_readiness_contract(
+            state.get("source_readiness_contract"), context
+        )
+        if readiness.get("status") != "PASS":
+            raise RuntimeError(
+                "Protected source coordinates did not restore source readiness: "
+                + "; ".join(readiness.get("reasons", [])[:4])
+            )
+        state["source_geometry_restore"] = {
+            "status": "RESTORED_FROM_PROTECTED_SOURCE",
+            "restored_at_utc": _utc_timestamp(),
+            "source_object": source.name,
+            "protected_source_object": protected.name,
+            "previous_topology_sha256": current.get("topology_sha256"),
+            "restored_topology_sha256": restored_fingerprints.get(
+                "topology_sha256"
+            ),
+        }
+        _store_state(state)
+        return {"status": "RESTORED", "source": source.name}
+    except Exception:
+        for vertex, coordinate in zip(source_mesh.vertices, previous):
+            vertex.co = coordinate
+        source_mesh.update()
+        context.view_layer.update()
+        raise
+
+
 class DAF_OT_restore_finished_source_transform(Operator):
     bl_idname = "daf.restore_finished_source_transform"
     bl_label = "Restore Finished Source Proof"

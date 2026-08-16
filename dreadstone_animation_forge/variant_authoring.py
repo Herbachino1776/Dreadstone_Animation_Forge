@@ -404,6 +404,7 @@ def _validated_finished_damage_body(context):
             {"status": "UNAVAILABLE", "errors": []},
             None,
         )
+    damage_authoring.restore_finished_source_geometry_proof(context, authoring_state)
     damage_authoring.restore_finished_source_transform_proof(context)
     validation = damage_authoring._validate_authoring(
         authoring_state,
@@ -1145,6 +1146,44 @@ def _active_base_color_bindings(context):
         bpy.data.materials.get(str(name))
         for name in active.get("appearance", {}).get("ownedMaterials", [])
     ]
+    if not any(material is not None for material in materials):
+        # A legacy/corrupt look can retain its identity while its owned palette
+        # datablocks are gone.  The visible finished character still provides
+        # the authoritative slot/node structure, so recreate only this look's
+        # materials and images before installing the newly baked Base Color.
+        old_appearance = copy.deepcopy(active.get("appearance", {}))
+        _release_owned_appearance(old_appearance)
+        replacement = _runtime_material_appearance(
+            state["familyId"], active["variantId"]
+        )
+        replacement_materials = [
+            bpy.data.materials.get(str(name))
+            for name in replacement.get("ownedMaterials", [])
+        ]
+        replacement_bindings = [
+            (material, node)
+            for material in replacement_materials
+            if material is not None
+            for node in _linked_base_color_image_nodes(material)
+        ]
+        if not replacement_bindings:
+            _release_owned_appearance(replacement)
+            raise RuntimeError(
+                "The finished character has no unambiguous image driving Principled Base Color. "
+                "Link its skin image to Base Color, then try again."
+            )
+        if active.get("appearanceApprovalState") == "APPROVED":
+            state = model.begin_forge_texture_variant_edit(state)
+        owned = next(
+            value
+            for value in state["variants"]
+            if value["variantId"] == state["activeVariantId"]
+        )
+        owned["appearance"] = replacement
+        _apply_runtime_material_slots(replacement)
+        store_state(state, context.scene)
+        active = owned
+        materials = replacement_materials
     bindings = [
         (material, node)
         for material in materials

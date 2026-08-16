@@ -1,5 +1,17 @@
 # Changelog
 
+## 6.0.2
+
+- Fixed **USE FINAL ON THIS LOOK** when a legacy look retained a missing owned
+  material. Forge now rebuilds only that look's palette from the intact runtime
+  material graph, then installs the newly baked Skin & Bones Base Color.
+- Fixed **SAVE CURRENT LOOK** being blocked after projection moved only the
+  hidden S&B source's vertex coordinates. Forge now restores those coordinates
+  transactionally from the protected Complete Damage source proof, but still
+  refuses changed topology, weights, shape keys, rig, sockets, or Damage data.
+- Added Blender regressions for missing-look palette recovery and exact
+  protected-coordinate restoration without Action, mesh, or object duplication.
+
 ## 6.0.1
 
 - Fixed native look Save/Export falsely reporting a changed technical body in

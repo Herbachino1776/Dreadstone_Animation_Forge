@@ -1,6 +1,11 @@
 # Character Variant Family contract
 
-Forge release: `6.0.1`
+Forge release: `6.0.2`
+
+Native look capture may transactionally recover a missing variant-owned
+material palette from the intact runtime slots and may restore texture-only
+source-coordinate drift from Complete Damage's protected source. Neither path
+changes topology, weights, the runtime rig, sockets, Actions, or Damage data.
 
 Forge schema: `dreadstone.character_variant_family.v1`
 

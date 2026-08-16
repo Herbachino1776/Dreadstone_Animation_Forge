@@ -597,8 +597,36 @@ def main():
         projection_rig.animation_data.action is source_action_before_bridge,
         "Save/reopen changed the S&B source Action.",
     )
+    # Reproduce a legacy look whose owned material disappeared while another
+    # valid look still drives the intact runtime body. Applying an S&B final
+    # must rebuild only the active look palette instead of trapping the artist.
+    missing_draft_material_name = draft["appearance"]["ownedMaterials"][0]
+    variant_authoring._apply_runtime_material_slots(base["appearance"])
+    missing_draft_material = bpy.data.materials.get(missing_draft_material_name)
+    require(missing_draft_material is not None, missing_draft_material_name)
+    missing_draft_material.use_fake_user = False
+    bpy.data.materials.remove(missing_draft_material)
     bridged_variant, bridged_image = variant_authoring.apply_skin_and_bones_final_texture(
         bpy.context
+    )
+    rebuilt_material = bpy.data.materials.get(
+        bridged_variant["appearance"]["ownedMaterials"][0]
+    )
+    require(
+        rebuilt_material is not None
+        and rebuilt_material.get(variant_authoring.TEXTURE_OWNER_PROPERTY)
+        == bridged_variant["variantId"],
+        {
+            "material": rebuilt_material.name if rebuilt_material else None,
+            "owner": (
+                rebuilt_material.get(variant_authoring.TEXTURE_OWNER_PROPERTY)
+                if rebuilt_material
+                else None
+            ),
+            "variant": bridged_variant["variantId"],
+            "owned": bridged_variant["appearance"]["ownedMaterials"],
+            "materials": [material.name for material in bpy.data.materials],
+        },
     )
     require(
         bridged_image.packed_file is not None or bridged_image.source == 'GENERATED',
@@ -651,7 +679,7 @@ def main():
         "Projection bridging changed an authored hand socket transform.",
     )
 
-    draft_material = bpy.data.materials[draft["appearance"]["ownedMaterials"][0]]
+    draft_material = rebuilt_material
     draft_material.diffuse_color = (0.08, 0.16, 0.24, 1.0)
     draft_image = bridged_image
     pixels = list(draft_image.pixels[0:4])
