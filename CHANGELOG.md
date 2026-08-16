@@ -1,5 +1,98 @@
 # Changelog
 
+## 5.4.4
+
+- Replaced the competing top-level family choices with one ordered **LOOK
+  VARIANTS · TEXTURE → EXPORT** surface. Finished characters get one obvious
+  setup action and a repeatable create → edit/load → preview → save/export loop;
+  Skin & Bones handoff ingest and per-look Action/Damage overrides live under
+  collapsed Advanced sections.
+- Added an ordered Skin & Bones projection bridge directly inside the draft-look
+  card: load a four-view folder, reveal the otherwise hidden S&B projection body,
+  build/refresh preview, bake, and copy the final UV image into only the active
+  Forge look. One-file replacement remains available and now rejects folders
+  with an explicit source-art explanation.
+- Fixed look switching revealing `DSB_SEGMENT_HEAD` or other detached Damage
+  pieces. Forge now restores each mesh's authored intact/default visibility and
+  preserves hand-socket position and rotation throughout projection and look
+  switching.
+- Zero-configuration setup now derives the look-set and shipping identity from
+  the existing Complete Damage export name, calls the base look `Original`, and
+  never asks a finished legacy character for nonexistent S&B family metadata.
+- Active and batch look export now perform the exact transactional hidden-source
+  proof repair automatically for affected older/resized finished files. The
+  artist-positioned socket translation and rotation remain authoritative.
+- Added **FINISHED CHARACTER -> TEXTURE MULTIPLIER** for an already-authored
+  `DSB_DAMAGE_RIG`. It captures any number of material/image looks while every
+  Action, Damage Key, Progressive Damage Site, gore record, and managed socket
+  stays shared until an explicit Forge override is created.
+- Kept this workflow distinct from imported Skin & Bones Appearance Families:
+  Forge proves compatibility from the finished 21-bone rig, weighted body
+  topology, UVs, transforms, and material-slot structure and records Forge-owned
+  texture approval without inventing Skin & Bones handoff metadata.
+- Put Preview, Save, **SAVE + EXPORT**, and **EXPORT ALL READY LOOKS** together
+  in the ordered Look Variants card. Saved looks export as independent Complete
+  Damage GLBs.
+- Added an explicit transactional repair for older/resized authoring files whose
+  hidden original source lost its stored preparation transform, plus safe managed
+  socket scale normalization before variant export. Neither repair weakens the
+  existing full authoring, 21-bone, or socket validation gates.
+- Added **BYPASS FAILED CHECKS AND SAVE** beside Preview. It explicitly accepts
+  the exact current preview even when pose-health or baked-path checks fail and
+  makes the saved Action available to game/export workflows.
+- Bypass decisions are never silent: the Action stores a digest-bound
+  `dreadstone.offensive_motion_bypass.v1` record containing every bypassed
+  error/warning, validation and pose status, timestamp, recipe digest, and the
+  exact reviewed-preview digest.
+- A bypass automatically becomes stale after any trajectory, curve, socket, or
+  canonical-rig change. Normal **APPROVE** remains strict, and failed previews
+  still display their real quality status.
+- Failed paths accepted by the user receive explicit intended-target metadata
+  marked `technicalChecksBypassed`, allowing Animation Clip and game export
+  without falsely rewriting the original failed validation report as a pass.
+
+## 5.4.3
+
+- Turned **GENERATE & PREVIEW** into a permissive animation sandbox. It now
+  bakes and plays the live sliders and meter values even when pose health or
+  weapon-path validation fails; those results remain clearly marked Preview
+  Only and cannot be approved.
+- Restored the primary aim, windup, power, body, follow-through, arm-relax,
+  target-distance, weapon-length, and grip/contact controls to the normal Attack
+  Studio surface. Generate no longer discards those values in favor of hidden
+  sanitized defaults.
+- Added a lightweight selected-weapon preview on the runtime hand socket.
+  Changing weapon removes the old proxy immediately, and generation replaces it
+  with the current blade, short blade, mace, or two-hand proxy instead of
+  leaving a stale longsword visible.
+- Kept strict pose, reach, trajectory, preview-proof, and socket checks on
+  **APPROVE**. Structural rig errors still stop generation; artistic experiments
+  do not.
+
+## 5.4.2
+
+- Replaced the macro-heavy default attack surface with **Attack**, **Weapon**,
+  **Target**, and one **GENERATE & PREVIEW** action. Hidden expert state no
+  longer leaks into the simple build; the full editor and legacy generators
+  remain collapsed under Advanced.
+- Made target, proxy, and trail helpers opt-in through **CONTACT** or
+  **REPLAY / PREVIEW**, so ordinary generation does not populate the scene with
+  editable helper objects.
+- Added a 55% minimum arm-extension boundary to Auto Fit, creating a safe reach
+  annulus that rejects both folded wrists and over-extension. Thrusts also fail
+  if the wrist does not advance in front of the shoulder and stay ahead of the
+  elbow during ACTIVE.
+- Reworked elbow-pole continuity around the character's authored base pose,
+  fixed socket calibration to use the stable bone-parent local transform, and
+  tightened FK continuity to clean at 22 degrees or less, warning through 25
+  degrees, and hard failure above 25 degrees.
+- Reduced production attack baking to sparse rotation curves on spine, chest,
+  active shoulder, upper arm, forearm, and hand. The lower body stays authored,
+  named phase poses remain exact, and redundant per-frame keys are removed only
+  after quality checks pass.
+- Made every pose-health warning non-approvable. Geometry PASS remains necessary
+  but cannot override folded reach, continuity, or other pose-quality warnings.
+
 ## 5.4.1
 
 - Fixed planted feet inheriting leg-IK roll and visibly turning sideways during

@@ -1,6 +1,6 @@
 # Character Variant Family contract
 
-Forge release: `5.4.1`
+Forge release: `5.4.4`
 
 Forge schema: `dreadstone.character_variant_family.v1`
 
@@ -13,9 +13,10 @@ the artist explicitly creates an override. An imported compatible appearance
 therefore creates no Action, Damage Key, Stamp, gore, Progressive Damage Site,
 or socket copy.
 
-Skin & Bones owns appearance identity, approval, and proof that appearances use
-the same technical body. Forge owns shared animation/damage authoring, explicit
-copy-on-write overrides, effective resolution, and resolved shipping export.
+For an imported Skin & Bones family, Skin & Bones owns appearance identity,
+approval, and proof that appearances use the same technical body. Forge owns
+shared animation/damage authoring, explicit copy-on-write overrides, effective
+resolution, and resolved shipping export.
 The game receives an independent, fully resolved asset and does not need to
 implement Blender inheritance. World movement and AI speed remain game-owned.
 
@@ -65,6 +66,50 @@ changed; a failed GLB import removes only objects imported by that attempted
 transaction and cleans its unused mesh, armature, material, and image data.
 Variant IDs and case-insensitive sanitized shipping filenames must also remain
 unique within the family so batch export cannot overwrite another appearance.
+
+## Finished character texture multiplier
+
+Forge also supports a finished-character source that already has a generated
+`DSB_DAMAGE_RIG`, runtime body, approved Actions, and Damage authoring but no
+Skin & Bones 2.2.0 Appearance Family handoff. This is an explicit second source
+mode, `FORGE_FINISHED_TEXTURE_CAPTURE`; it does not synthesize a Skin & Bones
+handoff or attach fake `sbf_*` family metadata to the shipping asset.
+
+The artist starts the family from the finished Damage rig. Forge derives a
+`dreadstone-finished-damage-body-v1` SHA-256 technical fingerprint from the
+exact canonical 21-bone rest hierarchy and the runtime body's topology, vertex
+weights, UVs, object transforms, and material-slot structure. Material and
+image content are intentionally excluded so another baked look can remain
+compatible. A changed rig, body, weights, UV layout, transform, or slot
+structure makes the look incompatible rather than silently inheriting content.
+
+The base look snapshots the runtime body's exact material-slot bindings. **MAKE
+EDITABLE TEXTURE COPY** duplicates only the active materials and their referenced
+images, immediately applies them to the same runtime body, and creates a draft
+variant with empty Action, Damage Key, and Progressive Site override maps. Packed
+images and dirty in-memory pixels are included in the appearance fingerprint.
+Approving the look is Forge-owned and records
+`ANIMATION_FORGE_TEXTURE_CAPTURE`, the appearance fingerprint, revision, and
+approval time. **EDIT / TWEAK THIS LOOK** deliberately returns one look to Draft
+without touching shared authoring. Editing pixels or material content blocks
+export until **SAVE CURRENT LOOK** or **SAVE + EXPORT** snapshots it again.
+
+The optional Skin & Bones projection bridge is a narrow editor integration, not
+a second family model. **LOAD 4-VIEW FOLDER** reveals S&B's original full-body
+mesh and hides Forge's derived Damage pieces; **BUILD / REFRESH PREVIEW** and
+**BAKE FINAL TEXTURE** invoke the installed S&B operators; **USE FINAL ON THIS
+LOOK** copies the resulting final Base Color into the active Forge-owned look and
+restores the intact Damage preview. Forge never treats `DSB_DAMAGE_RIG` as a
+projection mesh, never requires S&B family approval for this native finished-
+character route, and never touches socket transforms. The manual alternative
+accepts exactly one final UV image and explicitly rejects a four-view source
+folder. Camera projection and calibration remain Skin & Bones work; Forge owns
+the saved finished look and resolved shipping character.
+
+This route is intentionally for texture/material iteration on the same finished
+body. A Skin & Bones GLB cannot be joined to a native Forge texture family, and
+a native snapshot cannot be joined to an imported Skin & Bones family. Use the
+Skin & Bones route whenever the technical body itself must change.
 
 ## Persisted Forge family state
 
@@ -199,6 +244,7 @@ No Blender object names or unresolved inheritance are required by the game.
 
 Files without family state follow the exact 5.2.2 standalone Action, Damage,
 socket, and Complete Damage paths. Adoption is explicit and non-destructive;
-there is no automatic migration. This milestone supports exact Skin & Bones
-humanoid technical families only, does not add socket overrides, does not merge
-appearances into one GLB, and does not define game movement/AI policy.
+there is no automatic migration. Imported families require the exact Skin &
+Bones humanoid contract; finished texture families require an exact compatible
+Forge `DSB_DAMAGE_RIG` and runtime body. Neither route adds socket overrides,
+merges appearances into one GLB, or defines game movement/AI policy.

@@ -100,17 +100,68 @@ class AnimationLibraryContractTests(unittest.TestCase):
         self.assertIn("_draw_walk_animation", calls)
         self.assertIn("_draw_idle_animation", calls)
 
-    def test_offensive_panel_prioritizes_motion_studio_and_preserves_legacy_drafting(self):
+    def test_authored_attack_browser_is_primary_and_preserves_legacy_tools(self):
+        tree = ast.parse(self.panels)
+        functions = {
+            node.name: node
+            for node in tree.body
+            if isinstance(node, ast.FunctionDef)
+        }
+        self.assertNotIn("_draw_offensive_animation_540_reference", functions)
+        authored = ast.get_source_segment(
+            self.panels,
+            functions["_draw_authored_attack_browser"],
+        )
+        self.assertIsNotNone(authored)
         for marker in (
+            "AUTHORED ATTACK BROWSER",
+            "ATTACK LIBRARY",
+            "AUTHORED BASES",
+            "NON-SOLVING MACROS",
+            "TIMING MARKERS",
+            "PREVIEW ON CHARACTER",
+            "ACCEPT AS DRAFT",
+            '"daf.authored_attack_refresh"',
+            '"daf.authored_attack_select"',
+            '"daf.authored_attack_preview"',
+            '"daf.authored_attack_accept_draft"',
+            "authored_attack_mirror",
+            "authored_attack_speed",
+            "authored_attack_anticipation",
+            "authored_attack_strike",
+            "authored_attack_follow_through",
+            "authored_attack_torso",
+            "authored_attack_reach",
+            "authored_attack_elbow",
+            "authored_attack_wrist",
+            "authored_attack_stance",
+            "authored_attack_root_policy",
+            "authored_attack_preview_weapon",
+            "Attack_Start",
+            "Windup_Anticipation",
+            "Active_Start",
+            "Contact",
+            "Active_End",
+            "Attack_End",
+        ):
+            self.assertIn(marker, authored)
+        self.assertNotIn("motion_studio", authored)
+        self.assertNotIn("target_distance", authored)
+
+        legacy = ast.get_source_segment(
+            self.panels,
+            functions["_draw_offensive_animation"],
+        )
+        self.assertIsNotNone(legacy)
+        for marker in (
+            "LEGACY PROCEDURAL ATTACKS",
             "OFFENSIVE MOTION STUDIO",
-            "TARGET → WEAPON PATH → BODY SOLVE → FK BAKE → VALIDATE",
+            "ADVANCED - TRAJECTORY, BODY & SOLVER",
+            "SANDBOX CONTROLS",
             '"daf.motion_studio_build_from_master"',
             '"daf.motion_studio_rebuild_body_solve"',
             '"daf.motion_studio_validate_baked_path"',
-            '"daf.motion_studio_preview"',
-            '"daf.motion_studio_approve"',
             '"daf.motion_studio_promote_master"',
-            "CONTACT shows the intended target",
             "LEGACY / PROCEDURAL DRAFTING",
             '"offensive_windup_seconds"',
             '"offensive_active_seconds"',
@@ -125,18 +176,57 @@ class AnimationLibraryContractTests(unittest.TestCase):
             '"offensive_stance_compression"',
             '"daf.generate_selected_offensive_draft"',
             '"daf.preview_offensive_draft"',
-            "Save / Approve This Attack",
             "Backward-compatible body-first rough drafts",
         ):
-            self.assertIn(marker, self.panels)
-        for marker in (
-            'OFFENSIVE_RECIPE_SCHEMA = "dreadstone.offensive_recipe.v1"',
-            'action["dsb_offensive_previewed"] = False',
-            'if not bool(action.get("dsb_offensive_previewed", False))',
-            "def generate_selected_offensive_action(",
-            "def preview_offensive_action(",
-        ):
-            self.assertIn(marker, self.addon if marker.startswith(("action", "if ", "def ")) else (PACKAGE / "offensive_actions.py").read_text(encoding="utf-8"))
+            self.assertIn(marker, legacy)
+
+        draw = functions["_draw_animation"]
+        calls = [
+            node.func.id
+            for node in ast.walk(draw)
+            if isinstance(node, ast.Call)
+            and isinstance(node.func, ast.Name)
+        ]
+        self.assertLess(
+            calls.index("_draw_authored_attack_browser"),
+            calls.index("_draw_offensive_animation"),
+        )
+
+    def test_authored_attack_macro_properties_match_service_limits(self):
+        settings = next(
+            node
+            for node in ast.parse(self.addon).body
+            if isinstance(node, ast.ClassDef)
+            and node.name == "DAFSettings"
+        )
+        properties = {
+            node.target.id: node.annotation
+            for node in settings.body
+            if isinstance(node, ast.AnnAssign)
+            and isinstance(node.target, ast.Name)
+        }
+        expected = {
+            "authored_attack_speed": (0.60, 1.60),
+            "authored_attack_anticipation": (0.75, 1.25),
+            "authored_attack_strike": (0.80, 1.20),
+            "authored_attack_follow_through": (0.70, 1.30),
+            "authored_attack_torso": (0.70, 1.30),
+            "authored_attack_reach": (0.88, 1.10),
+            "authored_attack_elbow": (0.80, 1.20),
+            "authored_attack_wrist": (0.60, 1.35),
+            "authored_attack_stance": (0.75, 1.25),
+        }
+        for property_name, (minimum, maximum) in expected.items():
+            with self.subTest(authored_macro=property_name):
+                call = properties[property_name]
+                self.assertIsInstance(call, ast.Call)
+                keywords = {
+                    keyword.arg: ast.literal_eval(keyword.value)
+                    for keyword in call.keywords
+                }
+                self.assertEqual(keywords["default"], 1.0)
+                self.assertEqual(keywords["min"], minimum)
+                self.assertEqual(keywords["max"], maximum)
 
     def test_humanoid_idle_is_a_first_class_yplus_loop(self):
         for marker in (
@@ -238,10 +328,27 @@ class AnimationLibraryContractTests(unittest.TestCase):
     def test_scene_state_and_operator_registration_are_present(self):
         for marker in (
             "ui_vip_animation_open",
+            "ui_authored_attack_open",
             "animation_library_active_clip_id",
             "animation_library_edit_source_clip_id",
             "animation_clip_directory",
             "animation_clip_import_path",
+            "authored_attack_library_root",
+            "authored_attack_filter_kind",
+            "authored_attack_filter_weapon",
+            "authored_attack_active_clip_id",
+            "authored_attack_mirror",
+            "authored_attack_speed",
+            "authored_attack_anticipation",
+            "authored_attack_strike",
+            "authored_attack_follow_through",
+            "authored_attack_torso",
+            "authored_attack_reach",
+            "authored_attack_elbow",
+            "authored_attack_wrist",
+            "authored_attack_stance",
+            "authored_attack_root_policy",
+            "authored_attack_preview_weapon",
         ):
             self.assertIn(marker, self.addon)
         for identifier in (
@@ -254,8 +361,22 @@ class AnimationLibraryContractTests(unittest.TestCase):
             "daf.animation_library_delete",
             "daf.animation_library_export",
             "daf.animation_library_import",
+            "daf.authored_attack_select",
+            "daf.authored_attack_refresh",
+            "daf.authored_attack_preview",
+            "daf.authored_attack_accept_draft",
         ):
             self.assertIn(identifier, self.operators)
+        for integration in (
+            "authored.finalize_draft(",
+            "_require_authored_attack_valid(",
+            "module.validate_action(context, armature, action)",
+        ):
+            self.assertIn(integration, self.operators)
+        self.assertIn(
+            "authored_attack_library.replace_preview_proxy(",
+            self.addon,
+        )
 
 
 if __name__ == "__main__":

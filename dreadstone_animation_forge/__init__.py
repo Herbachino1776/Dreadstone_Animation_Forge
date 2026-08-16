@@ -1,7 +1,7 @@
 bl_info = {
     "name": "Dreadstone Animation Forge",
     "author": "Dreadstone Black",
-    "version": (5, 4, 1),
+    "version": (5, 4, 4),
     "blender": (3, 6, 0),
     "location": "3D Viewport > Sidebar > Dreadstone",
     "description": "Animation authoring, protected damage assets, and registered-region trauma-field shape-key authoring.",
@@ -952,7 +952,7 @@ def approval_base_name(settings, kind):
     raise RuntimeError(f"Unknown Action kind: {kind}")
 
 
-def approve_draft_action(context, kind):
+def approve_draft_action(context, kind, *, bypass_motion_checks=False):
     settings = context.scene.daf_settings
     if settings.animation_library_edit_source_clip_id:
         raise RuntimeError(
@@ -981,7 +981,14 @@ def approve_draft_action(context, kind):
                 "Preview this offensive draft on the character before approving it."
             )
         if action.get(offensive_motion.MOTION_RECIPE_PROPERTY):
-            offensive_motion_studio.require_approval_ready(context, action)
+            if bypass_motion_checks:
+                if not offensive_motion_studio.bypass_is_current(context, action):
+                    raise RuntimeError(
+                        "Motion Studio bypass proof is missing or stale; preview and use "
+                        "BYPASS FAILED CHECKS AND SAVE again."
+                    )
+            else:
+                offensive_motion_studio.require_approval_ready(context, action)
         offensive_actions.validated_action_metadata(
             action,
             clip_duration_seconds=max(0.0, end - start) / max(fps, 0.001),
@@ -1305,6 +1312,27 @@ def _motion_display_updated(self, context):
         module.motion_display_updated(self, context)
 
 
+def _authored_attack_preview_weapon_updated(self, context):
+    """Replace only the transient authored-attack weapon preview."""
+
+    blend_data = getattr(bpy, "data", None)
+    if (
+        context is None
+        or blend_data is None
+        or not hasattr(blend_data, "objects")
+    ):
+        return
+    try:
+        from . import authored_attack_library
+
+        authored_attack_library.replace_preview_proxy(
+            context,
+            str(self.authored_attack_preview_weapon),
+        )
+    except Exception as exc:
+        self.authored_attack_status = f"PREVIEW PROXY ERROR — {exc}"
+
+
 class DAFSettings(PropertyGroup):
     # Compact interface state. These values are stored in the Blender scene.
     ui_workspace: EnumProperty(
@@ -1335,6 +1363,7 @@ class DAFSettings(PropertyGroup):
     ui_progressive_sites_open: BoolProperty(default=True)
     ui_progressive_advanced_open: BoolProperty(default=False)
     ui_vip_animation_open: BoolProperty(default=True)
+    ui_authored_attack_open: BoolProperty(default=True)
     ui_character_open: BoolProperty(default=True)
     ui_ground_open: BoolProperty(default=False)
     ui_rig_open: BoolProperty(default=False)
@@ -1354,7 +1383,7 @@ class DAFSettings(PropertyGroup):
     ui_surface_gore_open: BoolProperty(default=True)
     ui_body_arm_trauma_open: BoolProperty(default=False)
     ui_compound_trauma_open: BoolProperty(default=False)
-    ui_offensive_open: BoolProperty(default=True)
+    ui_offensive_open: BoolProperty(default=False)
     ui_motion_advanced_open: BoolProperty(default=False)
     ui_motion_target_details_open: BoolProperty(default=False)
     ui_motion_weapon_geometry_open: BoolProperty(default=False)
@@ -1366,6 +1395,7 @@ class DAFSettings(PropertyGroup):
     ui_offensive_custom_open: BoolProperty(default=True)
     ui_mace_guard_open: BoolProperty(default=False)
     ui_variant_family_open: BoolProperty(default=True)
+    ui_variant_advanced_open: BoolProperty(default=False)
 
     variant_import_path: StringProperty(
         name="Skin & Bones Variant GLB",
@@ -1373,9 +1403,30 @@ class DAFSettings(PropertyGroup):
         default="",
         subtype='FILE_PATH',
     )
+    variant_texture_family_name: StringProperty(
+        name="Family Name",
+        description="Display name for the finished character texture family; blank uses the Blend filename",
+        default="",
+    )
+    variant_texture_name: StringProperty(
+        name="Texture Look",
+        description="Artist-facing name for the base or next texture appearance",
+        default="",
+    )
+    variant_texture_export_identity: StringProperty(
+        name="Export Name",
+        description="Independent game asset filename for this texture appearance; blank derives it from the names",
+        default="",
+    )
+    variant_texture_image_path: StringProperty(
+        name="Base Color Image",
+        description="Final projected, baked, painted, or replacement Base Color image to load into only the active look",
+        default="",
+        subtype='FILE_PATH',
+    )
     variant_family_status: StringProperty(
         name="Character Variant Family Status",
-        default="NO FAMILY — ADOPT AN APPROVED SKIN & BONES APPEARANCE",
+        default="NO LOOK SET — START FROM THE FINISHED CHARACTER",
         options={'HIDDEN'},
     )
     variant_shared_damage_edit_enabled: BoolProperty(
@@ -1493,6 +1544,138 @@ class DAFSettings(PropertyGroup):
         description="Portable Forge animation-clip .blend file",
         default="",
         subtype='FILE_PATH',
+    )
+    authored_attack_library_root: StringProperty(
+        name="Authored Attack Library",
+        description="Folder containing rights-cleared authored attack sources and manifests; built-in bases remain available",
+        default="//authored_attacks/",
+        subtype='DIR_PATH',
+    )
+    authored_attack_filter_kind: EnumProperty(
+        name="Attack",
+        description="Show one authored attack family or all available bases",
+        items=[
+            ('ALL', "All Attacks", "Show every authored attack base"),
+            ('ATTACK_SLASH_RTL_ONE_HAND', "Slash Right to Left", "One-hand right-to-left slash bases"),
+            ('ATTACK_SLASH_LTR_ONE_HAND', "Slash Left to Right", "One-hand left-to-right slash bases"),
+            ('ATTACK_OVERHEAD_ONE_HAND', "Overhead", "One-hand overhead strike bases"),
+            ('ATTACK_HEAVY_ONE_HAND', "Heavy Diagonal", "Committed one-hand diagonal strike bases"),
+            ('ATTACK_THRUST_ONE_HAND', "Thrust", "Blade- or polearm-compatible thrust bases"),
+        ],
+        default='ALL',
+    )
+    authored_attack_filter_weapon: EnumProperty(
+        name="Mechanics Family",
+        description="Filter source motion by its authored weapon mechanics; this never changes body animation",
+        items=[
+            ('ALL', "All Families", "Show every compatible authored mechanics family"),
+            ('SWORD', "Sword / Blade", "Cutting and thrusting motion authored for blades"),
+            ('AXE', "Axe", "Chopping motion authored for an axe-like mass distribution"),
+            ('MACE', "Mace", "Blunt striking motion authored for a head-heavy weapon"),
+            ('POLEARM', "Polearm", "Two-handed or extended thrust mechanics"),
+        ],
+        default='ALL',
+    )
+    authored_attack_active_clip_id: StringProperty(
+        name="Selected Authored Attack",
+        default="",
+        options={'HIDDEN'},
+    )
+    authored_attack_mirror: BoolProperty(
+        name="Mirror",
+        description="Use the authored semantic mirror without invoking a body or target solver",
+        default=False,
+    )
+    authored_attack_speed: FloatProperty(
+        name="Speed",
+        description="Retiming multiplier applied to the authored poses and combat markers",
+        default=1.0,
+        min=0.60,
+        max=1.60,
+        precision=2,
+    )
+    authored_attack_anticipation: FloatProperty(
+        name="Anticipation",
+        description="Deepen or restrain the authored windup pose without solving toward a target",
+        default=1.0,
+        min=0.75,
+        max=1.25,
+    )
+    authored_attack_strike: FloatProperty(
+        name="Strike",
+        description="Scale the authored contact drive while preserving the base mechanics",
+        default=1.0,
+        min=0.80,
+        max=1.20,
+    )
+    authored_attack_follow_through: FloatProperty(
+        name="Follow Through",
+        description="Scale the authored follow-through and recovery commitment",
+        default=1.0,
+        min=0.70,
+        max=1.30,
+    )
+    authored_attack_torso: FloatProperty(
+        name="Torso",
+        description="Scale the authored pelvis, spine, chest, and head contribution",
+        default=1.0,
+        min=0.70,
+        max=1.30,
+    )
+    authored_attack_reach: FloatProperty(
+        name="Reach",
+        description="Make the authored weapon-hand reach slightly more compact or extended",
+        default=1.0,
+        min=0.88,
+        max=1.10,
+    )
+    authored_attack_elbow: FloatProperty(
+        name="Elbow",
+        description="Bias the authored weapon arm toward a softer or firmer elbow bend",
+        default=1.0,
+        min=0.80,
+        max=1.20,
+    )
+    authored_attack_wrist: FloatProperty(
+        name="Wrist",
+        description="Scale the authored wrist articulation within a conservative range",
+        default=1.0,
+        min=0.60,
+        max=1.35,
+    )
+    authored_attack_stance: FloatProperty(
+        name="Stance",
+        description="Scale the authored stance compression without adding locomotion",
+        default=1.0,
+        min=0.75,
+        max=1.25,
+    )
+    authored_attack_root_policy: EnumProperty(
+        name="Root",
+        description="Keep the clip in place or preserve explicitly authored root motion",
+        items=[
+            ('IN_PLACE', "In Place", "Keep horizontal locomotion game-owned"),
+            ('AUTHORED_ROOT_MOTION', "Authored Root Motion", "Preserve authored root travel while fitting the planted stance with baked FK body compensation"),
+        ],
+        default='IN_PLACE',
+    )
+    authored_attack_preview_weapon: EnumProperty(
+        name="Preview Proxy",
+        description="Transient hand proxy for silhouette review only; changing it never changes the Action",
+        items=[
+            ('NONE', "None", "Remove every authored preview proxy"),
+            ('SWORD', "Sword", "Show one transient sword proxy"),
+            ('AXE', "Axe", "Show one transient axe proxy"),
+            ('MACE', "Mace", "Show one transient mace proxy"),
+            ('POLEARM', "Polearm", "Show one transient polearm proxy"),
+        ],
+        default='NONE',
+        update=_authored_attack_preview_weapon_updated,
+    )
+    authored_attack_status: StringProperty(
+        name="Authored Attack Status",
+        default="READY — SELECT AN AUTHORED BASE",
+        options={'HIDDEN'},
     )
     ui_anatomy_advanced_open: BoolProperty(default=False)
     anatomy_profile_override: EnumProperty(
@@ -2291,7 +2474,7 @@ class DAFSettings(PropertyGroup):
     last_damage_manifest_path: StringProperty(default="", options={'HIDDEN'})
     last_damage_validation_path: StringProperty(default="", options={'HIDDEN'})
 
-    # Trauma Field Authoring v5.4.1.
+    # Trauma Field Authoring v5.4.4.
     deformation_region: EnumProperty(
         name="Active Region",
         items=_deformation_region_items,
@@ -5762,17 +5945,23 @@ def validate_offensive_action(
                 action,
                 recipe,
             )
-            if report is None:
-                errors.append("Motion Studio baked weapon path has not been validated.")
-            elif report.get("status") != "PASS":
-                errors.extend(
-                    "Motion Studio: " + message
-                    for message in report.get("errors", ["Baked weapon-path validation failed."])
-                )
-            elif str(report.get("inputDigest", "")) != current_digest:
-                errors.append("Motion Studio baked-path validation is stale after a trajectory-critical change.")
-            elif not bool(report.get("activeContact", False)):
-                errors.append("Motion Studio baked weapon path does not contact its target during ACTIVE.")
+            bypassed = offensive_motion_studio.bypass_is_current(
+                context,
+                action,
+                armature=armature,
+            )
+            if not bypassed:
+                if report is None:
+                    errors.append("Motion Studio baked weapon path has not been validated.")
+                elif report.get("status") != "PASS":
+                    errors.extend(
+                        "Motion Studio: " + message
+                        for message in report.get("errors", ["Baked weapon-path validation failed."])
+                    )
+                elif str(report.get("inputDigest", "")) != current_digest:
+                    errors.append("Motion Studio baked-path validation is stale after a trajectory-critical change.")
+                elif not bool(report.get("activeContact", False)):
+                    errors.append("Motion Studio baked weapon path does not contact its target during ACTIVE.")
             if require_approved:
                 errors.extend(offensive_motion_studio.approval_errors(context, action))
         except (RuntimeError, ValueError) as exc:
@@ -7503,7 +7692,7 @@ class DAF_PT_legacy_panel(Panel):
             layout,
             s,
             "ui_deformation_authoring_open",
-            "Trauma Field Authoring v5.4.1",
+            "Trauma Field Authoring v5.4.4",
         )
         if opened:
             configure_property_box(box)
@@ -7969,6 +8158,19 @@ def register():
             registered.append(cls.__name__)
         bpy.types.Scene.daf_settings = PointerProperty(type=DAFSettings)
         _REGISTERED_CLASS_NAMES = registered
+        # addon_utils enables extensions inside RestrictBlend, where bpy.data
+        # intentionally exposes no objects/actions.  Transient scene cleanup
+        # is only valid when normal Blend data access is available.
+        blend_data = getattr(bpy, "data", None)
+        if (
+            blend_data is not None
+            and hasattr(blend_data, "objects")
+            and hasattr(blend_data, "actions")
+        ):
+            from . import authored_attack_library
+
+            authored_attack_library.remove_owned_preview_proxies()
+            authored_attack_library.remove_preview_action()
         deformation_authoring.initialize_runtime_services()
         variant_authoring.recover_state()
         offensive_motion_studio.register_handlers()
@@ -7994,6 +8196,19 @@ def unregister():
         offensive_motion_studio.unregister_handlers()
         deformation_authoring.shutdown_runtime_services()
     finally:
+        try:
+            blend_data = getattr(bpy, "data", None)
+            if (
+                blend_data is not None
+                and hasattr(blend_data, "objects")
+                and hasattr(blend_data, "actions")
+            ):
+                from . import authored_attack_library
+
+                authored_attack_library.remove_owned_preview_proxies()
+                authored_attack_library.remove_preview_action()
+        except Exception:
+            pass
         if hasattr(bpy.types.Scene, "daf_settings"):
             del bpy.types.Scene.daf_settings
         for cls in reversed(CLASSES):

@@ -357,6 +357,7 @@ def audit_runtime_actions(state):
                 "compatibility": compatibility,
                 "offensiveAction": offensive,
                 "offensiveTargeting": offensive_targeting,
+                "authoredAttack": bool(action.get("dsb_authored_attack_json")),
             }
         )
     if errors:
@@ -372,6 +373,27 @@ def audit_runtime_actions(state):
             rejected_source.append(record)
         else:
             selected.append(record)
+    authored_combat_ids = {
+        record["offensiveAction"]["combatActionId"]
+        for record in selected
+        if record["ownership"] == "RUNTIME"
+        and record["authoredAttack"]
+        and record.get("offensiveAction")
+    }
+    rejected_legacy = []
+    preferred = []
+    for record in selected:
+        offensive = record.get("offensiveAction")
+        combat_id = str((offensive or {}).get("combatActionId", ""))
+        if (
+            record["ownership"] == "RUNTIME"
+            and not record["authoredAttack"]
+            and combat_id in authored_combat_ids
+        ):
+            rejected_legacy.append(record)
+        else:
+            preferred.append(record)
+    selected = preferred
     clip_owners = defaultdict(list)
     for record in selected:
         if record["clipId"]:
@@ -402,6 +424,7 @@ def audit_runtime_actions(state):
         raise RuntimeError("Runtime animation audit found ambiguous combat Action IDs: " + detail)
     selected.sort(key=lambda record: record["name"].lower())
     rejected_source.sort(key=lambda record: record["name"].lower())
+    rejected_legacy.sort(key=lambda record: record["name"].lower())
     return {
         "status": "PASS",
         "runtimeArmature": runtime_name,
@@ -412,6 +435,8 @@ def audit_runtime_actions(state):
         ],
         "rejectedSourceActions": [record["name"] for record in rejected_source],
         "rejectedSourceActionCount": len(rejected_source),
+        "rejectedLegacyActions": [record["name"] for record in rejected_legacy],
+        "rejectedLegacyActionCount": len(rejected_legacy),
         "mirroredSourceActionCount": sum(
             record["ownership"] == "SOURCE" for record in selected
         ),

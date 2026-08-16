@@ -28,7 +28,7 @@ from .deformation import gltf_validation
 
 AUTHORING_SCHEMA = "dreadstone.damage_authoring.v1"
 AUTHORING_VERSION = (3, 9, 1)
-AUTHORING_BUILD_ID = "2026-08-12.offensive-motion-studio-natural.1"
+AUTHORING_BUILD_ID = "2026-08-13.attack-studio-bypass.1"
 READINESS_SCHEMA = "dreadstone.damage_readiness.v1"
 READINESS_REVISION_REQUIRED = "hierarchical_weight_partition_v3.16.3"
 STATE_TEXT_NAME = "DSB_DAMAGE_AUTHORING_STATE.json"
@@ -2319,6 +2319,78 @@ class DAF_OT_validate_damage_authoring_asset(Operator):
             return {'CANCELLED'}
 
 
+def restore_finished_source_transform_proof(context):
+    """Restore only the hidden original source transform from built-authoring proof."""
+
+    state = _load_state()
+    source = _validate_current_source(state)
+    stored = state.get("source_object_matrix_world")
+    if not isinstance(stored, list) or len(stored) != 4:
+        raise RuntimeError("The finished authoring state has no valid source transform proof.")
+    previous = source.matrix_world.copy()
+    expected = Matrix(stored)
+    difference = max(
+        abs(float(previous[row][column] - expected[row][column]))
+        for row in range(4)
+        for column in range(4)
+    )
+    if difference <= 1.0e-6:
+        return {"status": "UNCHANGED", "source": source.name, "validation": "PASS"}
+    try:
+        source.matrix_world = expected
+        context.view_layer.update()
+        validation = _validate_authoring(
+            state,
+            context.scene.daf_settings.damage_authoring_gap_tolerance,
+        )
+        if validation["status"] != "PASS":
+            raise RuntimeError(
+                "Restored source proof did not validate the finished asset: "
+                + "; ".join(validation["errors"][:4])
+            )
+        state["source_transform_restore"] = {
+            "status": "RESTORED_FROM_AUTHORING_PROOF",
+            "restored_at_utc": _utc_timestamp(),
+            "source_object": source.name,
+            "previous_matrix_world": [list(row) for row in previous],
+            "restored_matrix_world": [list(row) for row in expected],
+        }
+        _store_state(state)
+        return {
+            "status": "RESTORED",
+            "source": source.name,
+            "validation": validation["status"],
+        }
+    except Exception:
+        source.matrix_world = previous
+        context.view_layer.update()
+        raise
+
+
+class DAF_OT_restore_finished_source_transform(Operator):
+    bl_idname = "daf.restore_finished_source_transform"
+    bl_label = "Restore Finished Source Proof"
+    bl_description = "Restore only the hidden original source transform recorded when the finished Damage Asset was built, then require full authoring validation"
+    bl_options = {'REGISTER', 'UNDO'}
+
+    def invoke(self, context, event):
+        return context.window_manager.invoke_confirm(self, event)
+
+    def execute(self, context):
+        try:
+            result = restore_finished_source_transform_proof(context)
+            context.scene.daf_settings.last_damage_authoring_validation = "PASS"
+            context.scene.daf_settings.damage_authoring_status = "SOURCE PROOF " + result["status"]
+            self.report(
+                {'INFO'},
+                f"{result['status'].title()} hidden source proof for {result['source']}; finished Damage validation passed.",
+            )
+            return {'FINISHED'}
+        except Exception as exc:
+            self.report({'ERROR'}, str(exc))
+            return {'CANCELLED'}
+
+
 class DAF_OT_export_damage_asset(Operator):
     bl_idname = "daf.export_damage_asset"
     bl_label = "Export Damage GLB + Manifest"
@@ -2381,6 +2453,7 @@ CLASSES = (
     DAF_OT_preview_damage_detached,
     DAF_OT_restore_imported_damage_intact_preview,
     DAF_OT_validate_damage_authoring_asset,
+    DAF_OT_restore_finished_source_transform,
     DAF_OT_export_damage_asset,
     DAF_OT_open_damage_export_folder,
 )

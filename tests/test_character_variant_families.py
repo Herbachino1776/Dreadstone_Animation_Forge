@@ -138,6 +138,117 @@ class SkinAndBonesContractTests(unittest.TestCase):
         )
 
 
+class FinishedRigTextureFamilyTests(unittest.TestCase):
+    def setUp(self):
+        self.state = VARIANTS.new_forge_texture_family(
+            "cinderbound-warden",
+            "Cinderbound Warden",
+            "base",
+            "Base",
+            "cinderbound_warden",
+            "d" * 64,
+            rig(),
+            appearance={"runtimeMaterialSlots": []},
+            appearance_fingerprint="e" * 64,
+            approved_at_utc="2026-08-15T12:00:00+00:00",
+        )
+
+    def test_finished_rig_family_is_not_a_synthetic_sbf_handoff(self):
+        self.assertEqual(
+            VARIANTS.FAMILY_SOURCE_FORGE_TEXTURE,
+            self.state["familySource"],
+        )
+        base = VARIANTS.variant_by_id(self.state, "base")
+        self.assertIsNone(base["handoff"])
+        self.assertEqual(
+            VARIANTS.FORGE_TEXTURE_APPROVAL_AUTHORITY,
+            base["appearanceApprovalAuthority"],
+        )
+        self.assertTrue(VARIANTS.variant_appearance_approved(self.state, "base"))
+
+    def test_new_texture_look_is_draft_and_inherits_all_shared_authoring(self):
+        state = VARIANTS.register_shared_actions(self.state, ["idle", "walk", "death"])
+        state = VARIANTS.add_forge_texture_variant(
+            state,
+            "ash",
+            "Ash",
+            "cinderbound_warden_ash",
+            "d" * 64,
+            rig(),
+            appearance={"runtimeMaterialSlots": []},
+        )
+        ash = VARIANTS.variant_by_id(state, "ash")
+        self.assertEqual("DRAFT", ash["appearanceApprovalState"])
+        self.assertFalse(VARIANTS.variant_appearance_approved(state, "ash"))
+        self.assertEqual({}, ash["actionOverrides"])
+        self.assertEqual({}, ash["damageKeyOverrides"])
+        self.assertEqual({}, ash["progressiveSiteOverrides"])
+        for action_id in ("idle", "walk", "death"):
+            self.assertEqual(
+                (action_id, "INHERITED"),
+                VARIANTS.resolve_action_id(state, action_id, "ash"),
+            )
+
+    def test_texture_approval_is_forge_owned_and_revisioned(self):
+        state = VARIANTS.add_forge_texture_variant(
+            self.state,
+            "ember",
+            "Ember",
+            "cinderbound_warden_ember",
+            "d" * 64,
+            rig(),
+        )
+        state = VARIANTS.approve_forge_texture_variant(
+            state,
+            "f" * 64,
+            "2026-08-15T13:00:00+00:00",
+            variant_id="ember",
+        )
+        ember = VARIANTS.variant_by_id(state, "ember")
+        self.assertEqual("APPROVED", ember["appearanceApprovalState"])
+        self.assertEqual(2, ember["appearanceRevision"])
+        self.assertTrue(
+            VARIANTS.variant_appearance_approved(state, "ember", "f" * 64)
+        )
+        self.assertFalse(
+            VARIANTS.variant_appearance_approved(state, "ember", "0" * 64)
+        )
+
+    def test_explicit_texture_edit_blocks_export_until_saved_again(self):
+        original_revision = self.state["revision"]
+        state = VARIANTS.begin_forge_texture_variant_edit(self.state, "base")
+        base = VARIANTS.variant_by_id(state, "base")
+        self.assertEqual("DRAFT", base["appearanceApprovalState"])
+        self.assertEqual("e" * 64, base["appearanceFingerprint"])
+        self.assertFalse(VARIANTS.variant_appearance_approved(state, "base"))
+        self.assertGreater(state["revision"], original_revision)
+
+    def test_finished_rig_change_or_sbf_join_is_rejected(self):
+        with self.assertRaisesRegex(ValueError, "Damage Rig/body changed"):
+            VARIANTS.add_forge_texture_variant(
+                self.state,
+                "wrong",
+                "Wrong",
+                "wrong",
+                "0" * 64,
+                rig(),
+            )
+        with self.assertRaisesRegex(ValueError, "cannot be joined"):
+            VARIANTS.add_variant(self.state, handoff("sooted"), rig())
+
+    def test_texture_provenance_names_its_real_authority(self):
+        record = VARIANTS.export_provenance(self.state, "base")
+        self.assertEqual(
+            VARIANTS.FAMILY_SOURCE_FORGE_TEXTURE,
+            record["familySource"],
+        )
+        self.assertEqual(
+            VARIANTS.FORGE_TEXTURE_APPROVAL_AUTHORITY,
+            record["appearanceApprovalAuthority"],
+        )
+        self.assertEqual("e" * 64, record["appearanceFingerprint"])
+
+
 class AnimationResolutionTests(unittest.TestCase):
     def setUp(self):
         self.state = VARIANTS.register_shared_actions(
@@ -472,11 +583,41 @@ class StaticIntegrationTests(unittest.TestCase):
             "def effective_damage_key_names(",
             "def effective_progressive_collection(",
             "def export_context(",
+            "def finished_damage_body_fingerprint(",
+            'bl_idname = "daf.start_finished_texture_family"',
+            'bl_idname = "daf.create_forge_texture_variant"',
+            'bl_idname = "daf.approve_forge_texture_variant"',
+            'bl_idname = "daf.edit_forge_texture_variant"',
+            'bl_idname = "daf.replace_forge_texture_image"',
+            'bl_idname = "daf.load_sbf_projection_folder"',
+            'bl_idname = "daf.build_sbf_projection_preview"',
+            'bl_idname = "daf.bake_sbf_projection"',
+            'bl_idname = "daf.apply_sbf_final_texture"',
+            'bl_idname = "daf.save_export_forge_texture_variant"',
+            'bl_idname = "daf.preview_character_variant"',
+            'bl_idname = "daf.export_active_character_variant"',
             'bl_idname = "daf.create_variant_action_override"',
             'bl_idname = "daf.revert_variant_action_override"',
             'bl_idname = "daf.create_variant_damage_override"',
             'bl_idname = "daf.revert_variant_damage_override"',
             'bl_idname = "daf.export_ready_character_variants"',
+        ):
+            self.assertIn(marker, source)
+
+    def test_primary_ui_is_one_ordered_look_flow(self):
+        source = (PACKAGE / "ui" / "panels.py").read_text(encoding="utf-8")
+        for marker in (
+            "LOOK VARIANTS · TEXTURE → EXPORT",
+            "SET UP FROM THIS FINISHED CHARACTER",
+            "MAKE EDITABLE TEXTURE COPY",
+            "LOAD 4-VIEW FOLDER",
+            "BUILD / REFRESH PREVIEW",
+            "USE FINAL ON THIS LOOK",
+            "CHOOSE ONE FINISHED BASE COLOR IMAGE",
+            "SAVE CURRENT LOOK",
+            "SAVE + EXPORT",
+            "ADVANCED · IMPORT A SKIN & BONES 2.2 LOOK FAMILY",
+            "ADVANCED · TECHNICAL PROOF + AUTHORING OVERRIDES",
         ):
             self.assertIn(marker, source)
 
@@ -492,6 +633,12 @@ class StaticIntegrationTests(unittest.TestCase):
         source = (PACKAGE / "variant_authoring.py").read_text(encoding="utf-8")
         self.assertIn("FAMILY_SHARED_NO_VARIANT_OVERRIDE", (PACKAGE / "variant_family.py").read_text(encoding="utf-8"))
         self.assertNotIn("socket_override", source.lower())
+
+    def test_finished_source_proof_repair_is_explicit_and_transactional(self):
+        source = (PACKAGE / "damage_authoring.py").read_text(encoding="utf-8")
+        self.assertIn("def restore_finished_source_transform_proof(", source)
+        self.assertIn('bl_idname = "daf.restore_finished_source_transform"', source)
+        self.assertIn("source.matrix_world = previous", source)
 
 
 if __name__ == "__main__":

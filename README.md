@@ -1,8 +1,17 @@
 # Dreadstone Animation Forge
 
-Dreadstone Animation Forge `5.4.1` is a proprietary Blender add-on for
+Dreadstone Animation Forge `5.4.4` is a proprietary Blender add-on for
 animation drafting and compatibility-preserving damage authoring. The supported
 release runtime is Blender `5.1.2`.
+
+An already-finished `DSB_DAMAGE_RIG` now gets one ordered **LOOK VARIANTS ·
+TEXTURE → EXPORT** loop. Start with the current look, make an editable texture
+copy, paint it or load a final projected/baked Base Color, preview, then Save or
+Save + Export. The finished rig, Actions, Damage Keys, Progressive Damage Sites,
+gore, and artist-positioned sockets remain one shared authoring layer; adding a
+look does not copy them. The normal UI never asks the artist to choose a family
+implementation. Exact Skin & Bones 2.2 handoff import remains available under
+Advanced and is never counterfeited for a legacy finished character.
 
 Forge 4.0 keeps the compact VIP workflow built around
 Damage Keys, visible child Stamp alternatives, strong macros, one-click
@@ -78,6 +87,13 @@ appearance and deliberate copy-on-write overrides; adding a texture-only
 variant creates no duplicate Actions or Damage Keys. See the
 [Character Variant Family contract](docs/CHARACTER_VARIANT_FAMILY_CONTRACT.md).
 
+Forge 5.4.4 also supports the inverse production order: start from a finished
+Forge Damage character, turn it into a texture family, then capture additional
+looks. Its optional Skin & Bones bridge reveals the hidden full-body projection
+target, runs folder/preview/bake in order, and copies only the final UV texture
+back into the active Forge look. Forge fingerprints the actual finished
+technical body and keeps appearance approval explicitly Forge-owned.
+
 Forge 5.4 adds **OFFENSIVE MOTION STUDIO**, a target-constrained weapon-first
 workflow. Artists place a mathematical target dummy, choose a target zone and
 weapon proxy, edit an explicit horizontal/diagonal/overhead/thrust trajectory,
@@ -88,21 +104,32 @@ deliberately for reuse on another compatible humanoid. The existing eight
 body-first generators remain under LEGACY / PROCEDURAL DRAFTING. See the
 [Offensive Motion Studio contract](docs/OFFENSIVE_MOTION_STUDIO_CONTRACT.md).
 
-Forge 5.4.1 makes that workflow natural and macro-first. In **ATTACK ANIMATION
-VIP STUDIO**, choose an Attack, Weapon, and Target; adjust simple horizontal or
-vertical aim, Windup, Strike Power, Body Motion, Follow Through, or Arm
-Relaxation, then use **REFRESH ATTACK**. Character-specific Auto Fit places the
-target and selects a legal blade strike point
-without stretching or translating the deform arm. Surface-first contact,
-class-specific sword/mace orientation, compact trajectories, continuous body
-support, and pose-health validation preserve geometric hits while keeping the
-body restrained. Expert target, proxy, trajectory, body, reach, and tolerance
-controls remain behind one collapsed Advanced section, and 5.4.0 artist-promoted
-masters are never silently rewritten.
+Forge 5.4.4 uses an animation sandbox. In **ATTACK ANIMATION
+STUDIO**, choose **Attack**, **Weapon**, and **Target**, adjust the visible aim,
+motion, distance, and weapon meters, then click **GENERATE & PREVIEW**. Every live
+control is baked and playback starts even when the experiment fails pose or
+weapon-path checks. Failed experiments are Preview Only; **APPROVE** remains
+strict. If a technically rejected animation is artistically right, **BYPASS
+FAILED CHECKS AND SAVE** accepts the exact current preview for game export and
+stores every overridden failure in a digest-bound Action audit record. The
+selected weapon is rebuilt visibly on the hand socket every time, so
+switching to a mace, dagger, or other proxy cannot leave the previous longsword
+as the Motion Studio preview.
+
+The production quality gate rejects a wrist folded below 55% arm extension, preserves
+the existing 92% near-lock warning and 98.5% hard reach ceiling, and requires
+clean per-frame FK continuity at or below 22 degrees. A step above 25 degrees is
+a hard failure; the interval between is a non-approvable warning. The bake now
+samples only spine, chest, active shoulder, upper arm, forearm, and hand after a
+single base-pose key, then removes redundant keys while preserving authored
+phase poses. Lower-body motion is left exactly as authored. Expert target,
+proxy, trajectory, body, reach, and tolerance controls remain behind the
+collapsed Advanced section. Existing approved Actions and saved 5.4.0/5.4.1
+promoted masters are not silently rewritten.
 
 ## Install and open
 
-1. Download `Dreadstone_Animation_Forge_v5_4_1.zip`.
+1. Download `Dreadstone_Animation_Forge_v5_4_4.zip`.
 2. In Blender choose **Edit > Preferences > Add-ons > Install from Disk**.
 3. Select the ZIP without extracting it and enable the add-on.
 4. In the 3D Viewport press `N`, open **Dreadstone**, then choose

@@ -400,16 +400,22 @@ def main():
     bpy.ops.object.select_all(action="DESELECT")
     runtime_rig.select_set(True)
     context.view_layer.objects.active = runtime_rig
-    settings.motion_master_id = "builtin_1h_overhead"
+    settings.motion_master_id = "builtin_1h_thrust"
+    settings.motion_proxy_class = "ONE_HAND_BLADE"
+    settings.motion_target_zone = "CENTER_MASS"
     settings.motion_target_distance = 0.62
-    motion_result = offensive_motion_studio.build_from_master(context)
+    motion_result = offensive_motion_studio.build_from_master(context, simple=True)
     require(motion_result["validation"]["status"] == "PASS", motion_result["validation"].get("errors"))
     motion_pose_health = offensive_motion.read_json(
         motion_result["action"],
         offensive_motion.MOTION_POSE_HEALTH_PROPERTY,
         "Motion Studio pose health",
     )
-    require(motion_pose_health["status"] in {"PASS", "WARN"}, motion_pose_health.get("errors"))
+    require(motion_pose_health["status"] == "PASS", motion_pose_health.get("errors"))
+    require(
+        motion_pose_health["minimumArmExtensionRatio"] >= 0.55,
+        "Complete Damage fixture Motion Studio attack folded below the safe reach annulus.",
+    )
     require(
         motion_pose_health["maximumArmExtensionRatio"] < 0.92,
         f"Complete Damage fixture Natural overhead reached {motion_pose_health['maximumArmExtensionRatio']:.1%}.",
@@ -419,7 +425,7 @@ def main():
         "Complete Damage fixture Motion Studio attack translated the deform arm.",
     )
     offensive_motion_studio.preview_motion(context, start_playback=False)
-    motion_action = addon.approve_draft_action(context, "ATTACK_OVERHEAD_ONE_HAND")
+    motion_action = addon.approve_draft_action(context, "ATTACK_THRUST_ONE_HAND")
     runtime_actions.append(motion_action)
     motion_helpers = list(offensive_motion_studio._owned_objects())
     require(motion_helpers, "Motion Studio did not create export-exclusion helpers.")
@@ -749,14 +755,14 @@ def main():
     require(len(offensive_records) == 2, "Exactly two offensive capabilities should export.")
     require(
         {record["combatActionId"] for record in offensive_records}
-        == {"humanoid_one_hand_slash_rtl", "humanoid_one_hand_overhead"},
+        == {"humanoid_one_hand_slash_rtl", "humanoid_one_hand_thrust"},
         "Offensive combat Action identities changed.",
     )
     targeting_records = manifest["runtimeAnimations"]["offensiveTargeting"]
     require(
         len(targeting_records) == 1
         and targeting_records[0]["schema"] == offensive_motion.TARGETING_SCHEMA
-        and targeting_records[0]["trajectoryFamily"] == "OVERHEAD_VERTICAL",
+        and targeting_records[0]["trajectoryFamily"] == "THRUST",
         "Complete Damage did not emit the validated optional Motion Studio targeting handoff.",
     )
     require(

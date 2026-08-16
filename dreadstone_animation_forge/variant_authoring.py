@@ -3,10 +3,13 @@
 from __future__ import annotations
 
 import copy
+import hashlib
 import json
 import os
+import struct
 import uuid
 from contextlib import contextmanager
+from datetime import datetime, timezone
 from pathlib import Path
 
 import bpy
@@ -29,6 +32,9 @@ OBJECT_VARIANT_PROPERTY = "dsb_appearance_variant_id"
 OBJECT_FAMILY_PROPERTY = "dsb_appearance_family_id"
 PROVENANCE_PROPERTY = "dsb_character_variant_provenance"
 ACTIVE_EXPORT_PROPERTY = "dsb_active_appearance_variant_id"
+TEXTURE_OWNER_PROPERTY = "dsb_texture_variant_owned"
+TEXTURE_SOURCE_PROPERTY = "dsb_texture_variant_source"
+SBF_PROJECTION_VISIBILITY_PROPERTY = "dsb_sbf_projection_visibility_json"
 
 
 def _scene(scene=None):
@@ -41,7 +47,8 @@ def load_state(scene=None, *, required=False):
     if not raw:
         if required:
             raise RuntimeError(
-                "No Character Variant Family exists. Adopt an approved Skin & Bones appearance first."
+                "No Character Variant Family exists. Use an approved Skin & Bones handoff, "
+                "or start texture variants from the finished Damage Rig."
             )
         return None
     try:
@@ -264,6 +271,12 @@ def _find_selected_armature(context):
 
 
 def _stamp_variant_objects(state):
+    if state.get("familySource") == model.FAMILY_SOURCE_FORGE_TEXTURE:
+        for obj in _appearance_body_objects():
+            obj[OBJECT_FAMILY_PROPERTY] = state["familyId"]
+            if OBJECT_VARIANT_PROPERTY in obj:
+                del obj[OBJECT_VARIANT_PROPERTY]
+        return
     for variant in state.get("variants", []):
         for name in variant.get("appearance", {}).get("objectNames", []):
             obj = bpy.data.objects.get(name)
@@ -288,8 +301,55 @@ def _appearance_body_objects():
     ]
 
 
+def _runtime_body_should_show(obj):
+    """Return the authored intact-state visibility for one Damage body mesh."""
+
+    role = str(obj.get("dsb_damage_role", ""))
+    return bool(obj.get("dsb_default_visible", False)) or role in {
+        "body_core",
+        "attached_segment",
+    }
+
+
+def _restore_runtime_body_visibility():
+    """Show only intact/default meshes; never reveal detached damage pieces."""
+
+    visible = []
+    for obj in _appearance_body_objects():
+        should_show = _runtime_body_should_show(obj)
+        try:
+            obj.hide_set(not should_show)
+        except RuntimeError:
+            pass
+        obj.hide_viewport = not should_show
+        obj.hide_render = not should_show
+        try:
+            obj.select_set(should_show)
+        except RuntimeError:
+            pass
+        if should_show:
+            visible.append(obj)
+    return visible
+
+
+def _use_material_preview(context):
+    screen = getattr(context, "screen", None)
+    for area in getattr(screen, "areas", ()) if screen is not None else ():
+        if area.type != "VIEW_3D":
+            continue
+        for space in area.spaces:
+            if space.type == "VIEW_3D":
+                try:
+                    space.shading.type = "MATERIAL"
+                except (AttributeError, TypeError):
+                    pass
+
+
 def _apply_material_palette(variant):
-    palette = variant.get("appearance", {}).get("materialPalette", [])
+    appearance = variant.get("appearance", {})
+    if appearance.get("runtimeMaterialSlots"):
+        return _apply_runtime_material_slots(appearance)
+    palette = appearance.get("materialPalette", [])
     materials = [
         bpy.data.materials.get(str(record.get("material", "")))
         for record in palette
@@ -310,6 +370,371 @@ def _apply_material_palette(variant):
 def _has_damage_authoring():
     rig = bpy.data.objects.get("DSB_DAMAGE_RIG")
     return rig is not None and bool(rig.get("dsb_damage_generated", False))
+
+
+def _finished_damage_rig():
+    rig = bpy.data.objects.get("DSB_DAMAGE_RIG")
+    if rig is None or rig.type != "ARMATURE":
+        raise RuntimeError(
+            "Build the finished Complete Damage character first; DSB_DAMAGE_RIG is missing."
+        )
+    if not bool(rig.get("dsb_damage_generated", False)):
+        raise RuntimeError("DSB_DAMAGE_RIG is not a built Complete Damage authoring rig.")
+    return rig
+
+
+def _rounded_matrix(matrix):
+    return [round(float(value), 7) for row in matrix for value in row]
+
+
+def _mesh_technical_digest(obj):
+    mesh = obj.data
+    digest = hashlib.sha256()
+    digest.update(struct.pack("<II", len(mesh.vertices), len(mesh.polygons)))
+    groups = sorted(
+        (int(group.index), str(group.name)) for group in obj.vertex_groups
+    )
+    digest.update(struct.pack("<I", len(groups)))
+    for index, name in groups:
+        encoded = name.encode("utf-8")
+        digest.update(struct.pack("<II", index, len(encoded)))
+        digest.update(encoded)
+    for vertex in mesh.vertices:
+        digest.update(struct.pack("<3f", *map(float, vertex.co)))
+        groups = sorted((int(item.group), float(item.weight)) for item in vertex.groups)
+        digest.update(struct.pack("<I", len(groups)))
+        for group, weight in groups:
+            digest.update(struct.pack("<If", group, weight))
+    for polygon in mesh.polygons:
+        indices = tuple(int(value) for value in polygon.vertices)
+        digest.update(struct.pack("<I", len(indices)))
+        if indices:
+            digest.update(struct.pack(f"<{len(indices)}I", *indices))
+    for layer in sorted(mesh.uv_layers, key=lambda value: value.name.lower()):
+        digest.update(layer.name.encode("utf-8"))
+        for loop in layer.data:
+            digest.update(struct.pack("<2f", *map(float, loop.uv)))
+    return digest.hexdigest()
+
+
+def finished_damage_body_fingerprint(rig=None):
+    """Fingerprint the finished technical body while excluding materials/Damage Keys."""
+
+    rig = rig or _finished_damage_rig()
+    contract = _rig_contract(rig)
+    bodies = sorted(_appearance_body_objects(), key=lambda value: value.name.lower())
+    if not bodies:
+        raise RuntimeError("The finished Damage Rig has no runtime appearance body meshes.")
+    record = {
+        "schema": model.FORGE_TEXTURE_BODY_SCHEMA,
+        "rig": model.canonical_rig_signature(contract),
+        "bones": [
+            {
+                "name": bone.name,
+                "parent": bone.parent.name if bone.parent else "",
+                "matrixLocal": _rounded_matrix(bone.matrix_local),
+            }
+            for bone in sorted(rig.data.bones, key=lambda value: value.name.lower())
+        ],
+        "meshes": [
+            {
+                "object": obj.name,
+                "role": str(obj.get("dsb_damage_role", "")),
+                "vertices": len(obj.data.vertices),
+                "polygons": len(obj.data.polygons),
+                "uvLayers": [value.name for value in obj.data.uv_layers],
+                "materialSlots": len(obj.data.materials),
+                "matrixWorld": _rounded_matrix(obj.matrix_world),
+                "topologyDigest": _mesh_technical_digest(obj),
+            }
+            for obj in bodies
+        ],
+    }
+    return model.canonical_digest(record)
+
+
+def _variant_datablock_name(kind, family_id, variant_id, source_name):
+    stem = model.safe_identifier(f"{family_id}_{variant_id}_{source_name}")[:44]
+    return f"DAF_{kind}_{stem}_{uuid.uuid4().hex[:8]}"
+
+
+def _clone_variant_image(image, family_id, variant_id, cache):
+    if image is None:
+        return None
+    identity = image.as_pointer()
+    if identity in cache:
+        return cache[identity]
+    clone = image.copy()
+    clone.name = _variant_datablock_name(
+        "IMG", family_id, variant_id, image.name
+    )
+    clone[TEXTURE_OWNER_PROPERTY] = variant_id
+    clone[OBJECT_FAMILY_PROPERTY] = family_id
+    clone[TEXTURE_SOURCE_PROPERTY] = image.name
+    if clone.packed_file is None:
+        try:
+            clone.pack()
+        except (RuntimeError, OSError):
+            pass
+    cache[identity] = clone
+    return clone
+
+
+def _clone_variant_material(material, family_id, variant_id, material_cache, image_cache):
+    if material is None:
+        return None
+    identity = material.as_pointer()
+    if identity in material_cache:
+        return material_cache[identity]
+    clone = material.copy()
+    clone.name = _variant_datablock_name(
+        "MAT", family_id, variant_id, material.name
+    )
+    clone[TEXTURE_OWNER_PROPERTY] = variant_id
+    clone[OBJECT_FAMILY_PROPERTY] = family_id
+    clone[TEXTURE_SOURCE_PROPERTY] = material.name
+    node_tree = getattr(clone, "node_tree", None)
+    if node_tree is not None:
+        for node in node_tree.nodes:
+            image = getattr(node, "image", None)
+            if image is not None:
+                node.image = _clone_variant_image(
+                    image, family_id, variant_id, image_cache
+                )
+    material_cache[identity] = clone
+    return clone
+
+
+def _runtime_material_appearance(family_id, variant_id):
+    """Clone only the current runtime skin palette; never duplicate body geometry."""
+
+    material_cache = {}
+    image_cache = {}
+    slots = []
+    for obj in sorted(_appearance_body_objects(), key=lambda value: value.name.lower()):
+        records = []
+        for material in obj.data.materials:
+            clone = _clone_variant_material(
+                material,
+                family_id,
+                variant_id,
+                material_cache,
+                image_cache,
+            )
+            records.append(_material_record(clone))
+        slots.append({"object": obj.name, "materials": records})
+    if not material_cache:
+        raise RuntimeError("The finished character has no runtime skin material to snapshot.")
+    return {
+        "armatureName": "DSB_DAMAGE_RIG",
+        "objectNames": [record["object"] for record in slots],
+        "meshNames": [record["object"] for record in slots],
+        "runtimeMaterialSlots": slots,
+        "materialPalette": (
+            copy.deepcopy(slots[0]["materials"]) if slots else []
+        ),
+        "ownedMaterials": sorted(value.name for value in material_cache.values()),
+        "ownedImages": sorted(value.name for value in image_cache.values()),
+    }
+
+
+def _serializable_value(value):
+    if isinstance(value, (str, int, float, bool)) or value is None:
+        return value
+    try:
+        return [round(float(item), 7) for item in value]
+    except (TypeError, ValueError):
+        return str(value)
+
+
+def _image_content_digest(image, *, quick=False):
+    if image is None:
+        return ""
+    if quick:
+        packed = getattr(image, "packed_file", None)
+        path = Path(bpy.path.abspath(str(image.filepath))) if str(image.filepath) else None
+        external = {}
+        if path is not None and path.is_file():
+            stat = path.stat()
+            external = {"bytes": int(stat.st_size), "modifiedNs": int(stat.st_mtime_ns)}
+        return model.canonical_digest(
+            {
+                "name": image.name,
+                "source": str(image.source),
+                "size": [int(value) for value in image.size],
+                "colorspace": str(image.colorspace_settings.name),
+                "dirty": bool(image.is_dirty),
+                "packedBytes": len(packed.data) if packed is not None else 0,
+                "filepath": str(image.filepath),
+                "external": external,
+            }
+        )
+    if bool(image.is_dirty):
+        return "DIRTY"
+    packed = getattr(image, "packed_file", None)
+    if packed is not None:
+        try:
+            return hashlib.sha256(bytes(packed.data)).hexdigest()
+        except (TypeError, ValueError, BufferError):
+            pass
+    path = Path(bpy.path.abspath(str(image.filepath))) if str(image.filepath) else None
+    if path is not None and path.is_file():
+        digest = hashlib.sha256()
+        with path.open("rb") as handle:
+            for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+                digest.update(chunk)
+        return digest.hexdigest()
+    return model.canonical_digest(
+        {
+            "source": str(image.source),
+            "size": [int(value) for value in image.size],
+            "colorspace": str(image.colorspace_settings.name),
+            "filepath": str(image.filepath),
+        }
+    )
+
+
+def _material_content_record(material, *, quick=False):
+    if material is None:
+        return {"missing": True}
+    nodes = []
+    links = []
+    tree = getattr(material, "node_tree", None)
+    if tree is not None:
+        for node in sorted(tree.nodes, key=lambda value: value.name.lower()):
+            inputs = {}
+            for socket in node.inputs:
+                if not hasattr(socket, "default_value"):
+                    continue
+                inputs[socket.identifier or socket.name] = _serializable_value(
+                    socket.default_value
+                )
+            image = getattr(node, "image", None)
+            nodes.append(
+                {
+                    "name": node.name,
+                    "type": node.bl_idname,
+                    "mute": bool(node.mute),
+                    "inputs": inputs,
+                    "imageName": image.name if image else "",
+                    "image": _image_content_digest(image, quick=quick) if image else "",
+                }
+            )
+        links = sorted(
+            (
+                link.from_node.name,
+                link.from_socket.identifier or link.from_socket.name,
+                link.to_node.name,
+                link.to_socket.identifier or link.to_socket.name,
+            )
+            for link in tree.links
+        )
+    return {
+        "diffuseColor": _serializable_value(material.diffuse_color),
+        "metallic": round(float(material.metallic), 7),
+        "roughness": round(float(material.roughness), 7),
+        "nodes": nodes,
+        "links": links,
+    }
+
+
+def texture_appearance_fingerprint(appearance, *, quick=False):
+    slots = []
+    for binding in appearance.get("runtimeMaterialSlots", []):
+        materials = []
+        for record in binding.get("materials", []):
+            name = str(record.get("material", ""))
+            material = bpy.data.materials.get(name)
+            materials.append(
+                {
+                    "slotMaterial": name,
+                    "content": _material_content_record(material, quick=quick),
+                }
+            )
+        slots.append({"object": str(binding.get("object", "")), "materials": materials})
+    return model.canonical_digest({"runtimeMaterialSlots": slots})
+
+
+def texture_appearance_errors(state, variant_id=None, *, verify_fingerprint=True):
+    state = model.normalize_family(state)
+    variant = model.variant_by_id(state, variant_id)
+    errors = []
+    if state["familySource"] != model.FAMILY_SOURCE_FORGE_TEXTURE:
+        return errors
+    appearance = variant.get("appearance", {})
+    for name in appearance.get("ownedMaterials", []):
+        if bpy.data.materials.get(str(name)) is None:
+            errors.append(f"Texture snapshot material {name!r} is missing.")
+    for name in appearance.get("ownedImages", []):
+        image = bpy.data.images.get(str(name))
+        if image is None:
+            errors.append(f"Texture snapshot image {name!r} is missing.")
+        elif bool(image.is_dirty):
+            errors.append(
+                f"Texture image {name!r} has unsaved pixel changes; approve/update this look again."
+            )
+    current = (
+        texture_appearance_fingerprint(appearance)
+        if verify_fingerprint
+        else None
+    )
+    if not model.variant_appearance_approved(state, variant_id, current):
+        errors.append("Texture appearance is draft or changed after its last Forge approval.")
+    return errors
+
+
+def appearance_status(state, variant_id=None):
+    state = model.normalize_family(state)
+    variant = model.variant_by_id(state, variant_id)
+    if state["familySource"] == model.FAMILY_SOURCE_SBF:
+        return "APPROVED"
+    if str(variant.get("appearanceApprovalState", "")) != "APPROVED":
+        return "DRAFT"
+    if texture_appearance_errors(state, variant_id, verify_fingerprint=False):
+        return "STALE"
+    expected_quick = str(variant.get("appearanceQuickFingerprint", ""))
+    if expected_quick:
+        current_quick = texture_appearance_fingerprint(
+            variant.get("appearance", {}),
+            quick=True,
+        )
+        if current_quick != expected_quick:
+            return "STALE"
+    return "APPROVED"
+
+
+def _apply_runtime_material_slots(appearance):
+    changed = 0
+    for binding in appearance.get("runtimeMaterialSlots", []):
+        obj = bpy.data.objects.get(str(binding.get("object", "")))
+        if obj is None or obj.type != "MESH":
+            continue
+        records = list(binding.get("materials", []))
+        for index in range(min(len(obj.data.materials), len(records))):
+            material = bpy.data.materials.get(str(records[index].get("material", "")))
+            if material is not None and obj.data.materials[index] != material:
+                obj.data.materials[index] = material
+                changed += 1
+    return changed
+
+
+def _release_owned_appearance(appearance):
+    for name in appearance.get("ownedMaterials", []):
+        material = bpy.data.materials.get(str(name))
+        if (
+            material is not None
+            and bool(material.get(TEXTURE_OWNER_PROPERTY, ""))
+            and material.users == 0
+        ):
+            bpy.data.materials.remove(material)
+    for name in appearance.get("ownedImages", []):
+        image = bpy.data.images.get(str(name))
+        if (
+            image is not None
+            and bool(image.get(TEXTURE_OWNER_PROPERTY, ""))
+            and image.users == 0
+        ):
+            bpy.data.images.remove(image)
 
 
 def switch_variant(variant_id, scene=None):
@@ -377,6 +802,564 @@ def adopt_selected_as_family_base(context):
     store_state(state, context.scene)
     switch_variant(handoff["variant_id"], context.scene)
     return state
+
+
+def _shared_family_actions(state, rig):
+    action_ids = []
+    for action in animation_library.character_actions(rig, include_drafts=False):
+        if not bool(action.get("dsb_approved", False)):
+            continue
+        clip_id = animation_library.ensure_clip_id(action)
+        action[ACTION_SCOPE_PROPERTY] = model.ACTION_SCOPE_SHARED
+        action[ACTION_FAMILY_PROPERTY] = state["familyId"]
+        action[ACTION_SHARED_ID_PROPERTY] = clip_id
+        action_ids.append(clip_id)
+    return model.register_shared_actions(state, action_ids)
+
+
+def _texture_names(settings, *, base=False):
+    file_stem = Path(bpy.data.filepath).stem if bpy.data.filepath else "finished_character"
+    configured_export = str(getattr(settings, "damage_authoring_filename", "")).strip()
+    family_seed = configured_export or file_stem
+    family_display = str(settings.variant_texture_family_name).strip() or (
+        family_seed.replace("_", " ").replace("-", " ").strip().title()
+    )
+    requested_display = str(settings.variant_texture_name).strip()
+    if not base and not requested_display:
+        raise RuntimeError("Name the next look before making its texture copy.")
+    display = requested_display or "Original"
+    export_identity = str(settings.variant_texture_export_identity).strip()
+    if not export_identity:
+        export_identity = (
+            model.safe_identifier(configured_export or family_display)
+            if base
+            else model.safe_identifier(f"{_safe_texture_family_name(family_display)}_{display}")
+        )
+    return (
+        family_display,
+        display,
+        export_identity,
+        model.safe_identifier(export_identity),
+    )
+
+
+def _safe_texture_family_name(value):
+    """Keep automatically derived shipping names compact and deterministic."""
+
+    return model.safe_identifier(value, fallback="finished_character")
+
+
+def adopt_finished_damage_as_texture_family(context):
+    """Start appearance multiplication from the already-authored Damage Rig."""
+
+    if load_state(context.scene) is not None:
+        raise RuntimeError("This Blend file already owns a Character Variant Family.")
+    # Older resized authoring files can retain the correct stored proof while
+    # their hidden original source was later reset. Repair that exact proof
+    # before locking the finished-body fingerprint so setup and export observe
+    # the same validated technical state.
+    from . import damage_authoring
+
+    try:
+        finished_authoring_state = damage_authoring._load_state()
+    except RuntimeError:
+        finished_authoring_state = None
+    if finished_authoring_state is not None:
+        damage_authoring.restore_finished_source_transform_proof(context)
+    rig = _finished_damage_rig()
+    contract = _rig_contract(rig)
+    fingerprint = finished_damage_body_fingerprint(rig)
+    settings = context.scene.daf_settings
+    family_display, display, export_identity, variant_id = _texture_names(
+        settings, base=True
+    )
+    family_id = model.safe_identifier(family_display, fallback="finished_character")
+    appearance = _runtime_material_appearance(family_id, variant_id)
+    _apply_runtime_material_slots(appearance)
+    appearance_fingerprint = texture_appearance_fingerprint(appearance)
+    appearance_quick_fingerprint = texture_appearance_fingerprint(
+        appearance,
+        quick=True,
+    )
+    state = model.new_forge_texture_family(
+        family_id,
+        family_display,
+        variant_id,
+        display,
+        export_identity,
+        fingerprint,
+        contract,
+        appearance=appearance,
+        appearance_fingerprint=appearance_fingerprint,
+        approved_at_utc=datetime.now(timezone.utc).isoformat(),
+    )
+    state["variants"][0]["appearanceQuickFingerprint"] = appearance_quick_fingerprint
+    state = _shared_family_actions(state, rig)
+    _stamp_variant_objects(state)
+    store_state(state, context.scene)
+    switch_variant(variant_id, context.scene)
+    settings.variant_texture_name = ""
+    settings.variant_texture_export_identity = ""
+    return state
+
+
+def create_forge_texture_variant(context):
+    state = load_state(context.scene, required=True)
+    if state["familySource"] != model.FAMILY_SOURCE_FORGE_TEXTURE:
+        raise RuntimeError(
+            "This family is Skin & Bones-owned. Add an approved compatible Skin & Bones GLB instead."
+        )
+    rig = _finished_damage_rig()
+    contract = _rig_contract(rig)
+    fingerprint = finished_damage_body_fingerprint(rig)
+    settings = context.scene.daf_settings
+    _family_display, display, export_identity, variant_id = _texture_names(settings)
+    active = model.variant_by_id(state)
+    if appearance_status(state, active["variantId"]) != "APPROVED":
+        raise RuntimeError(
+            "Save the active look before making another texture copy."
+        )
+    _apply_material_palette(active)
+    appearance = _runtime_material_appearance(state["familyId"], variant_id)
+    try:
+        state = model.add_forge_texture_variant(
+            state,
+            variant_id,
+            display,
+            export_identity,
+            fingerprint,
+            contract,
+            appearance=appearance,
+        )
+    except Exception:
+        _release_owned_appearance(appearance)
+        raise
+    _stamp_variant_objects(state)
+    store_state(state, context.scene)
+    switch_variant(variant_id, context.scene)
+    settings.variant_texture_name = ""
+    settings.variant_texture_export_identity = ""
+    settings.variant_family_status = (
+        f"DRAFT LOOK — {display}; project/bake this copy, then APPROVE CURRENT LOOK"
+    )
+    return model.variant_by_id(state, variant_id)
+
+
+def approve_forge_texture_variant(context):
+    state = load_state(context.scene, required=True)
+    if state["familySource"] != model.FAMILY_SOURCE_FORGE_TEXTURE:
+        raise RuntimeError("Skin & Bones appearances must be approved in Skin & Bones.")
+    rig = _finished_damage_rig()
+    current_technical = finished_damage_body_fingerprint(rig)
+    if current_technical != state["technicalBodyFingerprint"]:
+        raise RuntimeError(
+            "The finished Damage Rig/body changed after this texture family was started; "
+            "texture approval cannot hide a technical-body change."
+        )
+    active = model.variant_by_id(state)
+    old_appearance = copy.deepcopy(active.get("appearance", {}))
+    appearance = _runtime_material_appearance(
+        state["familyId"], active["variantId"]
+    )
+    _apply_runtime_material_slots(appearance)
+    fingerprint = texture_appearance_fingerprint(appearance)
+    quick_fingerprint = texture_appearance_fingerprint(appearance, quick=True)
+    state = model.approve_forge_texture_variant(
+        state,
+        fingerprint,
+        datetime.now(timezone.utc).isoformat(),
+        appearance=appearance,
+    )
+    next(
+        value for value in state["variants"]
+        if value["variantId"] == state["activeVariantId"]
+    )["appearanceQuickFingerprint"] = quick_fingerprint
+    store_state(state, context.scene)
+    _release_owned_appearance(old_appearance)
+    context.scene.daf_settings.variant_family_status = (
+        f"APPROVED LOOK — {active['displayName']}"
+    )
+    return model.variant_by_id(state)
+
+
+def edit_forge_texture_variant(context):
+    """Enter an explicit edit/re-approval cycle for the active native look."""
+
+    state = load_state(context.scene, required=True)
+    if state["familySource"] != model.FAMILY_SOURCE_FORGE_TEXTURE:
+        raise RuntimeError("Imported Skin & Bones looks are edited and approved in Skin & Bones.")
+    state = model.begin_forge_texture_variant_edit(state)
+    store_state(state, context.scene)
+    variant = preview_active_variant(context)
+    context.scene.daf_settings.variant_family_status = (
+        f"EDITING LOOK — {variant['displayName']}; project/paint, preview, then approve"
+    )
+    return variant
+
+
+def _linked_base_color_image_nodes(material):
+    tree = getattr(material, "node_tree", None)
+    if tree is None:
+        return []
+    found = []
+    visited = set()
+
+    def walk_socket(socket):
+        for link in socket.links:
+            node = link.from_node
+            identity = node.as_pointer()
+            if identity in visited:
+                continue
+            visited.add(identity)
+            if node.bl_idname == "ShaderNodeTexImage" and node.image is not None:
+                found.append(node)
+                continue
+            for input_socket in node.inputs:
+                if input_socket.is_linked:
+                    walk_socket(input_socket)
+
+    for node in tree.nodes:
+        if node.bl_idname != "ShaderNodeBsdfPrincipled":
+            continue
+        socket = node.inputs.get("Base Color")
+        if socket is not None and socket.is_linked:
+            walk_socket(socket)
+    if found:
+        return list(dict.fromkeys(found))
+    candidates = [
+        node
+        for node in tree.nodes
+        if node.bl_idname == "ShaderNodeTexImage" and node.image is not None
+    ]
+    named = [
+        node
+        for node in candidates
+        if "base" in f"{node.name} {node.label} {node.image.name}".lower()
+        and "color" in f"{node.name} {node.label} {node.image.name}".lower()
+    ]
+    return named or (candidates if len(candidates) == 1 else [])
+
+
+def _active_base_color_bindings(context):
+    state = load_state(context.scene, required=True)
+    if state["familySource"] != model.FAMILY_SOURCE_FORGE_TEXTURE:
+        raise RuntimeError(
+            "Imported Skin & Bones looks must be projected, approved, and exported from Skin & Bones before Forge ingest."
+        )
+    active = model.variant_by_id(state)
+    _apply_material_palette(active)
+    materials = [
+        bpy.data.materials.get(str(name))
+        for name in active.get("appearance", {}).get("ownedMaterials", [])
+    ]
+    bindings = [
+        (material, node)
+        for material in materials
+        if material is not None
+        for node in _linked_base_color_image_nodes(material)
+    ]
+    if not bindings:
+        raise RuntimeError(
+            "The active look has no unambiguous image driving Principled Base Color. "
+            "Link its skin image to Base Color, then try again."
+        )
+    return state, active, bindings
+
+
+def _finish_active_base_color_install(
+    context,
+    state,
+    active,
+    bindings,
+    image,
+    *,
+    status_detail,
+):
+    for _material, node in bindings:
+        node.image = image
+    if active.get("appearanceApprovalState") == "APPROVED":
+        state = model.begin_forge_texture_variant_edit(state)
+    owned = next(
+        value for value in state["variants"]
+        if value["variantId"] == state["activeVariantId"]
+    )
+    appearance = owned.setdefault("appearance", {})
+    appearance["ownedImages"] = sorted(
+        set(appearance.get("ownedImages", [])) | {image.name}
+    )
+    for binding in appearance.get("runtimeMaterialSlots", []):
+        for record in binding.get("materials", []):
+            material = bpy.data.materials.get(str(record.get("material", "")))
+            if material is not None:
+                record.update(_material_record(material))
+    if appearance.get("runtimeMaterialSlots"):
+        appearance["materialPalette"] = copy.deepcopy(
+            appearance["runtimeMaterialSlots"][0].get("materials", [])
+        )
+    store_state(state, context.scene)
+    variant = preview_active_variant(context)
+    context.scene.daf_settings.variant_family_status = (
+        f"EDITING LOOK — {status_detail} in {variant['displayName']}; save before export"
+    )
+    return variant, image
+
+
+def replace_active_base_color_texture(context, filepath=None):
+    """Load one final Base Color into the active look without touching authoring."""
+
+    path = Path(
+        bpy.path.abspath(
+            str(filepath or context.scene.daf_settings.variant_texture_image_path)
+        )
+    )
+    if path.is_dir():
+        raise RuntimeError(
+            "That is a four-view projection-source folder, not a finished model texture. "
+            "Use the Skin & Bones projection steps, bake once, then apply its final Base Color."
+        )
+    if not path.is_file():
+        raise RuntimeError("Choose an existing final Base Color image.")
+    state, active, bindings = _active_base_color_bindings(context)
+    image = None
+    try:
+        image = bpy.data.images.load(str(path), check_existing=False)
+        image.name = _variant_datablock_name(
+            "IMG", state["familyId"], active["variantId"], path.stem
+        )
+        image[TEXTURE_OWNER_PROPERTY] = active["variantId"]
+        image[OBJECT_FAMILY_PROPERTY] = state["familyId"]
+        image[TEXTURE_SOURCE_PROPERTY] = str(path)
+        original_image = bindings[0][1].image
+        if original_image is not None:
+            try:
+                image.colorspace_settings.name = original_image.colorspace_settings.name
+            except (AttributeError, TypeError):
+                pass
+        image.pack()
+        image.filepath_raw = ""
+        return _finish_active_base_color_install(
+            context,
+            state,
+            active,
+            bindings,
+            image,
+            status_detail=f"loaded {path.name}",
+        )
+    except Exception:
+        if (
+            image is not None
+            and bpy.data.images.get(image.name) is not None
+            and image.users == 0
+        ):
+            bpy.data.images.remove(image)
+        raise
+
+
+def _skin_and_bones_projection_target(context):
+    settings = getattr(context.scene, "sbf_settings", None)
+    if settings is None:
+        raise RuntimeError(
+            "Skin & Bones is not enabled in this Blender session. Enable Skin & Bones 2.2.0+ first."
+        )
+    target = getattr(settings, "target_object", None)
+    if target is None or getattr(target, "type", "") != "MESH":
+        raise RuntimeError(
+            "Skin & Bones needs its original full-body mesh as Target Mesh. "
+            "DSB_DAMAGE_RIG is an armature and is not a projection target."
+        )
+    if bool(target.get("dsb_damage_generated", False)):
+        raise RuntimeError(
+            "Choose the original Skin & Bones full-body mesh as Target Mesh, not a generated Damage segment."
+        )
+    return settings, target
+
+
+def _restore_skin_and_bones_projection_visibility(scene):
+    raw = str(scene.get(SBF_PROJECTION_VISIBILITY_PROPERTY, ""))
+    if not raw:
+        return None
+    try:
+        snapshot = json.loads(raw)
+    except (TypeError, ValueError, json.JSONDecodeError):
+        snapshot = {}
+    target = bpy.data.objects.get(str(snapshot.get("target", "")))
+    if target is not None:
+        target.hide_viewport = bool(snapshot.get("hideViewport", True))
+        target.hide_render = bool(snapshot.get("hideRender", True))
+        try:
+            target.hide_set(bool(snapshot.get("hidden", True)))
+        except RuntimeError:
+            pass
+    del scene[SBF_PROJECTION_VISIBILITY_PROPERTY]
+    return target
+
+
+def enter_skin_and_bones_projection(context):
+    """Show S&B's source body and hide only Forge runtime appearance meshes."""
+
+    state = load_state(context.scene, required=True)
+    if state["familySource"] != model.FAMILY_SOURCE_FORGE_TEXTURE:
+        raise RuntimeError(
+            "This bridge is for a finished Forge texture look. Imported S&B family looks stay S&B-owned."
+        )
+    if appearance_status(state) == "APPROVED":
+        raise RuntimeError("Click EDIT / TWEAK THIS LOOK before projecting a replacement texture.")
+    _settings, target = _skin_and_bones_projection_target(context)
+    scene = context.scene
+    if not str(scene.get(SBF_PROJECTION_VISIBILITY_PROPERTY, "")):
+        scene[SBF_PROJECTION_VISIBILITY_PROPERTY] = model.stable_json(
+            {
+                "target": target.name,
+                "hideViewport": bool(target.hide_viewport),
+                "hideRender": bool(target.hide_render),
+                "hidden": bool(target.hide_get()),
+            }
+        )
+    for obj in list(getattr(context, "selected_objects", ())):
+        try:
+            obj.select_set(False)
+        except RuntimeError:
+            pass
+    for body in _appearance_body_objects():
+        try:
+            body.hide_set(True)
+            body.select_set(False)
+        except RuntimeError:
+            pass
+        body.hide_viewport = True
+        body.hide_render = True
+    target.hide_viewport = False
+    target.hide_render = False
+    try:
+        target.hide_set(False)
+        target.select_set(True)
+        context.view_layer.objects.active = target
+    except (AttributeError, RuntimeError):
+        pass
+    _use_material_preview(context)
+    context.scene.daf_settings.variant_family_status = (
+        f"SKIN & BONES PROJECTION BODY — {target.name}; load sources or rebuild preview"
+    )
+    return target
+
+
+def _call_skin_and_bones_operator(context, name, label):
+    enter_skin_and_bones_projection(context)
+    try:
+        operation = getattr(bpy.ops.sbf, name)
+        result = operation()
+    except (AttributeError, RuntimeError) as exc:
+        raise RuntimeError(
+            f"Skin & Bones cannot run {label}. Enable the current Skin & Bones add-on and try again."
+        ) from exc
+    if "FINISHED" not in result:
+        settings = getattr(context.scene, "sbf_settings", None)
+        detail = str(getattr(settings, "status_message", "")).strip()
+        raise RuntimeError(detail or f"Skin & Bones did not finish {label}.")
+    return getattr(context.scene, "sbf_settings", None)
+
+
+def build_skin_and_bones_projection_preview(context):
+    settings = _call_skin_and_bones_operator(context, "best_preview", "projection preview")
+    context.scene.daf_settings.variant_family_status = (
+        "SKIN & BONES PREVIEW READY — inspect the visible projection body, then bake"
+    )
+    return settings
+
+
+def bake_skin_and_bones_projection(context):
+    settings = _call_skin_and_bones_operator(context, "bake_final", "final texture bake")
+    context.scene.daf_settings.variant_family_status = (
+        "SKIN & BONES BAKE READY — repair there if needed, then apply the final texture to this look"
+    )
+    return settings
+
+
+def _skin_and_bones_final_image(settings):
+    variants = getattr(settings, "appearance_variants", ())
+    try:
+        index = int(getattr(settings, "active_variant_index", 0))
+        if 0 <= index < len(variants):
+            image = getattr(variants[index], "final_image", None)
+            if image is not None:
+                return image
+    except (IndexError, TypeError, ValueError):
+        pass
+    for name in ("repair_final_image", "last_baked_image"):
+        value = getattr(settings, name, None)
+        if value is None:
+            continue
+        if hasattr(value, "pixels"):
+            return value
+        image = bpy.data.images.get(str(value))
+        if image is not None:
+            return image
+    return None
+
+
+def apply_skin_and_bones_final_texture(context):
+    """Copy S&B's latest final pixels into only the active finished Forge look."""
+
+    settings, _target = _skin_and_bones_projection_target(context)
+    source = _skin_and_bones_final_image(settings)
+    if source is None:
+        raise RuntimeError(
+            "Skin & Bones has no final Base Color yet. Build the preview and click BAKE FINAL TEXTURE first."
+        )
+    state, active, bindings = _active_base_color_bindings(context)
+    image = None
+    try:
+        image = _clone_variant_image(
+            source,
+            state["familyId"],
+            active["variantId"],
+            {},
+        )
+        image[TEXTURE_SOURCE_PROPERTY] = f"Skin & Bones final: {source.name}"
+        try:
+            if image.packed_file is None:
+                image.pack()
+            image.filepath_raw = ""
+        except (AttributeError, OSError, RuntimeError):
+            pass
+        return _finish_active_base_color_install(
+            context,
+            state,
+            active,
+            bindings,
+            image,
+            status_detail=f"captured Skin & Bones final {source.name}",
+        )
+    except Exception:
+        if (
+            image is not None
+            and bpy.data.images.get(image.name) is not None
+            and image.users == 0
+        ):
+            bpy.data.images.remove(image)
+        raise
+
+
+def preview_active_variant(context):
+    _restore_skin_and_bones_projection_visibility(context.scene)
+    state = load_state(context.scene, required=True)
+    variant = switch_variant(state["activeVariantId"], context.scene)
+    for obj in list(getattr(context, "selected_objects", ())):
+        try:
+            obj.select_set(False)
+        except RuntimeError:
+            pass
+    bodies = _restore_runtime_body_visibility()
+    if bodies:
+        try:
+            context.view_layer.objects.active = bodies[0]
+        except (AttributeError, RuntimeError):
+            pass
+    _use_material_preview(context)
+    context.scene.daf_settings.variant_family_status = (
+        f"PREVIEWING LOOK — {variant['displayName']}"
+    )
+    return variant
 
 
 def _remove_imported_objects(objects):
@@ -624,7 +1607,10 @@ def create_action_override(context, action):
             offensive_motion.MOTION_VALIDATION_PROPERTY,
             offensive_motion.MOTION_POSE_HEALTH_PROPERTY,
             offensive_motion.TARGETING_PROPERTY,
+            "dsb_offensive_motion_bypass_json",
             "dsb_motion_preview_digest",
+            "dsb_motion_bypass_active",
+            "dsb_motion_approval_mode",
         ):
             if name in override:
                 del override[name]
@@ -1339,42 +2325,58 @@ def export_context(context, settings, state):
         yield None
         return
     variant = model.variant_by_id(family)
-    handoff = model.require_handoff(variant["handoff"])
-    expected_fields = {
-        "family_id": family["familyId"],
-        "technical_body_schema": family["technicalBodySchema"],
-        "technical_body_schema_version": family["technicalBodySchemaVersion"],
-        "technical_body_fingerprint": family["technicalBodyFingerprint"],
-    }
-    mismatched = [
-        field
-        for field, expected in expected_fields.items()
-        if handoff.get(field) != expected
-    ]
-    if mismatched:
-        raise RuntimeError(
-            "Active variant appearance provenance no longer matches its family: "
-            + ", ".join(mismatched)
-            + "."
-        )
-    appearance_armature_name = str(
-        variant.get("appearance", {}).get("armatureName", "")
-    )
-    if appearance_armature_name:
-        appearance_armature = bpy.data.objects.get(appearance_armature_name)
-        if appearance_armature is None or appearance_armature.type != "ARMATURE":
-            raise RuntimeError("The active Skin & Bones appearance armature is missing.")
-        current_handoff = handoff_from_armature(appearance_armature)
-        if model.stable_json(current_handoff) != model.stable_json(handoff):
+    if family["familySource"] == model.FAMILY_SOURCE_SBF:
+        handoff = model.require_handoff(variant["handoff"])
+        expected_fields = {
+            "family_id": family["familyId"],
+            "technical_body_schema": family["technicalBodySchema"],
+            "technical_body_schema_version": family["technicalBodySchemaVersion"],
+            "technical_body_fingerprint": family["technicalBodyFingerprint"],
+        }
+        mismatched = [
+            field
+            for field, expected in expected_fields.items()
+            if handoff.get(field) != expected
+        ]
+        if mismatched:
             raise RuntimeError(
-                "The active Skin & Bones appearance handoff changed after family ingest."
+                "Active variant appearance provenance no longer matches its family: "
+                + ", ".join(mismatched)
+                + "."
             )
-        if model.canonical_rig_signature(_rig_contract(appearance_armature)) != model.canonical_rig_signature(
+        appearance_armature_name = str(
+            variant.get("appearance", {}).get("armatureName", "")
+        )
+        if appearance_armature_name:
+            appearance_armature = bpy.data.objects.get(appearance_armature_name)
+            if appearance_armature is None or appearance_armature.type != "ARMATURE":
+                raise RuntimeError("The active Skin & Bones appearance armature is missing.")
+            current_handoff = handoff_from_armature(appearance_armature)
+            if model.stable_json(current_handoff) != model.stable_json(handoff):
+                raise RuntimeError(
+                    "The active Skin & Bones appearance handoff changed after family ingest."
+                )
+            if model.canonical_rig_signature(_rig_contract(appearance_armature)) != model.canonical_rig_signature(
+                family["canonicalRig"]
+            ):
+                raise RuntimeError(
+                    "The active appearance canonical rig/coordinate contract changed after family ingest."
+                )
+    else:
+        rig = _finished_damage_rig()
+        if finished_damage_body_fingerprint(rig) != family["technicalBodyFingerprint"]:
+            raise RuntimeError(
+                "The finished Damage Rig/body changed after the texture family was started."
+            )
+        if model.canonical_rig_signature(_rig_contract(rig)) != model.canonical_rig_signature(
             family["canonicalRig"]
         ):
             raise RuntimeError(
-                "The active appearance canonical rig/coordinate contract changed after family ingest."
+                "The finished Damage Rig canonical rig/coordinate contract changed."
             )
+        errors = texture_appearance_errors(family, variant["variantId"])
+        if errors:
+            raise RuntimeError(" ".join(errors))
     for shared_id, override_record in variant.get("actionOverrides", {}).items():
         override_id = str(override_record.get("overrideActionId", ""))
         override = animation_library.find_action_by_clip_id(override_id)
@@ -1416,24 +2418,34 @@ def export_context(context, settings, state):
                         previous_mutes.append((key, bool(key.mute)))
                         key.mute = key.name not in effective_by_region[region_id]
             if obj == runtime_rig or obj in appearance_bodies:
+                metadata_names = [
+                    PROVENANCE_PROPERTY,
+                    ACTIVE_EXPORT_PROPERTY,
+                    model.SBF_FAMILY_ID_PROPERTY,
+                    model.SBF_VARIANT_ID_PROPERTY,
+                    model.SBF_BODY_FINGERPRINT_PROPERTY,
+                ]
                 before = {
                     name: (name in obj, obj.get(name))
-                    for name in (
-                        PROVENANCE_PROPERTY,
-                        ACTIVE_EXPORT_PROPERTY,
-                        model.SBF_FAMILY_ID_PROPERTY,
-                        model.SBF_VARIANT_ID_PROPERTY,
-                        model.SBF_BODY_FINGERPRINT_PROPERTY,
-                    )
+                    for name in metadata_names
                 }
                 previous_properties.append((obj, before))
                 obj[PROVENANCE_PROPERTY] = encoded
                 obj[ACTIVE_EXPORT_PROPERTY] = variant["variantId"]
-                obj[model.SBF_FAMILY_ID_PROPERTY] = family["familyId"]
-                obj[model.SBF_VARIANT_ID_PROPERTY] = variant["variantId"]
-                obj[model.SBF_BODY_FINGERPRINT_PROPERTY] = family[
-                    "technicalBodyFingerprint"
-                ]
+                if family["familySource"] == model.FAMILY_SOURCE_SBF:
+                    obj[model.SBF_FAMILY_ID_PROPERTY] = family["familyId"]
+                    obj[model.SBF_VARIANT_ID_PROPERTY] = variant["variantId"]
+                    obj[model.SBF_BODY_FINGERPRINT_PROPERTY] = family[
+                        "technicalBodyFingerprint"
+                    ]
+                else:
+                    for name in (
+                        model.SBF_FAMILY_ID_PROPERTY,
+                        model.SBF_VARIANT_ID_PROPERTY,
+                        model.SBF_BODY_FINGERPRINT_PROPERTY,
+                    ):
+                        if name in obj:
+                            del obj[name]
         yield provenance
     finally:
         settings.damage_authoring_filename = previous_filename
@@ -1452,8 +2464,31 @@ def export_context(context, settings, state):
                     del obj[name]
 
 
+def _repair_resized_socket_scale_for_export(attachment_sockets, authoring_state):
+    """Leave valid authored sockets byte-for-byte alone; repair resized scale only."""
+
+    runtime_rig = bpy.data.objects.get(str(authoring_state.get("authoring_rig", "")))
+    try:
+        return attachment_sockets.runtime_socket_contract(
+            authoring_state,
+            runtime_rig=runtime_rig,
+        )
+    except RuntimeError as exc:
+        # Complete Damage never supports socket scale. Some older files acquired
+        # it as a side effect of resizing the whole character after socket
+        # placement. The repair preserves the artist's local position and
+        # quaternion; every other socket failure remains an ordinary hard gate.
+        if "unsupported local scale" not in str(exc):
+            raise
+    attachment_sockets.ensure_standard_sockets(runtime_rig)
+    return attachment_sockets.runtime_socket_contract(
+        authoring_state,
+        runtime_rig=runtime_rig,
+    )
+
+
 def batch_export_ready_variants(context):
-    from . import damage_authoring
+    from . import attachment_sockets, damage_authoring
 
     family = load_state(context.scene, required=True)
     settings = context.scene.daf_settings
@@ -1462,6 +2497,9 @@ def batch_export_ready_variants(context):
     authoring_state = damage_authoring._load_state()
     if authoring_state is None:
         raise RuntimeError("Build the Complete Damage authoring asset before batch export.")
+    if family["familySource"] == model.FAMILY_SOURCE_FORGE_TEXTURE:
+        damage_authoring.restore_finished_source_transform_proof(context)
+    _repair_resized_socket_scale_for_export(attachment_sockets, authoring_state)
     exported = []
     skipped = []
     try:
@@ -1491,6 +2529,25 @@ def batch_export_ready_variants(context):
     return {"exported": exported, "skipped": skipped}
 
 
+def export_active_variant(context):
+    from . import attachment_sockets, damage_authoring
+
+    family = load_state(context.scene, required=True)
+    variant = model.variant_by_id(family)
+    authoring_state = damage_authoring._load_state()
+    if authoring_state is None:
+        raise RuntimeError("Build the Complete Damage authoring asset before export.")
+    if family["familySource"] == model.FAMILY_SOURCE_FORGE_TEXTURE:
+        damage_authoring.restore_finished_source_transform_proof(context)
+    _repair_resized_socket_scale_for_export(attachment_sockets, authoring_state)
+    paths = damage_authoring._export_asset(
+        context,
+        context.scene.daf_settings,
+        authoring_state,
+    )
+    return variant, paths
+
+
 class _VariantOperator(Operator):
     def failed(self, context, exc):
         settings = getattr(context.scene, "daf_settings", None)
@@ -1515,6 +2572,240 @@ class DAF_OT_adopt_character_variant_family(_VariantOperator):
             self.report(
                 {"INFO"},
                 f"Adopted {state['displayName']} with {len(state['shared']['actionIds'])} shared Action(s).",
+            )
+            return {"FINISHED"}
+        except Exception as exc:
+            return self.failed(context, exc)
+
+
+class DAF_OT_start_finished_texture_family(_VariantOperator):
+    bl_idname = "daf.start_finished_texture_family"
+    bl_label = "Start Texture Variants from Finished Character"
+    bl_description = "Snapshot the current finished Damage Rig look as the approved base; Actions, Damage, sockets, and geometry remain shared"
+    bl_options = {"REGISTER", "UNDO"}
+
+    def execute(self, context):
+        try:
+            state = adopt_finished_damage_as_texture_family(context)
+            variant = model.variant_by_id(state)
+            self.report(
+                {"INFO"},
+                f"Started texture family {state['displayName']} with approved base {variant['displayName']}.",
+            )
+            return {"FINISHED"}
+        except Exception as exc:
+            return self.failed(context, exc)
+
+
+class DAF_OT_create_forge_texture_variant(_VariantOperator):
+    bl_idname = "daf.create_forge_texture_variant"
+    bl_label = "Duplicate Active Look for New Texture"
+    bl_description = "Create one editable material/image copy for a new skin while inheriting every Action, Damage Site, and socket"
+    bl_options = {"REGISTER", "UNDO"}
+
+    def execute(self, context):
+        try:
+            variant = create_forge_texture_variant(context)
+            preview_active_variant(context)
+            context.scene.daf_settings.variant_family_status = (
+                f"DRAFT LOOK — {variant['displayName']}; edit/replace/paint its texture, then approve"
+            )
+            self.report(
+                {"INFO"},
+                f"Created draft texture look {variant['displayName']}; project or bake onto it, then approve the current look.",
+            )
+            return {"FINISHED"}
+        except Exception as exc:
+            return self.failed(context, exc)
+
+
+class DAF_OT_approve_forge_texture_variant(_VariantOperator):
+    bl_idname = "daf.approve_forge_texture_variant"
+    bl_label = "Approve Current Texture Look"
+    bl_description = "Snapshot and approve the active runtime material/image palette against the unchanged finished Damage Rig"
+    bl_options = {"REGISTER", "UNDO"}
+
+    def execute(self, context):
+        try:
+            variant = approve_forge_texture_variant(context)
+            self.report({"INFO"}, f"Approved texture look {variant['displayName']}.")
+            return {"FINISHED"}
+        except Exception as exc:
+            return self.failed(context, exc)
+
+
+class DAF_OT_edit_forge_texture_variant(_VariantOperator):
+    bl_idname = "daf.edit_forge_texture_variant"
+    bl_label = "Edit or Tweak This Look"
+    bl_description = "Mark only the active texture look as a draft, keep all shared authoring intact, and require appearance approval after editing"
+    bl_options = {"REGISTER", "UNDO"}
+
+    def execute(self, context):
+        try:
+            variant = edit_forge_texture_variant(context)
+            self.report(
+                {"INFO"},
+                f"Editing {variant['displayName']}; texture approval is now required before export.",
+            )
+            return {"FINISHED"}
+        except Exception as exc:
+            return self.failed(context, exc)
+
+
+class DAF_OT_replace_forge_texture_image(_VariantOperator):
+    bl_idname = "daf.replace_forge_texture_image"
+    bl_label = "Choose One Finished Base Color Image"
+    bl_description = "Choose one finished UV Base Color image (not a four-view source folder), load it into only this look, and mark the look unsaved"
+    bl_options = {"REGISTER", "UNDO"}
+
+    filepath: StringProperty(name="Final Base Color", subtype='FILE_PATH')
+    filter_glob: StringProperty(
+        default="*.png;*.jpg;*.jpeg;*.tif;*.tiff;*.exr",
+        options={'HIDDEN'},
+    )
+
+    def invoke(self, context, _event):
+        self.filepath = str(context.scene.daf_settings.variant_texture_image_path)
+        context.window_manager.fileselect_add(self)
+        return {"RUNNING_MODAL"}
+
+    def execute(self, context):
+        try:
+            context.scene.daf_settings.variant_texture_image_path = str(self.filepath)
+            variant, image = replace_active_base_color_texture(context, self.filepath)
+            self.report(
+                {"INFO"},
+                f"Loaded {image.name} into {variant['displayName']}; save the look before export.",
+            )
+            return {"FINISHED"}
+        except Exception as exc:
+            return self.failed(context, exc)
+
+
+class DAF_OT_load_sbf_projection_folder(_VariantOperator):
+    bl_idname = "daf.load_sbf_projection_folder"
+    bl_label = "Load Four-View Projection Folder"
+    bl_description = "Reveal Skin & Bones' full-body projection target, hide Forge's derived Damage pieces, and choose front/back/left/right source images"
+    bl_options = {"REGISTER", "UNDO"}
+
+    def execute(self, context):
+        try:
+            target = enter_skin_and_bones_projection(context)
+            try:
+                operation = getattr(bpy.ops.sbf, "load_perspective_folder")
+                result = operation('INVOKE_DEFAULT')
+            except (AttributeError, RuntimeError) as exc:
+                raise RuntimeError(
+                    "Skin & Bones cannot open its perspective-folder browser. Enable Skin & Bones 2.2.0+ first."
+                ) from exc
+            if not ({"RUNNING_MODAL", "FINISHED"} & set(result)):
+                raise RuntimeError("Skin & Bones did not open the perspective-folder browser.")
+            self.report(
+                {"INFO"},
+                f"Projection body {target.name} is visible; choose the folder containing front/back/left/right images.",
+            )
+            return {"FINISHED"}
+        except Exception as exc:
+            return self.failed(context, exc)
+
+
+class DAF_OT_build_sbf_projection_preview(_VariantOperator):
+    bl_idname = "daf.build_sbf_projection_preview"
+    bl_label = "Build or Refresh Projection Preview"
+    bl_description = "Run Skin & Bones One-Click Best Preview on its visible full-body source mesh"
+    bl_options = {"REGISTER", "UNDO"}
+
+    def execute(self, context):
+        try:
+            build_skin_and_bones_projection_preview(context)
+            self.report({"INFO"}, "Skin & Bones projection preview is visible.")
+            return {"FINISHED"}
+        except Exception as exc:
+            return self.failed(context, exc)
+
+
+class DAF_OT_bake_sbf_projection(_VariantOperator):
+    bl_idname = "daf.bake_sbf_projection"
+    bl_label = "Bake Final Texture in Skin & Bones"
+    bl_description = "Bake the current Skin & Bones preview to its final UV Base Color without changing shared Forge authoring"
+    bl_options = {"REGISTER"}
+
+    def execute(self, context):
+        try:
+            bake_skin_and_bones_projection(context)
+            self.report(
+                {"INFO"},
+                "Skin & Bones final texture baked; repair there if needed, then apply it to this Forge look.",
+            )
+            return {"FINISHED"}
+        except Exception as exc:
+            return self.failed(context, exc)
+
+
+class DAF_OT_apply_sbf_final_texture(_VariantOperator):
+    bl_idname = "daf.apply_sbf_final_texture"
+    bl_label = "Use Latest Skin & Bones Final on This Look"
+    bl_description = "Copy Skin & Bones' active final Base Color into only this Forge look, restore the intact finished body, and leave Actions, Damage, and sockets shared"
+    bl_options = {"REGISTER", "UNDO"}
+
+    def execute(self, context):
+        try:
+            variant, image = apply_skin_and_bones_final_texture(context)
+            self.report(
+                {"INFO"},
+                f"Applied {image.name} to {variant['displayName']}; save or export this look next.",
+            )
+            return {"FINISHED"}
+        except Exception as exc:
+            return self.failed(context, exc)
+
+
+class DAF_OT_save_export_forge_texture_variant(_VariantOperator):
+    bl_idname = "daf.save_export_forge_texture_variant"
+    bl_label = "Save and Export Current Look"
+    bl_description = "Snapshot the active Forge-owned texture look, run full Complete Damage validation, and export its independent GLB"
+    bl_options = {"REGISTER"}
+
+    def execute(self, context):
+        try:
+            approve_forge_texture_variant(context)
+            variant, paths = export_active_variant(context)
+            self.report(
+                {"INFO"},
+                f"Saved and exported {variant['displayName']} as {Path(paths[0]).name if paths else variant['exportIdentity']}.",
+            )
+            return {"FINISHED"}
+        except Exception as exc:
+            return self.failed(context, exc)
+
+
+class DAF_OT_preview_character_variant(_VariantOperator):
+    bl_idname = "daf.preview_character_variant"
+    bl_label = "Preview Active Look"
+    bl_description = "Apply the active variant material palette to the finished shared character and use Material Preview"
+    bl_options = {"REGISTER"}
+
+    def execute(self, context):
+        try:
+            variant = preview_active_variant(context)
+            self.report({"INFO"}, f"Previewing {variant['displayName']}.")
+            return {"FINISHED"}
+        except Exception as exc:
+            return self.failed(context, exc)
+
+
+class DAF_OT_export_active_character_variant(_VariantOperator):
+    bl_idname = "daf.export_active_character_variant"
+    bl_label = "Export This Variant"
+    bl_description = "Export the selected appearance with the shared finished character and only its explicit overrides"
+    bl_options = {"REGISTER"}
+
+    def execute(self, context):
+        try:
+            variant, paths = export_active_variant(context)
+            self.report(
+                {"INFO"},
+                f"Exported {variant['displayName']} as {Path(paths[0]).name if paths else variant['exportIdentity']}.",
             )
             return {"FINISHED"}
         except Exception as exc:
@@ -1552,7 +2843,8 @@ class DAF_OT_switch_character_variant(_VariantOperator):
 
     def execute(self, context):
         try:
-            variant = switch_variant(self.variant_id, context.scene)
+            switch_variant(self.variant_id, context.scene)
+            variant = preview_active_variant(context)
             self.report({"INFO"}, f"Active appearance: {variant['displayName']}.")
             return {"FINISHED"}
         except Exception as exc:
@@ -1717,6 +3009,18 @@ class DAF_OT_export_ready_character_variants(_VariantOperator):
 
 CLASSES = (
     DAF_OT_adopt_character_variant_family,
+    DAF_OT_start_finished_texture_family,
+    DAF_OT_create_forge_texture_variant,
+    DAF_OT_approve_forge_texture_variant,
+    DAF_OT_edit_forge_texture_variant,
+    DAF_OT_replace_forge_texture_image,
+    DAF_OT_load_sbf_projection_folder,
+    DAF_OT_build_sbf_projection_preview,
+    DAF_OT_bake_sbf_projection,
+    DAF_OT_apply_sbf_final_texture,
+    DAF_OT_save_export_forge_texture_variant,
+    DAF_OT_preview_character_variant,
+    DAF_OT_export_active_character_variant,
     DAF_OT_import_character_variant,
     DAF_OT_switch_character_variant,
     DAF_OT_create_variant_action_override,
@@ -1734,13 +3038,21 @@ __all__ = (
     "FAMILY_STATE_PROPERTY",
     "ACTION_SCOPE_PROPERTY",
     "action_status",
+    "adopt_finished_damage_as_texture_family",
     "adopt_selected_as_family_base",
+    "appearance_status",
+    "apply_skin_and_bones_final_texture",
     "batch_export_ready_variants",
+    "bake_skin_and_bones_projection",
+    "build_skin_and_bones_projection_preview",
     "damage_object_is_effective",
     "damage_status",
     "effective_actions",
     "effective_damage_key_names",
     "effective_progressive_collection",
+    "edit_forge_texture_variant",
+    "enter_skin_and_bones_projection",
+    "export_active_variant",
     "export_context",
     "export_provenance",
     "handoff_from_armature",
@@ -1749,7 +3061,10 @@ __all__ = (
     "mark_action_for_family",
     "merge_progressive_collection",
     "recover_state",
+    "replace_active_base_color_texture",
     "require_regular_action_edit_allowed",
     "store_state",
     "switch_variant",
+    "texture_appearance_errors",
+    "texture_appearance_fingerprint",
 )

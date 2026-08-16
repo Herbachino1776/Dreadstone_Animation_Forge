@@ -26,6 +26,11 @@ FORGE_FAMILY_SCHEMA = "dreadstone.character_variant_family.v1"
 FORGE_FAMILY_SCHEMA_VERSION = 1
 FORGE_PROVENANCE_SCHEMA = "dreadstone.character_variant_provenance.v1"
 FORGE_PROVENANCE_SCHEMA_VERSION = 1
+FAMILY_SOURCE_SBF = "SKIN_AND_BONES_HANDOFF"
+FAMILY_SOURCE_FORGE_TEXTURE = "FORGE_FINISHED_TEXTURE_CAPTURE"
+FORGE_TEXTURE_BODY_SCHEMA = "dreadstone-finished-damage-body-v1"
+FORGE_TEXTURE_BODY_SCHEMA_VERSION = 1
+FORGE_TEXTURE_APPROVAL_AUTHORITY = "ANIMATION_FORGE_TEXTURE_CAPTURE"
 
 SBF_HANDOFF_PROPERTY = "sbf_appearance_family_handoff"
 SBF_FAMILY_ID_PROPERTY = "sbf_appearance_family_id"
@@ -229,6 +234,9 @@ def _variant_from_handoff(handoff, *, appearance=None):
         "appearanceFingerprint": str(approval.get("appearance_fingerprint", "")),
         "appearanceApprovedAtUtc": str(approval.get("approved_at_utc", "")),
         "skinAndBonesVersion": str(approval.get("addon_version", "")),
+        "appearanceSource": FAMILY_SOURCE_SBF,
+        "appearanceApprovalAuthority": "SKIN_AND_BONES",
+        "appearanceApprovalState": "APPROVED",
         "handoff": copy.deepcopy(handoff),
         "appearance": copy.deepcopy(appearance or {}),
         "forgeRevision": 1,
@@ -248,11 +256,119 @@ def new_family(handoff, rig_contract, *, appearance=None):
     return {
         "schema": FORGE_FAMILY_SCHEMA,
         "schemaVersion": FORGE_FAMILY_SCHEMA_VERSION,
+        "familySource": FAMILY_SOURCE_SBF,
         "familyId": str(handoff["family_id"]),
         "displayName": str(handoff["family_display_name"]),
         "technicalBodySchema": str(handoff["technical_body_schema"]),
         "technicalBodySchemaVersion": int(handoff["technical_body_schema_version"]),
         "technicalBodyFingerprint": str(handoff["technical_body_fingerprint"]),
+        "canonicalRig": rig,
+        "baseVariantId": variant["variantId"],
+        "activeVariantId": variant["variantId"],
+        "revision": 1,
+        "shared": {
+            "revision": 1,
+            "actionIds": [],
+            "damageRevision": 1,
+            "socketPolicy": SOCKET_POLICY,
+        },
+        "variants": [variant],
+    }
+
+
+def _forge_texture_variant(
+    variant_id,
+    display_name,
+    export_identity,
+    *,
+    appearance=None,
+    appearance_fingerprint="",
+    approved_at_utc="",
+    approved=False,
+):
+    variant_id = str(variant_id).strip()
+    display_name = str(display_name).strip()
+    export_identity = str(export_identity).strip()
+    if not variant_id or not display_name or not export_identity:
+        raise ValueError(
+            "Forge texture variants require a variant ID, display name, and export identity."
+        )
+    fingerprint = str(appearance_fingerprint).strip()
+    if approved and not _HEX_64.fullmatch(fingerprint):
+        raise ValueError(
+            "An approved Forge texture variant requires a SHA-256 appearance fingerprint."
+        )
+    return {
+        "variantId": variant_id,
+        "displayName": display_name,
+        "exportIdentity": export_identity,
+        "appearanceRevision": 1,
+        "appearanceFingerprint": fingerprint,
+        "appearanceApprovedAtUtc": str(approved_at_utc) if approved else "",
+        "skinAndBonesVersion": "",
+        "appearanceSource": FAMILY_SOURCE_FORGE_TEXTURE,
+        "appearanceApprovalAuthority": FORGE_TEXTURE_APPROVAL_AUTHORITY,
+        "appearanceApprovalState": "APPROVED" if approved else "DRAFT",
+        "handoff": None,
+        "appearance": copy.deepcopy(appearance or {}),
+        "forgeRevision": 1,
+        "actionOverrides": {},
+        "damageKeyOverrides": {},
+        "progressiveSiteOverrides": {},
+    }
+
+
+def new_forge_texture_family(
+    family_id,
+    display_name,
+    variant_id,
+    variant_display_name,
+    export_identity,
+    technical_body_fingerprint,
+    rig_contract,
+    *,
+    appearance=None,
+    appearance_fingerprint="",
+    approved_at_utc="",
+):
+    """Create a family by snapshotting materials on a finished Forge Damage Rig.
+
+    This is deliberately not a synthetic Skin & Bones handoff.  It never joins
+    separately imported geometry; the stored technical fingerprint locks every
+    texture iteration to the already-authored runtime body.
+    """
+
+    family_id = str(family_id).strip()
+    display_name = str(display_name).strip()
+    fingerprint = str(technical_body_fingerprint).strip()
+    if not family_id or not display_name:
+        raise ValueError("Forge texture families require a family ID and display name.")
+    if not _HEX_64.fullmatch(fingerprint):
+        raise ValueError(
+            "Finished Damage Rig technical-body fingerprint must be a SHA-256 hex value."
+        )
+    rig = canonical_rig_signature(rig_contract)
+    errors = rig_signature_errors(rig)
+    if errors:
+        raise ValueError(" ".join(errors))
+    variant = _forge_texture_variant(
+        variant_id,
+        variant_display_name,
+        export_identity,
+        appearance=appearance,
+        appearance_fingerprint=appearance_fingerprint,
+        approved_at_utc=approved_at_utc,
+        approved=True,
+    )
+    return {
+        "schema": FORGE_FAMILY_SCHEMA,
+        "schemaVersion": FORGE_FAMILY_SCHEMA_VERSION,
+        "familySource": FAMILY_SOURCE_FORGE_TEXTURE,
+        "familyId": family_id,
+        "displayName": display_name,
+        "technicalBodySchema": FORGE_TEXTURE_BODY_SCHEMA,
+        "technicalBodySchemaVersion": FORGE_TEXTURE_BODY_SCHEMA_VERSION,
+        "technicalBodyFingerprint": fingerprint,
         "canonicalRig": rig,
         "baseVariantId": variant["variantId"],
         "activeVariantId": variant["variantId"],
@@ -275,6 +391,12 @@ def normalize_family(value):
         raise ValueError("Character Variant Family state uses an unsupported schema.")
     if int(state.get("schemaVersion", 0)) != FORGE_FAMILY_SCHEMA_VERSION:
         raise ValueError("Character Variant Family state uses an unsupported schema version.")
+    state.setdefault("familySource", FAMILY_SOURCE_SBF)
+    if state["familySource"] not in {
+        FAMILY_SOURCE_SBF,
+        FAMILY_SOURCE_FORGE_TEXTURE,
+    }:
+        raise ValueError("Character Variant Family has an unsupported family source.")
     state.setdefault("revision", 1)
     state.setdefault("baseVariantId", "")
     state.setdefault("activeVariantId", state.get("baseVariantId", ""))
@@ -292,6 +414,19 @@ def normalize_family(value):
         seen.add(variant_id)
         variant.setdefault("forgeRevision", 1)
         variant.setdefault("appearance", {})
+        variant.setdefault("appearanceSource", state["familySource"])
+        variant.setdefault(
+            "appearanceApprovalAuthority",
+            "SKIN_AND_BONES"
+            if state["familySource"] == FAMILY_SOURCE_SBF
+            else FORGE_TEXTURE_APPROVAL_AUTHORITY,
+        )
+        variant.setdefault(
+            "appearanceApprovalState",
+            "APPROVED"
+            if str(variant.get("appearanceFingerprint", ""))
+            else "DRAFT",
+        )
         variant.setdefault("actionOverrides", {})
         variant.setdefault("damageKeyOverrides", {})
         variant.setdefault("progressiveSiteOverrides", {})
@@ -374,6 +509,10 @@ def compatibility_errors(state, handoff, rig_contract):
 
 def add_variant(state, handoff, rig_contract, *, appearance=None):
     state = normalize_family(state)
+    if state["familySource"] != FAMILY_SOURCE_SBF:
+        raise ValueError(
+            "Skin & Bones GLB variants cannot be joined to a finished-rig texture family."
+        )
     handoff = decode_handoff(handoff)
     errors = compatibility_errors(state, handoff, rig_contract)
     if errors:
@@ -382,6 +521,136 @@ def add_variant(state, handoff, rig_contract, *, appearance=None):
     state["activeVariantId"] = str(handoff["variant_id"])
     state["revision"] = int(state.get("revision", 1)) + 1
     return state
+
+
+def forge_texture_variant_errors(
+    state,
+    variant_id,
+    export_identity,
+    technical_body_fingerprint,
+    rig_contract,
+):
+    state = normalize_family(state)
+    errors = []
+    if state["familySource"] != FAMILY_SOURCE_FORGE_TEXTURE:
+        errors.append(
+            "Forge texture snapshots can only be added to a finished-rig texture family."
+        )
+    fingerprint = str(technical_body_fingerprint)
+    if fingerprint != str(state.get("technicalBodyFingerprint", "")):
+        errors.append(
+            "The finished Damage Rig/body changed after the texture family was started."
+        )
+    signature = canonical_rig_signature(rig_contract)
+    errors.extend(rig_signature_errors(signature))
+    if signature != canonical_rig_signature(state.get("canonicalRig", {})):
+        errors.append("Canonical Damage Rig/coordinate contract differs from the family base.")
+    variant_id = str(variant_id).strip()
+    if not variant_id:
+        errors.append("Texture variant ID is empty.")
+    elif any(value.get("variantId") == variant_id for value in state["variants"]):
+        errors.append(f"Appearance variant {variant_id!r} already belongs to this family.")
+    export_identity = str(export_identity).strip()
+    normalized_export = safe_identifier(export_identity)
+    if not export_identity:
+        errors.append("Texture variant export identity is empty.")
+    elif any(
+        safe_identifier(value.get("exportIdentity", "")) == normalized_export
+        for value in state["variants"]
+    ):
+        errors.append(
+            f"Appearance export identity {export_identity!r} would collide with an existing family output."
+        )
+    return errors
+
+
+def add_forge_texture_variant(
+    state,
+    variant_id,
+    display_name,
+    export_identity,
+    technical_body_fingerprint,
+    rig_contract,
+    *,
+    appearance=None,
+):
+    state = normalize_family(state)
+    errors = forge_texture_variant_errors(
+        state,
+        variant_id,
+        export_identity,
+        technical_body_fingerprint,
+        rig_contract,
+    )
+    if errors:
+        raise ValueError(" ".join(errors))
+    variant = _forge_texture_variant(
+        variant_id,
+        display_name,
+        export_identity,
+        appearance=appearance,
+        approved=False,
+    )
+    state["variants"].append(variant)
+    state["activeVariantId"] = variant["variantId"]
+    state["revision"] = int(state.get("revision", 1)) + 1
+    return state
+
+
+def approve_forge_texture_variant(
+    state,
+    appearance_fingerprint,
+    approved_at_utc,
+    *,
+    appearance=None,
+    variant_id=None,
+):
+    state = normalize_family(state)
+    if state["familySource"] != FAMILY_SOURCE_FORGE_TEXTURE:
+        raise ValueError("Skin & Bones appearances remain approved by Skin & Bones.")
+    fingerprint = str(appearance_fingerprint).strip()
+    if not _HEX_64.fullmatch(fingerprint):
+        raise ValueError("Texture approval requires a SHA-256 appearance fingerprint.")
+    variant = _variant_reference(state, variant_id)
+    if appearance is not None:
+        variant["appearance"] = copy.deepcopy(appearance)
+    variant["appearanceRevision"] = int(variant.get("appearanceRevision", 0)) + 1
+    variant["appearanceFingerprint"] = fingerprint
+    variant["appearanceApprovedAtUtc"] = str(approved_at_utc)
+    variant["appearanceApprovalState"] = "APPROVED"
+    variant["forgeRevision"] = int(variant.get("forgeRevision", 1)) + 1
+    state["revision"] = int(state.get("revision", 1)) + 1
+    return state
+
+
+def begin_forge_texture_variant_edit(state, variant_id=None):
+    """Make one approved native look deliberately editable again.
+
+    The last fingerprint remains available for diagnostics, but export is
+    blocked until the artist approves the newly reviewed appearance.
+    """
+
+    state = normalize_family(state)
+    if state["familySource"] != FAMILY_SOURCE_FORGE_TEXTURE:
+        raise ValueError("Skin & Bones appearance pixels remain owned by Skin & Bones.")
+    variant = _variant_reference(state, variant_id)
+    variant["appearanceApprovalState"] = "DRAFT"
+    variant["forgeRevision"] = int(variant.get("forgeRevision", 1)) + 1
+    state["revision"] = int(state.get("revision", 1)) + 1
+    return state
+
+
+def variant_appearance_approved(state, variant_id=None, current_fingerprint=None):
+    variant = variant_by_id(state, variant_id)
+    approved = (
+        str(variant.get("appearanceApprovalState", "")) == "APPROVED"
+        and bool(str(variant.get("appearanceFingerprint", "")))
+    )
+    if current_fingerprint is not None:
+        approved = approved and (
+            str(current_fingerprint) == str(variant.get("appearanceFingerprint", ""))
+        )
+    return bool(approved)
 
 
 def set_active_variant(state, variant_id):
@@ -727,7 +996,10 @@ def export_provenance(state, variant_id=None):
         "schema": FORGE_PROVENANCE_SCHEMA,
         "schemaVersion": FORGE_PROVENANCE_SCHEMA_VERSION,
         "technicalFamilyId": state["familyId"],
+        "familySource": state["familySource"],
         "appearanceVariantId": variant["variantId"],
+        "appearanceApprovalAuthority": variant["appearanceApprovalAuthority"],
+        "appearanceFingerprint": variant["appearanceFingerprint"],
         "appearanceExportIdentity": variant["exportIdentity"],
         "technicalBodyFingerprint": state["technicalBodyFingerprint"],
         "effectiveForgeVariantIdentity": (
@@ -748,7 +1020,10 @@ __all__ = tuple(
     if name.isupper()
     or name
     in {
+        "add_forge_texture_variant",
+        "begin_forge_texture_variant_edit",
         "add_variant",
+        "approve_forge_texture_variant",
         "canonical_digest",
         "canonical_rig_signature",
         "compatibility_errors",
@@ -757,8 +1032,10 @@ __all__ = tuple(
         "effective_progressive_sites",
         "effective_readiness",
         "export_provenance",
+        "forge_texture_variant_errors",
         "handoff_errors",
         "new_family",
+        "new_forge_texture_family",
         "normalize_family",
         "progressive_clone_plan",
         "register_shared_actions",
@@ -775,5 +1052,6 @@ __all__ = tuple(
         "set_progressive_site_override",
         "stable_json",
         "variant_by_id",
+        "variant_appearance_approved",
     }
 )

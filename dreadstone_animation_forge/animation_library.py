@@ -18,7 +18,7 @@ from . import offensive_actions, offensive_motion
 
 
 ANIMATION_CLIP_SCHEMA = "dreadstone.animation_clip.v1"
-ANIMATION_LIBRARY_BUILD_ID = "2026-08-12.offensive-motion-studio-5.4.1-natural"
+ANIMATION_LIBRARY_BUILD_ID = "2026-08-13.attack-studio-bypass.1"
 
 CLIP_ID_PROPERTY = "dsb_animation_clip_id"
 CLIP_SCHEMA_PROPERTY = "dsb_animation_clip_schema"
@@ -706,12 +706,17 @@ def character_actions(armature, *, include_drafts=False):
     armature_context = None
     for action in bpy.data.actions:
         draft = bool(action.get("dsb_draft", False))
+        authored_draft = draft and bool(action.get("dsb_authored_attack_json", False))
         if draft and not (
-            include_drafts and action in explicit
+            include_drafts and (action in explicit or authored_draft)
         ):
             continue
         approved = bool(action.get("dsb_approved", False))
-        if action not in explicit and not approved:
+        if (
+            action not in explicit
+            and not approved
+            and not (include_drafts and authored_draft)
+        ):
             continue
         owner = str(action.get(CLIP_OWNER_PROPERTY, ""))
         if action not in explicit and owner and owner != armature.name:
@@ -1110,6 +1115,17 @@ def export_action_clip(context, armature, action, directory):
         ),
         "blendFile": blend_path.name,
     }
+    manifest["markers"] = {
+        marker.name: int(marker.frame)
+        for marker in action.pose_markers
+    }
+    if action.get("dsb_authored_attack_json"):
+        manifest["authoredAttack"] = json.loads(
+            str(action["dsb_authored_attack_json"])
+        )
+    offensive_metadata = offensive_actions.read_offensive_metadata(action)
+    if offensive_metadata is not None:
+        manifest["offensiveAction"] = offensive_metadata
     manifest_path.write_text(
         json.dumps(manifest, indent=2, sort_keys=True) + "\n",
         encoding="utf-8",
@@ -1189,6 +1205,26 @@ def import_action_clip(context, armature, filepath):
         for action in loaded:
             _remove_action(action, unlink_nla=True)
         raise RuntimeError("Animation clip is incompatible: " + "; ".join(failures))
+    authored_failures = []
+    for action in loaded:
+        if not action.get("dsb_authored_attack_json"):
+            continue
+        from . import authored_attack_library
+
+        authored_report = authored_attack_library.validate_action(
+            context,
+            armature,
+            action,
+            require_approved=True,
+        )
+        authored_failures.extend(authored_report["errors"])
+    if authored_failures:
+        for action in loaded:
+            _remove_action(action, unlink_nla=True)
+        raise RuntimeError(
+            "Authored animation clip is corrupt: "
+            + "; ".join(dict.fromkeys(authored_failures))
+        )
     imported = []
     legacy_count = 0
     for action, report, source in zip(loaded, reports, source_metadata):

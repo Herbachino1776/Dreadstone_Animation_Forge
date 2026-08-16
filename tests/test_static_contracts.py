@@ -154,7 +154,7 @@ class StaticContractTests(unittest.TestCase):
         manifest = contracts.MANIFEST_PATH.read_text(encoding="utf-8")
         self.assertIn('schema_version = "1.0.0"', manifest)
         self.assertIn('id = "dreadstone_animation_forge"', manifest)
-        self.assertIn('version = "5.4.1"', manifest)
+        self.assertIn('version = "5.4.4"', manifest)
         builder = (ROOT / "scripts" / "build_release.py").read_text(encoding="utf-8")
         self.assertIn('ARCHIVE_ENTRIES = ("blender_manifest.toml", *MODULES', builder)
         self.assertNotIn('"dreadstone_animation_forge/__init__.py"', builder)
@@ -178,7 +178,7 @@ class StaticContractTests(unittest.TestCase):
         version = contracts.EXPECTED_VERSION
         self.assertEqual(
             f"Dreadstone_Animation_Forge_v{'_'.join(map(str, version))}.zip",
-            "Dreadstone_Animation_Forge_v5_4_1.zip",
+            "Dreadstone_Animation_Forge_v5_4_4.zip",
         )
 
     def test_authoritative_user_workflow_guide_contract(self) -> None:
@@ -196,8 +196,8 @@ class StaticContractTests(unittest.TestCase):
     def test_release_readme_contains_install_quick_start_and_guide_reference(self) -> None:
         readme = (ROOT / "README.md").read_text(encoding="utf-8")
         for marker in (
-            "5.4.1",
-            "Dreadstone_Animation_Forge_v5_4_1.zip",
+            "5.4.4",
+            "Dreadstone_Animation_Forge_v5_4_4.zip",
             "Install from Disk",
             "## Quick start",
             "docs/USER_WORKFLOW_GUIDE.md",
@@ -228,17 +228,64 @@ class StaticContractTests(unittest.TestCase):
             with self.subTest(operator_id=operator_id):
                 self.assertEqual(actual.get(operator_id), label)
 
-    def test_motion_studio_quick_first_ui_and_advanced_sections(self) -> None:
+    def test_authored_attacks_are_primary_and_procedural_tools_are_legacy(self) -> None:
         panels = (ROOT / "dreadstone_animation_forge" / "ui" / "panels.py").read_text(encoding="utf-8")
         self.assertNotIn("icon='FAVORITES'", panels)
+        tree = ast.parse(panels)
+        functions = {
+            node.name: node
+            for node in tree.body
+            if isinstance(node, ast.FunctionDef)
+        }
+        self.assertNotIn("_draw_offensive_animation_540_reference", functions)
+        authored = ast.get_source_segment(
+            panels,
+            functions["_draw_authored_attack_browser"],
+        )
+        self.assertIsNotNone(authored)
         for label in (
-            "ATTACK ANIMATION VIP STUDIO",
-            "VIP MACROS",
-            "REFRESH ATTACK",
+            "AUTHORED ATTACK BROWSER",
+            "ATTACK LIBRARY",
+            "AUTHORED BASES",
+            "NON-SOLVING MACROS",
+            "TIMING MARKERS",
+            "PREVIEW ON CHARACTER",
+            "ACCEPT AS DRAFT",
+        ):
+            with self.subTest(authored_label=label):
+                self.assertIn(label, authored)
+        for property_name in (
+            "authored_attack_library_root",
+            "authored_attack_filter_kind",
+            "authored_attack_filter_weapon",
+            "authored_attack_mirror",
+            "authored_attack_speed",
+            "authored_attack_anticipation",
+            "authored_attack_strike",
+            "authored_attack_follow_through",
+            "authored_attack_torso",
+            "authored_attack_reach",
+            "authored_attack_elbow",
+            "authored_attack_wrist",
+            "authored_attack_stance",
+            "authored_attack_root_policy",
+            "authored_attack_preview_weapon",
+        ):
+            with self.subTest(authored_property=property_name):
+                self.assertIn(property_name, authored)
+        self.assertNotIn("motion_studio", authored)
+        self.assertNotIn("target_distance", authored)
+
+        legacy = ast.get_source_segment(
+            panels,
+            functions["_draw_offensive_animation"],
+        )
+        self.assertIsNotNone(legacy)
+        for label in (
+            "LEGACY PROCEDURAL ATTACKS",
+            "OFFENSIVE MOTION STUDIO",
             "ADVANCED - TRAJECTORY, BODY & SOLVER",
-            "YOUR ATTACK",
-            "CONTACT",
-            "VALIDATE",
+            "SANDBOX CONTROLS",
             "TARGET DETAILS",
             "WEAPON GEOMETRY",
             "TRAJECTORY / CONTROL POINTS",
@@ -247,8 +294,21 @@ class StaticContractTests(unittest.TestCase):
             "VALIDATION TOLERANCES",
             "LEGACY / PROCEDURAL DRAFTING",
         ):
-            with self.subTest(label=label):
-                self.assertIn(label, panels)
+            with self.subTest(legacy_label=label):
+                self.assertIn(label, legacy)
+        self.assertIn('"daf.motion_studio_validate_baked_path"', legacy)
+
+        draw = functions["_draw_animation"]
+        calls = [
+            node.func.id
+            for node in ast.walk(draw)
+            if isinstance(node, ast.Call)
+            and isinstance(node.func, ast.Name)
+        ]
+        self.assertLess(
+            calls.index("_draw_authored_attack_browser"),
+            calls.index("_draw_offensive_animation"),
+        )
 
     def test_world_space_seed_radius_and_depth(self) -> None:
         for marker in (

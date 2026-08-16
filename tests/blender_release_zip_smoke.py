@@ -9,6 +9,7 @@ import sys
 from pathlib import Path
 
 import bpy
+from _bpy_restrict_state import RestrictBlend
 
 
 def arguments():
@@ -29,7 +30,10 @@ def main():
     imported = Path(addon.__file__).resolve()
     if imported.parent != package_dir:
         raise RuntimeError(f"Smoke test imported {imported}, not extracted release {package_dir}.")
-    addon.register()
+    # Blender enables add-ons while bpy.data/context are deliberately
+    # restricted.  Registration must not inspect scene objects or Actions.
+    with RestrictBlend():
+        addon.register()
     if not hasattr(bpy.types.Scene, "daf_settings"):
         raise RuntimeError("Extracted release did not register DAFSettings.")
     if not deformation_authoring.GORE_TEXTURE_ATLAS_PATH.is_file():

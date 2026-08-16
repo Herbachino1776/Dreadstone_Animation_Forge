@@ -881,8 +881,17 @@ def _animation_foldout(layout, settings, property_name, title, icon='ACTION'):
     return None
 
 
+def _animation_armature(context):
+    runtime = context.scene.objects.get("DSB_DAMAGE_RIG")
+    if runtime is not None and runtime.type == 'ARMATURE':
+        return runtime
+    from .. import find_armature
+
+    return find_armature(context)
+
+
 def _draw_vip_animation_library(layout, context, settings):
-    from .. import animation_library, find_armature, variant_authoring
+    from .. import animation_library, variant_authoring
 
     library = layout.box()
     header = library.row(align=True)
@@ -900,7 +909,7 @@ def _draw_vip_animation_library(layout, context, settings):
     if not settings.ui_vip_animation_open:
         return
     try:
-        armature = find_armature(context)
+        armature = _animation_armature(context)
         actions = animation_library.character_actions(
             armature,
             include_drafts=True,
@@ -1233,10 +1242,9 @@ def _draw_animation_setup(layout, context, settings):
     )
     if rig is not None:
         try:
-            from .. import find_armature
             from ..anatomy import skin_and_bones
 
-            armature = find_armature(context)
+            armature = _animation_armature(context)
             if skin_and_bones.contract(armature) is not None:
                 rig.label(text="Skin & Bones mapping is authoritative", icon='LOCKED')
                 rig.label(text="body → body_top0 → body_top1 → body_top2")
@@ -1522,186 +1530,226 @@ def _draw_mace_guard_animation(layout, settings):
     guard.label(text="Shape-key damage preview remains independent", icon='INFO')
 
 
-def _draw_offensive_animation_540_reference(layout, settings):
-    offense = _animation_foldout(
-        layout, settings, "ui_offensive_open", "OFFENSIVE MOTION STUDIO", icon='ACTION'
+def _draw_authored_attack_browser(layout, context, settings):
+    """Primary attack workflow: authored body motion, timing, then artist review."""
+
+    browser = _animation_foldout(
+        layout,
+        settings,
+        "ui_authored_attack_open",
+        "AUTHORED ATTACK BROWSER",
+        icon='ACTION',
     )
-    if offense is None:
+    if browser is None:
         return
-    offense.label(text="TARGET → WEAPON PATH → BODY SOLVE → FK BAKE → VALIDATE", icon='TRACKING')
-    offense.label(text="The baked weapon path defines the attack; the body supports it", icon='INFO')
 
-    master = offense.box()
-    master.label(text="1 · MOTION MASTER", icon='ASSET_MANAGER')
-    master.prop(settings, "motion_master_id")
-    master.operator(
-        "daf.motion_studio_build_from_master",
-        text="BUILD FROM MOTION MASTER",
-        icon='ARMATURE_DATA',
+    source = browser.box()
+    source.label(text="ATTACK LIBRARY", icon='ASSET_MANAGER')
+    source.prop(settings, "authored_attack_library_root", text="Library Root")
+    source.operator(
+        "daf.authored_attack_refresh",
+        text="REFRESH LIBRARY",
+        icon='FILE_REFRESH',
     )
-    master.label(text="Built-in starters are geometry-valid, not automatically artist approved", icon='INFO')
+    filters = source.row(align=True)
+    filters.prop(settings, "authored_attack_filter_kind", text="Attack")
+    filters.prop(settings, "authored_attack_filter_weapon", text="Mechanics")
 
-    target = offense.box()
-    target.label(text="2 · TARGET DUMMY & ZONE", icon='OUTLINER_OB_EMPTY')
-    target.prop(settings, "motion_target_zone")
-    target.prop(settings, "motion_target_distance")
-    target.prop(settings, "motion_target_height")
-    target.prop(settings, "motion_target_lateral")
-    dimensions = target.column(align=True)
-    dimensions.prop(settings, "motion_target_radius")
-    dimensions.prop(settings, "motion_target_half_height")
-    dimensions.prop(settings, "motion_target_head_radius")
-    if settings.motion_target_zone == "CUSTOM":
-        dimensions.prop(settings, "motion_custom_target_height")
-        dimensions.prop(settings, "motion_custom_target_radius")
-    target.label(text="Canonical target space: +Y forward · +Z up · X lateral", icon='ORIENTATION_GLOBAL')
+    clips = browser.box()
+    clips.label(text="AUTHORED BASES", icon='ACTION')
+    visible = []
+    try:
+        from .. import authored_attack_library
 
-    proxy = offense.box()
-    proxy.label(text="3 · WEAPON PROXY GEOMETRY", icon='EMPTY_AXIS')
-    proxy.prop(settings, "motion_proxy_class")
-    proxy.prop(settings, "motion_proxy_length")
-    proxy.prop(settings, "motion_proxy_contact")
-    proxy.prop(settings, "motion_proxy_strike_start")
-    proxy.prop(settings, "motion_proxy_strike_end")
-    proxy.prop(settings, "motion_proxy_head_radius")
-    proxy.label(text="Proxy controls geometry only; production weapon identity stays game-owned", icon='INFO')
+        for record in authored_attack_library.browser_records(context):
+            if not isinstance(record, dict):
+                continue
+            clip_id = str(record.get("clipId", ""))
+            kind = str(record.get("actionKind", ""))
+            families = {
+                str(value)
+                for value in record.get("previewWeaponFamilies", ())
+            }
+            label = str(record.get("title", clip_id))
+            visible.append((label, clip_id, kind, families))
+    except Exception as exc:
+        clips.label(text=f"Library unavailable: {exc}"[:100], icon='ERROR')
 
-    trajectory = offense.box()
-    trajectory.label(text="4 · CONTACT & TRAJECTORY", icon='CURVE_PATH')
-    trajectory.prop(settings, "motion_trajectory_family")
-    pose_row = trajectory.row(align=True)
-    for pose, label in (
-        ("ANTICIPATION", "ANTICIPATION"),
-        ("CONTACT", "CONTACT"),
-        ("FOLLOW_THROUGH", "FOLLOW THROUGH"),
+    for label, clip_id, kind, families in sorted(
+        visible,
+        key=lambda record: (record[0].lower(), record[1]),
     ):
-        jump = pose_row.operator("daf.motion_studio_jump_key_pose", text=label, icon='MARKER_HLT')
-        jump.pose = pose
-    trajectory.label(text="CONTACT shows the intended target, proxy, plane/line, and frozen relationship", icon='INFO')
-    display = trajectory.row(align=True)
-    display.prop(settings, "motion_show_target", toggle=True)
-    display.prop(settings, "motion_show_trail", toggle=True)
-    display.prop(settings, "motion_show_plane", toggle=True)
-    trajectory.operator("daf.motion_studio_rebuild_body_solve", text="BUILD / REBUILD BODY SOLVE", icon='CONSTRAINT_BONE')
-    trajectory.label(text="Move orange control arrows in the viewport, then rebuild", icon='ORIENTATION_LOCAL')
+        selected = clip_id == str(settings.authored_attack_active_clip_id)
+        row = clips.row(align=True)
+        choose = row.operator(
+            "daf.authored_attack_select",
+            text=label,
+            icon='RADIOBUT_ON' if selected else 'RADIOBUT_OFF',
+            depress=selected,
+        )
+        choose.clip_id = clip_id
+        detail = ", ".join(sorted(families)) or kind.replace("ATTACK_", "")
+        row.label(text=detail.replace("_", " ").title())
+    if not visible:
+        clips.label(
+            text="No authored bases match these filters.",
+            icon='INFO',
+        )
 
-    timing = offense.box()
-    timing.label(text="5 · COMBAT TIMING", icon='TIME')
-    timing.prop(settings, "motion_windup_seconds")
-    timing.prop(settings, "motion_active_seconds")
-    timing.prop(settings, "motion_recovery_seconds")
-    timing.label(text="ACTIVE accelerates through CONTACT; starter roots remain IN_PLACE", icon='INFO')
-
-    style = _animation_foldout(
-        offense, settings, "ui_motion_style_open", "Secondary Style Controls", icon='POSE_HLT'
+    options = browser.box()
+    options.label(text="NON-SOLVING MACROS", icon='MODIFIER')
+    row = options.row(align=True)
+    row.prop(settings, "authored_attack_mirror", toggle=True)
+    row.prop(settings, "authored_attack_speed")
+    macro_pairs = (
+        ("authored_attack_anticipation", "authored_attack_strike"),
+        ("authored_attack_follow_through", "authored_attack_torso"),
+        ("authored_attack_reach", "authored_attack_elbow"),
+        ("authored_attack_wrist", "authored_attack_stance"),
     )
-    if style is not None:
-        style.label(text="Style supports a geometrically correct path; it does not decide whether the attack hits", icon='INFO')
-        for property_name in (
-            "motion_style_anticipation",
-            "motion_style_torso_power",
-            "motion_style_stance_compression",
-            "motion_style_follow_through",
-            "motion_style_recovery",
-            "motion_style_arm_extension",
-            "motion_style_elbow_style",
-            "motion_style_wrist_style",
-        ):
-            style.prop(settings, property_name, slider=True)
-
-    proof = offense.box()
-    proof.label(text="6 · BAKED FK PROOF", icon='CHECKMARK')
-    row = proof.row(align=True)
-    row.operator("daf.motion_studio_preview", text="PREVIEW", icon='PLAY')
-    row.operator("daf.motion_studio_validate_baked_path", text="VALIDATE BAKED PATH", icon='CHECKMARK')
-    row = proof.row(align=True)
-    row.operator("daf.motion_studio_approve", text="APPROVE", icon='FAKE_USER_ON')
-    row.operator("daf.motion_studio_promote_master", text="PROMOTE TO MOTION MASTER", icon='ASSET_MANAGER')
-    proof.label(text=str(settings.motion_validation_status)[:120], icon='INFO')
-    proof.label(text="Approval requires current preview + ACTIVE target contact from the actual FK/socket path", icon='LOCKED')
-    helper_row = proof.row(align=True)
-    helper_row.operator("daf.motion_studio_repair_helpers", text="Repair Helpers", icon='FILE_REFRESH')
-    helper_row.operator("daf.motion_studio_remove_helpers", text="Remove Helpers", icon='HIDE_ON')
-    proof.operator("daf.ensure_runtime_attachment_sockets", text="Create / Repair Runtime Hand Sockets", icon='CONSTRAINT_BONE')
-    proof.label(text="Motion controls never rotate or recalibrate MAIN_HAND_R / MAIN_HAND_L", icon='ORIENTATION_LOCAL')
-
-    legacy = _animation_foldout(
-        offense, settings, "ui_legacy_offensive_open", "LEGACY / PROCEDURAL DRAFTING", icon='SETTINGS'
+    macro_column = options.column(align=True)
+    for left_property, right_property in macro_pairs:
+        row = macro_column.row(align=True)
+        row.prop(settings, left_property, slider=True)
+        row.prop(settings, right_property, slider=True)
+    options.prop(settings, "authored_attack_root_policy", text="Root Motion")
+    options.prop(
+        settings,
+        "authored_attack_preview_weapon",
+        text="Preview Proxy",
     )
-    if legacy is None:
-        return
-    legacy.label(text="Backward-compatible body-first rough drafts; Motion Studio is primary", icon='INFO')
-    legacy.prop(settings, "offensive_preview_kind")
-    timing = legacy.column(align=True)
-    timing.label(text="Legacy Authored Combat Timing", icon='TIME')
-    timing.prop(settings, "offensive_windup_seconds", slider=True)
-    timing.prop(settings, "offensive_active_seconds", slider=True)
-    timing.prop(settings, "offensive_recovery_seconds", slider=True)
-    sliders = legacy.column(align=True)
-    for property_name in (
-        "offensive_anticipation_strength", "offensive_strike_strength",
-        "offensive_follow_through", "offensive_torso_power", "offensive_arm_reach",
-        "offensive_elbow_flex", "offensive_wrist_action", "offensive_stance_compression",
-    ):
-        sliders.prop(settings, property_name, slider=True)
-    row = legacy.row(align=True)
-    row.operator("daf.generate_selected_offensive_draft", text="Apply Sliders / Refresh Draft", icon='FILE_REFRESH')
-    row.operator("daf.preview_offensive_draft", text="Preview Attack", icon='PLAY')
-    row = legacy.row(align=True)
-    row.operator("daf.reset_offensive_sliders", text="Reset Sliders", icon='LOOP_BACK')
-    approve = row.operator("daf.approve_draft", text="Save / Approve This Attack", icon='FAKE_USER_ON')
-    approve.kind = settings.offensive_preview_kind
-    row = legacy.row(align=True)
-    row.operator("daf.generate_humanoid_offensive_suite", text="Generate / Refresh Offensive Suite", icon='ACTION')
-    row.operator("daf.validate_humanoid_offensive_suite", text="Validate Suite", icon='CHECKMARK')
+    options.label(
+        text="Proxy choice never changes body curves or combat identity.",
+        icon='INFO',
+    )
+
+    timing = browser.box()
+    timing.label(text="TIMING MARKERS", icon='MARKER_HLT')
+    armature = context.scene.objects.get("DSB_DAMAGE_RIG")
+    active_action = (
+        armature.animation_data.action
+        if armature is not None and armature.animation_data is not None
+        else None
+    )
+    marker_frames = {
+        marker.name: int(marker.frame)
+        for marker in getattr(active_action, "pose_markers", ())
+    }
+    marker_names = (
+        "Attack_Start",
+        "Windup_Anticipation",
+        "Active_Start",
+        "Contact",
+        "Active_End",
+        "Attack_End",
+    )
+    for first, second in zip(marker_names[::2], marker_names[1::2]):
+        row = timing.row(align=True)
+        for name in (first, second):
+            frame = marker_frames.get(name)
+            row.label(text=f"{name}: {frame if frame is not None else '—'}")
+    timing.label(
+        text="Speed retimes poses and markers together; +Y forward · +Z up.",
+        icon='ORIENTATION_GLOBAL',
+    )
+
+    actions = browser.row(align=True)
+    actions.enabled = bool(settings.authored_attack_active_clip_id)
+    actions.operator(
+        "daf.authored_attack_preview",
+        text="PREVIEW ON CHARACTER",
+        icon='PLAY',
+    )
+    actions.operator(
+        "daf.authored_attack_accept_draft",
+        text="ACCEPT AS DRAFT",
+        icon='FILE_TICK',
+    )
+    browser.operator(
+        "daf.authored_attack_clear_preview",
+        text="CLEAR TRANSIENT PREVIEW",
+        icon='X',
+    )
+    browser.label(
+        text=str(settings.authored_attack_status)[:120],
+        icon='INFO',
+    )
 
 
 def _draw_offensive_animation(layout, settings):
-    """Macro-first VIP attack workflow with one expert disclosure."""
+    """Preserved procedural attack tools, deliberately secondary and collapsed."""
 
     offense = _animation_foldout(
-        layout, settings, "ui_offensive_open", "ATTACK ANIMATION VIP STUDIO", icon='ACTION'
+        layout,
+        settings,
+        "ui_offensive_open",
+        "LEGACY PROCEDURAL ATTACKS",
+        icon='SETTINGS',
     )
     if offense is None:
         return
-    offense.label(text="OFFENSIVE MOTION STUDIO - pick, adjust, refresh", icon='ACTION')
+    offense.label(
+        text="Existing procedural Actions and tools remain available unchanged.",
+        icon='LOCKED',
+    )
+    offense.label(text="OFFENSIVE MOTION STUDIO", icon='ACTION')
 
     quick = offense.box()
     quick.label(text="YOUR ATTACK", icon='ARMATURE_DATA')
     quick.prop(settings, "motion_master_id", text="Attack")
     quick.prop(settings, "motion_proxy_class", text="Weapon")
     quick.prop(settings, "motion_target_zone", text="Target")
-    macros = offense.box()
-    macros.label(text="VIP MACROS", icon='MODIFIER')
-    macros.prop(settings, "motion_macro_horizontal_aim", text="Horizontal Aim  (Left / Right)", slider=True)
-    macros.prop(settings, "motion_macro_vertical_aim", text="Vertical Aim  (Down / Up)", slider=True)
-    macros.separator()
+
+    cook = offense.box()
+    cook.label(text="LET ME COOK", icon='MODIFIER')
+    cook.prop(settings, "motion_target_distance_mode", text="Reach Mode")
+    cook.prop(settings, "motion_target_distance", text="Target Distance")
+    aim = cook.column(align=True)
+    aim.prop(settings, "motion_macro_horizontal_aim", text="Aim Left / Right", slider=True)
+    aim.prop(settings, "motion_macro_vertical_aim", text="Aim Down / Up", slider=True)
     for property_name in (
-        "motion_macro_windup", "motion_macro_strike_power", "motion_macro_body_motion",
-        "motion_macro_follow_through", "motion_macro_arm_relax",
+        "motion_macro_windup",
+        "motion_macro_strike_power",
+        "motion_macro_body_motion",
+        "motion_macro_follow_through",
+        "motion_macro_arm_relax",
     ):
-        macros.prop(settings, property_name, slider=True)
-    macros.label(text="Move a slider, then refresh. Contact and reach safety stay enforced.", icon='INFO')
-    row = macros.row(align=True)
-    row.operator("daf.motion_studio_reset_natural", text="RESET MACROS", icon='LOOP_BACK')
-    row.operator("daf.motion_studio_refresh_vip", text="REFRESH ATTACK", icon='FILE_REFRESH')
+        cook.prop(settings, property_name, slider=True)
+    dimensions = cook.column(align=True)
+    dimensions.prop(settings, "motion_proxy_length", text="Weapon Length")
+    dimensions.prop(settings, "motion_proxy_contact", text="Grip To Contact")
+    cook.operator("daf.motion_studio_refresh_vip", text="GENERATE & PREVIEW", icon='PLAY')
+    cook.label(text="Preview always plays. Red quality results block APPROVE only.", icon='INFO')
 
     review = offense.box()
     row = review.row(align=True)
     jump = row.operator("daf.motion_studio_jump_key_pose", text="CONTACT", icon='MARKER_HLT')
     jump.pose = "CONTACT"
-    row.operator("daf.motion_studio_preview", text="PREVIEW", icon='PLAY')
-    row = review.row(align=True)
-    row.operator("daf.motion_studio_validate_baked_path", text="VALIDATE", icon='CHECKMARK')
-    row.operator("daf.motion_studio_approve", text="APPROVE", icon='FAKE_USER_ON')
+    row.operator("daf.motion_studio_preview", text="REPLAY / PREVIEW", icon='PLAY')
+    row.operator(
+        "daf.motion_studio_bypass_and_save",
+        text="BYPASS FAILED CHECKS AND SAVE",
+        icon='UNLOCKED',
+    )
+    review.label(text="QUALITY STATUS", icon='CHECKMARK')
     review.label(text=str(settings.motion_validation_status)[:120], icon='INFO')
     review.label(text=str(settings.motion_pose_health_status)[:120], icon='POSE_HLT')
+    if settings.motion_pose_health_detail:
+        review.label(text=str(settings.motion_pose_health_detail)[:120], icon='INFO')
+    review.operator("daf.motion_studio_approve", text="APPROVE", icon='FAKE_USER_ON')
 
     advanced = _animation_foldout(
         offense, settings, "ui_motion_advanced_open", "ADVANCED - TRAJECTORY, BODY & SOLVER", icon='SETTINGS'
     )
     if advanced is None:
         return
+
+    advanced.label(text="TARGET → WEAPON PATH → BODY SOLVE → FK BAKE → VALIDATE", icon='TRACKING')
+
+    macros = advanced.box()
+    macros.label(text="SANDBOX CONTROLS", icon='MODIFIER')
+    macros.operator("daf.motion_studio_reset_natural", text="RESET SLIDERS TO NATURAL", icon='LOOP_BACK')
+    macros.label(text="Generate consumes every live slider and meter shown above and below", icon='INFO')
 
     target = advanced.box()
     target.label(text="TARGET DETAILS", icon='OUTLINER_OB_EMPTY')
@@ -1763,6 +1811,7 @@ def _draw_offensive_animation(layout, settings):
         "motion_tolerance_direction_dot", "motion_tolerance_sampling_step",
     ):
         validation.prop(settings, property_name)
+    validation.operator("daf.motion_studio_validate_baked_path", text="VALIDATE BAKED PATH", icon='CHECKMARK')
     validation.operator("daf.motion_studio_promote_master", text="PROMOTE TO MOTION MASTER", icon='ASSET_MANAGER')
     helper_row = validation.row(align=True)
     helper_row.operator("daf.motion_studio_repair_helpers", text="Repair Helpers", icon='FILE_REFRESH')
@@ -1794,7 +1843,7 @@ def _draw_offensive_animation(layout, settings):
     approve = row.operator("daf.approve_draft", text="Save / Approve", icon='FAKE_USER_ON')
     approve.kind = settings.offensive_preview_kind
     row = legacy.row(align=True)
-    row.operator("daf.generate_humanoid_offensive_suite", text="Refresh Offensive Suite", icon='ACTION')
+    row.operator("daf.generate_humanoid_offensive_suite", text="Generate / Refresh Offensive Suite", icon='ACTION')
     row.operator("daf.validate_humanoid_offensive_suite", text="Validate Suite", icon='CHECKMARK')
 
 
@@ -1848,6 +1897,7 @@ def _draw_animation(layout, context, settings):
     _draw_walk_animation(layout, settings)
     _draw_death_animation(layout, settings)
     _draw_hurt_animation(layout, settings)
+    _draw_authored_attack_browser(layout, context, settings)
     _draw_offensive_animation(layout, settings)
     _draw_mace_guard_animation(layout, settings)
     _draw_animation_pack(layout, settings)
@@ -1964,29 +2014,78 @@ def _draw_advanced(layout, context, settings, deformation_draw, deformation_auth
 def _draw_character_variants(layout, context, settings):
     from .. import animation_library, variant_authoring
 
+    look_status_label = {
+        "APPROVED": "READY TO EXPORT",
+        "DRAFT": "EDITING — NOT SAVED",
+        "STALE": "CHANGED — SAVE AGAIN",
+    }
+
     box = layout.box()
     header = box.row(align=True)
     header.prop(
         settings,
         "ui_variant_family_open",
-        text="CHARACTER VARIANTS",
+        text="LOOK VARIANTS · TEXTURE → EXPORT",
         icon='TRIA_DOWN' if settings.ui_variant_family_open else 'TRIA_RIGHT',
         emboss=False,
     )
     if not settings.ui_variant_family_open:
         return
+    box.label(
+        text="ONE FINISHED BODY · MANY LOOKS · ANIMATION + DAMAGE STAY SHARED",
+        icon='LINKED',
+    )
     state = variant_authoring.load_state(context.scene)
     if state is None:
-        box.label(text="No technical family adopted", icon='INFO')
-        box.operator(
-            "daf.adopt_character_variant_family",
-            text="ADOPT AS SHARED FAMILY BASE",
-            icon='LINKED',
+        runtime_rig = context.scene.objects.get("DSB_DAMAGE_RIG")
+        if runtime_rig is not None and bool(runtime_rig.get("dsb_damage_generated", False)):
+            finished = box.box()
+            finished.label(text="1 · SET UP LOOK VARIANTS", icon='MATERIAL')
+            finished.label(text="Current finished DSB_DAMAGE_RIG becomes the Original look.")
+            finished.prop(settings, "variant_texture_name", text="Current Look Name (optional)")
+            finished.operator(
+                "daf.start_finished_texture_family",
+                text="SET UP FROM THIS FINISHED CHARACTER",
+                icon='DUPLICATE',
+            )
+            finished.label(
+                text="Next: make a look copy → edit texture → preview → approve → export",
+                icon='INFO',
+            )
+            finished.label(
+                text="Your body, Actions, Damage, gore, and hand-socket placement are untouched.",
+                icon='LOCKED',
+            )
+        else:
+            box.label(
+                text="Finish the Complete Damage character first; DSB_DAMAGE_RIG is not ready.",
+                icon='ERROR',
+            )
+
+        advanced_header = box.row(align=True)
+        advanced_header.prop(
+            settings,
+            "ui_variant_advanced_open",
+            text="ADVANCED · IMPORT A SKIN & BONES 2.2 LOOK FAMILY",
+            icon='TRIA_DOWN' if settings.ui_variant_advanced_open else 'TRIA_RIGHT',
+            emboss=False,
         )
-        box.label(
-            text="Requires approved Skin & Bones 2.2.0 family handoff metadata",
-            icon='LOCKED',
-        )
+        if settings.ui_variant_advanced_open:
+            advanced = box.box()
+            if runtime_rig is not None and bool(runtime_rig.get("dsb_damage_generated", False)):
+                advanced.label(text="Optional setup naming", icon='SETTINGS')
+                advanced.prop(settings, "variant_texture_family_name", text="Look Set Name")
+                advanced.prop(settings, "variant_texture_export_identity", text="Original Export Name")
+                advanced.separator()
+            advanced.label(
+                text="Use only for a new approved S&B GLB carrying the exact v1 family handoff.",
+                icon='IMPORT',
+            )
+            advanced.operator(
+                "daf.adopt_character_variant_family",
+                text="ADOPT SELECTED APPROVED S&B FAMILY BASE",
+                icon='LINKED',
+            )
         if settings.variant_family_status:
             box.label(text=str(settings.variant_family_status)[:100])
         return
@@ -1996,15 +2095,14 @@ def _draw_character_variants(layout, context, settings):
         for value in state["variants"]
         if value["variantId"] == state["activeVariantId"]
     )
-    box.label(text=f"Family · {state['displayName']}", icon='OUTLINER_OB_GROUP_INSTANCE')
-    box.label(
-        text=f"Body · {state['technicalBodyFingerprint'][:12]}… · canonical Y+ / Z+",
-        icon='CHECKMARK',
-    )
+    source = state.get("familySource", "SKIN_AND_BONES_HANDOFF")
+    native = source == "FORGE_FINISHED_TEXTURE_CAPTURE"
+    box.label(text=f"LOOK SET · {state['displayName']}", icon='OUTLINER_OB_GROUP_INSTANCE')
     variants = box.box()
-    variants.label(text=f"VARIANTS · {len(state['variants'])}")
+    variants.label(text=f"CLICK A LOOK TO SWAP · {len(state['variants'])} TOTAL")
     for variant in state["variants"]:
         selected = variant["variantId"] == active["variantId"]
+        variant_status = variant_authoring.appearance_status(state, variant["variantId"])
         row = variants.row(align=True)
         op = row.operator(
             "daf.switch_character_variant",
@@ -2015,32 +2113,197 @@ def _draw_character_variants(layout, context, settings):
         op.variant_id = variant["variantId"]
         row.label(
             text=(
-                f"{len(variant.get('actionOverrides', {}))} anim / "
-                f"{len(variant.get('damageKeyOverrides', {})) + len(variant.get('progressiveSiteOverrides', {}))} damage"
+                f"{look_status_label.get(variant_status, variant_status)} · "
+                f"SHARED + {len(variant.get('actionOverrides', {}))} anim / "
+                f"{len(variant.get('damageKeyOverrides', {})) + len(variant.get('progressiveSiteOverrides', {}))} damage overrides"
             )
         )
     active_box = box.box()
-    active_box.label(text=f"ACTIVE · {active['displayName']}", icon='HIDE_OFF')
+    appearance_state = variant_authoring.appearance_status(state, active["variantId"])
     active_box.label(
         text=(
-            "Appearance APPROVED · Technical family COMPATIBLE · "
-            "Sockets SHARED"
+            f"ACTIVE LOOK · {active['displayName']} · "
+            f"{look_status_label.get(appearance_state, appearance_state)}"
         ),
+        icon='CHECKMARK' if appearance_state == "APPROVED" else 'ERROR',
+    )
+    active_box.label(
+        text=f"Ships independently as {active['exportIdentity']}.glb",
+        icon='EXPORT',
+    )
+    if native and appearance_state != "APPROVED":
+        active_box.label(text="2 · PROJECT / REPLACE / PAINT THIS LOOK'S TEXTURE", icon='MATERIAL')
+        active_box.label(text="Only this look's material/image copies are editable.", icon='LOCKED')
+        sbf_settings = getattr(context.scene, "sbf_settings", None)
+        sbf_target = getattr(sbf_settings, "target_object", None) if sbf_settings else None
+        sbf_bridge_ready = (
+            sbf_target is not None
+            and getattr(sbf_target, "type", "") == "MESH"
+            and not bool(sbf_target.get("dsb_damage_generated", False))
+        )
+        if sbf_bridge_ready:
+            projection = active_box.box()
+            projection.label(text="PROJECT WITH SKIN & BONES", icon='SHADING_RENDERED')
+            projection.label(
+                text="Forge will show the full projection body and hide damage-only pieces.",
+                icon='HIDE_OFF',
+            )
+            sources = sum(
+                1
+                for name in ("front", "back", "left", "right")
+                if getattr(getattr(sbf_settings, name, None), "image", None) is not None
+            )
+            projection.label(text=f"Projection sources loaded · {sources}/4")
+            project_row = projection.row(align=True)
+            project_row.operator(
+                "daf.load_sbf_projection_folder",
+                text="2A · LOAD 4-VIEW FOLDER",
+                icon='FILE_FOLDER',
+            )
+            project_row.operator(
+                "daf.build_sbf_projection_preview",
+                text="2B · BUILD / REFRESH PREVIEW",
+                icon='SHADING_RENDERED',
+            )
+            bake_row = projection.row(align=True)
+            bake_row.operator(
+                "daf.bake_sbf_projection",
+                text="2C · BAKE FINAL TEXTURE",
+                icon='RENDER_STILL',
+            )
+            bake_row.operator(
+                "daf.apply_sbf_final_texture",
+                text="2D · USE FINAL ON THIS LOOK",
+                icon='IMPORT',
+            )
+            projection.label(
+                text="For alignment or repair, use the Skin & Bones tab before step 2D.",
+                icon='INFO',
+            )
+            projection.label(
+                text="S&B family approval is not required for this Forge-owned finished look."
+            )
+        else:
+            active_box.label(
+                text="Skin & Bones projection target not available; choose one finished image below.",
+                icon='INFO',
+            )
+        manual = active_box.box()
+        manual.label(text="OR USE ONE FINISHED UV TEXTURE", icon='IMAGE_DATA')
+        manual.operator(
+            "daf.replace_forge_texture_image",
+            text="CHOOSE ONE FINISHED BASE COLOR IMAGE…",
+            icon='FILE_IMAGE',
+        )
+        manual.label(text="A front/back/left/right folder is source art, not a model texture.")
+        active_box.label(text="You can also paint this look's packed image directly in Blender.")
+        active_box.operator(
+            "daf.preview_character_variant",
+            text="3 · RETURN TO / PREVIEW FINISHED LOOK",
+            icon='HIDE_OFF',
+        )
+        save = active_box.row(align=True)
+        save.operator(
+            "daf.approve_forge_texture_variant",
+            text="4 · SAVE CURRENT LOOK",
+            icon='FAKE_USER_ON',
+        )
+        save.operator(
+            "daf.save_export_forge_texture_variant",
+            text="4 · SAVE + EXPORT",
+            icon='EXPORT',
+        )
+    else:
+        look_actions = active_box.row(align=True)
+        look_actions.operator(
+            "daf.preview_character_variant",
+            text="PREVIEW LOOK",
+            icon='HIDE_OFF',
+        )
+        if native:
+            look_actions.operator(
+                "daf.edit_forge_texture_variant",
+                text="EDIT / TWEAK THIS LOOK",
+                icon='MATERIAL',
+            )
+        export_row = active_box.row(align=True)
+        export_row.operator(
+            "daf.export_active_character_variant",
+            text="EXPORT ACTIVE LOOK",
+            icon='EXPORT',
+        )
+        export_row.operator(
+            "daf.export_ready_character_variants",
+            text="EXPORT ALL READY LOOKS",
+            icon='EXPORT',
+        )
+
+    add = box.box()
+    if native:
+        if appearance_state == "APPROVED":
+            add.label(text="1 · MAKE THE NEXT LOOK", icon='DUPLICATE')
+            add.label(text=f"Starts as a texture copy of {active['displayName']}; shared authoring is linked.")
+            add.prop(settings, "variant_texture_name", text="Next Look Name")
+            make = add.row()
+            make.enabled = bool(str(settings.variant_texture_name).strip())
+            make.operator(
+                "daf.create_forge_texture_variant",
+                text="MAKE EDITABLE TEXTURE COPY",
+                icon='DUPLICATE',
+            )
+            add.label(text="Then follow steps 2–4 above: edit → preview → save/export.", icon='INFO')
+        else:
+            add.label(text="Finish and approve this draft before making another look.", icon='INFO')
+    else:
+        add.label(text="ADD THE NEXT APPROVED SKIN & BONES LOOK", icon='IMPORT')
+        add.prop(settings, "variant_import_path", text="Approved Look GLB")
+        add.operator(
+            "daf.import_character_variant",
+            text="ADD VERIFIED LOOK",
+            icon='IMPORT',
+        )
+
+    advanced_header = box.row(align=True)
+    advanced_header.prop(
+        settings,
+        "ui_variant_advanced_open",
+        text="ADVANCED · TECHNICAL PROOF + AUTHORING OVERRIDES",
+        icon='TRIA_DOWN' if settings.ui_variant_advanced_open else 'TRIA_RIGHT',
+        emboss=False,
+    )
+    if not settings.ui_variant_advanced_open:
+        if settings.variant_family_status:
+            box.label(text=str(settings.variant_family_status)[:100], icon='INFO')
+        return
+
+    advanced = box.box()
+    advanced.label(
+        text=(
+            "Appearance authority · ANIMATION FORGE TEXTURE CAPTURE"
+            if native
+            else "Appearance authority · SKIN & BONES 2.2 HANDOFF"
+        ),
+        icon='LOCKED',
+    )
+    advanced.label(
+        text=f"Technical body proof · {state['technicalBodyFingerprint'][:16]}… · canonical Y+ / Z+",
         icon='CHECKMARK',
     )
-    add = box.box()
-    add.prop(settings, "variant_import_path")
-    add.operator(
-        "daf.import_character_variant",
-        text="ADD COMPATIBLE SKIN & BONES VARIANT",
-        icon='IMPORT',
-    )
+    if native:
+        advanced.prop(settings, "variant_texture_export_identity", text="Next Look Export Name (optional)")
+        repair = advanced.row(align=True)
+        repair.operator(
+            "daf.restore_finished_source_transform",
+            text="REPAIR FINISHED SOURCE PROOF",
+            icon='FILE_REFRESH',
+        )
+        repair.label(text="Only after a stale-source export error")
 
     if settings.ui_workspace == 'ANIMATION':
         selected = animation_library.selected_action(settings)
         if selected is not None:
             status = variant_authoring.action_status(selected, context.scene)
-            action_box = box.box()
+            action_box = advanced.box()
             action_box.label(
                 text=f"ACTION · {selected.name} · {status}",
                 icon='LINKED' if status in {"SHARED", "INHERITED"} else 'LIBRARY_DATA_OVERRIDE',
@@ -2073,7 +2336,7 @@ def _draw_character_variants(layout, context, settings):
             )
 
     if settings.ui_workspace == 'DAMAGE':
-        damage_box = box.box()
+        damage_box = advanced.box()
         damage_box.prop(settings, "variant_damage_override_unit", expand=True)
         try:
             damage = variant_authoring.damage_status(context)
@@ -2114,7 +2377,7 @@ def _draw_character_variants(layout, context, settings):
         except Exception as exc:
             damage_box.label(text=str(exc)[:90], icon='INFO')
     if settings.variant_family_status:
-        box.label(text=str(settings.variant_family_status)[:100], icon='INFO')
+        advanced.label(text=str(settings.variant_family_status)[:100], icon='INFO')
 
 
 def draw_main_panel(layout, context, settings, deformation_draw):

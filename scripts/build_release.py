@@ -15,7 +15,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 PACKAGE = ROOT / "dreadstone_animation_forge"
 DIST = ROOT / "dist"
-DEFORMATION_BUILD = "2026-08-12.offensive-motion-studio-natural.1"
+DEFORMATION_BUILD = "2026-08-13.attack-studio-bypass.1"
 MODULES = tuple(sorted(
     path.relative_to(PACKAGE).as_posix()
     for path in PACKAGE.rglob("*.py")
@@ -138,8 +138,11 @@ def main() -> int:
     filename_version = "_".join(map(str, version))
     target = DIST / f"Dreadstone_Animation_Forge_v{filename_version}.zip"
     DIST.mkdir(exist_ok=True)
-    for stale in DIST.glob("Dreadstone_Animation_Forge_v*.zip"):
-        stale.unlink()
+    # Rebuild only this version's canonical target. Suffixed diagnostic or
+    # handoff archives in dist may belong to an artist and are not stale merely
+    # because a normal release is being packaged.
+    if target.exists():
+        target.unlink()
 
     readme = (ROOT / "README.md").read_text(encoding="utf-8").encode("utf-8")
     build_zip(target, readme, validation_text(version, report))

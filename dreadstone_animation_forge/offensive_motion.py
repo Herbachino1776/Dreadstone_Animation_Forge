@@ -27,6 +27,8 @@ MOTION_POSE_HEALTH_SCHEMA = "dreadstone.offensive_motion_pose_health.v1"
 MOTION_POSE_HEALTH_PROPERTY = "dsb_offensive_motion_pose_health_json"
 TARGETING_SCHEMA = "dreadstone.offensive_targeting.v1"
 TARGETING_PROPERTY = "dsb_offensive_targeting_json"
+BUILTIN_MOTION_REVISION = "5.4.2-simple.1"
+DEFAULT_MINIMUM_REACH_RATIO = 0.55
 
 TARGET_ZONES = frozenset({"HEAD", "UPPER_TORSO", "CENTER_MASS", "LOW_TORSO", "CUSTOM"})
 TRAJECTORY_FAMILIES = frozenset({"HORIZONTAL", "DIAGONAL_DOWN", "OVERHEAD_VERTICAL", "THRUST", "CUSTOM"})
@@ -138,6 +140,7 @@ DEFAULT_SOLVER = {
     "poleSideMeters": 0.36,
     "poleBackMeters": 0.08,
     "torsoSupport": 0.72,
+    "minimumReachRatio": DEFAULT_MINIMUM_REACH_RATIO,
     "comfortableReachRatio": 0.88,
     "warningReachRatio": 0.92,
     "hardReachRatio": 0.985,
@@ -204,7 +207,7 @@ def _master(
         "label": label,
         "state": "BUILT_IN_STARTER",
         "artistApproved": False,
-        "builtInRevision": "5.4.1-natural.1",
+        "builtInRevision": BUILTIN_MOTION_REVISION,
         "feel": "NATURAL",
         "actionKind": action_kind,
         "target": target,
@@ -233,7 +236,7 @@ def _axes(*values):
 
 
 _SLASH_RTL_BLADE_AXES = _axes(
-    (-0.42, 0.80, 0.42), (-0.58, 0.62, 0.53), (-0.68, 0.63, -0.37),
+    (-0.42, 0.80, 0.42), (-0.61, 0.63, 0.31), (-0.68, 0.63, -0.37),
     (-0.68, 0.63, -0.37), (-0.48, 0.73, -0.49), (-0.18, 0.80, -0.57),
     (-0.42, 0.80, 0.42),
 )
@@ -283,7 +286,7 @@ BUILTIN_MOTION_MASTERS = {
         (-1.0, 0.0, 0.0),
         (
             ("START", (0.16, -0.20, -0.02), (-0.42, 0.80, 0.42)),
-            ("ANTICIPATION", (0.32, -0.18, 0.18), (-0.58, 0.62, 0.53)),
+            ("ANTICIPATION", (0.32, -0.18, 0.18), (-0.61, 0.63, 0.31)),
             ("PRE_CONTACT", (0.16, -0.015, 0.015), (-0.68, 0.63, -0.37)),
             ("CONTACT", (0.0, 0.0, 0.0), (-0.68, 0.63, -0.37)),
             ("POST_CONTACT", (-0.48, 0.02, -0.03), (-0.48, 0.73, -0.49)),
@@ -378,13 +381,13 @@ BUILTIN_MOTION_MASTERS = {
         "THRUST",
         (0.0, 1.0, 0.0),
         (
-            ("START", (0.16, -0.26, 0.02), (0.04, 0.99, 0.08)),
-            ("ANTICIPATION", (0.10, -0.30, 0.05), (0.02, 0.99, 0.10)),
-            ("PRE_CONTACT", (0.02, -0.14, 0.01), (0.0, 1.0, 0.02)),
+            ("START", (0.10, -0.12, 0.02), (0.04, 0.99, 0.08)),
+            ("ANTICIPATION", (0.07, -0.16, 0.04), (0.02, 0.99, 0.10)),
+            ("PRE_CONTACT", (0.02, -0.05, 0.01), (0.0, 1.0, 0.02)),
             ("CONTACT", (0.0, 0.0, 0.0), (0.0, 1.0, 0.0)),
-            ("POST_CONTACT", (-0.01, 0.30, -0.01), (0.0, 1.0, -0.02)),
-            ("FOLLOW_THROUGH", (0.04, -0.13, -0.03), (0.02, 0.99, 0.04)),
-            ("END", (0.16, -0.25, 0.02), (0.04, 0.99, 0.08)),
+            ("POST_CONTACT", (-0.01, 0.15, -0.01), (0.0, 1.0, -0.02)),
+            ("FOLLOW_THROUGH", (0.02, 0.04, -0.02), (0.02, 0.99, 0.04)),
+            ("END", (0.10, -0.10, 0.02), (0.04, 0.99, 0.08)),
         ),
         proxy_class="ONE_HAND_BLADE",
         target_distance=1.34,
@@ -601,6 +604,7 @@ def arm_reach_model(
     upper_arm_length: float,
     lower_arm_length: float,
     *,
+    minimum_ratio=DEFAULT_MINIMUM_REACH_RATIO,
     comfortable_ratio=0.88,
     warning_ratio=0.92,
     hard_ratio=0.985,
@@ -612,6 +616,7 @@ def arm_reach_model(
     if not math.isfinite(upper) or not math.isfinite(lower) or upper <= 0.0 or lower <= 0.0:
         raise ValueError("Canonical upper- and lower-arm lengths must be finite and positive.")
     comfortable = clamp(float(comfortable_ratio), 0.70, 0.94)
+    minimum = clamp(float(minimum_ratio), 0.20, comfortable)
     warning = clamp(float(warning_ratio), comfortable, 0.97)
     hard = clamp(float(hard_ratio), warning, 0.9995)
     maximum = upper + lower
@@ -619,6 +624,8 @@ def arm_reach_model(
         "upperArmLengthMeters": upper,
         "lowerArmLengthMeters": lower,
         "maximumGeometricReachMeters": maximum,
+        "minimumReachRatio": minimum,
+        "minimumReachMeters": maximum * minimum,
         "comfortableReachRatio": comfortable,
         "comfortableReachMeters": maximum * comfortable,
         "warningReachRatio": warning,
@@ -633,7 +640,9 @@ def reach_requirement(shoulder, wrist, reach_model: Mapping[str, Any]) -> dict[s
     maximum = max(float(reach_model["maximumGeometricReachMeters"]), _EPSILON)
     ratio = distance / maximum
     status = (
-        "IMPOSSIBLE"
+        "FOLDED"
+        if ratio < float(reach_model.get("minimumReachRatio", DEFAULT_MINIMUM_REACH_RATIO)) - 1.0e-7
+        else "IMPOSSIBLE"
         if ratio > float(reach_model["hardReachRatio"]) + 1.0e-7
         else "WARNING"
         if ratio > float(reach_model["warningReachRatio"]) + 1.0e-7
@@ -1010,6 +1019,7 @@ def validate_motion_master(master: Mapping[str, Any]) -> list[str]:
         "bakeStepFrames": (1, 4),
     }, "solver"))
     for name, bounds in {
+        "minimumReachRatio": (0.20, 0.80),
         "comfortableReachRatio": (0.70, 0.94),
         "warningReachRatio": (0.70, 0.97),
         "hardReachRatio": (0.90, 0.9995),
@@ -1020,9 +1030,13 @@ def validate_motion_master(master: Mapping[str, Any]) -> list[str]:
         if name in master.get("solver", {}):
             errors.extend(_numeric_errors(master["solver"], {name: bounds}, "solver"))
     solver = master.get("solver", {})
-    if all(finite_number(solver.get(name)) for name in ("comfortableReachRatio", "warningReachRatio", "hardReachRatio")):
-        if not float(solver["comfortableReachRatio"]) <= float(solver["warningReachRatio"]) <= float(solver["hardReachRatio"]):
-            errors.append("solver reach ratios must be ordered comfortable <= warning <= hard.")
+    reach_names = ("comfortableReachRatio", "warningReachRatio", "hardReachRatio")
+    if "minimumReachRatio" in solver:
+        reach_names = ("minimumReachRatio", *reach_names)
+    if all(finite_number(solver.get(name)) for name in reach_names):
+        reach_values = tuple(float(solver[name]) for name in reach_names)
+        if any(first > second for first, second in zip(reach_values, reach_values[1:])):
+            errors.append("solver reach ratios must be ordered minimum <= comfortable <= warning <= hard.")
     if master.get("solver", {}).get("arm") not in {"RIGHT", "LEFT"}:
         errors.append("solver.arm must be RIGHT or LEFT.")
     errors.extend(_numeric_errors(master.get("tolerances", {}), {
@@ -1056,12 +1070,12 @@ def instantiate_motion_recipe(master: Mapping[str, Any], *, target=None, proxy=N
     for source in master["trajectory"]["controls"]:
         if "contactDistanceMeters" in source:
             contact_distance = float(source["contactDistanceMeters"])
-        elif str(master.get("builtInRevision", "")).startswith("5.4.1-natural"):
+        elif str(master.get("builtInRevision", "")).startswith(("5.4.1-natural", "5.4.2-simple")):
             contact_distance = default_contact_distance(resolved_proxy, family)
         else:
             # A 5.4.0 saved/promoted master used gripToContactMeters for every
             # proxy class. Preserve that authored relationship unless an
-            # explicit 5.4.1 rebuild/reset records a strike-segment choice.
+            # explicit 5.4.1+ rebuild/reset records a strike-segment choice.
             contact_distance = float(resolved_proxy["gripToContactMeters"])
         record = {
             "id": source["id"],
@@ -1140,6 +1154,7 @@ def validate_motion_recipe(recipe: Mapping[str, Any]) -> list[str]:
         "bakeStepFrames": (1, 4),
     }, "solver"))
     for name, bounds in {
+        "minimumReachRatio": (0.20, 0.80),
         "comfortableReachRatio": (0.70, 0.94),
         "warningReachRatio": (0.70, 0.97),
         "hardReachRatio": (0.90, 0.9995),
@@ -1150,9 +1165,13 @@ def validate_motion_recipe(recipe: Mapping[str, Any]) -> list[str]:
         if name in recipe.get("solver", {}):
             errors.extend(_numeric_errors(recipe["solver"], {name: bounds}, "solver"))
     solver = recipe.get("solver", {})
-    if all(finite_number(solver.get(name)) for name in ("comfortableReachRatio", "warningReachRatio", "hardReachRatio")):
-        if not float(solver["comfortableReachRatio"]) <= float(solver["warningReachRatio"]) <= float(solver["hardReachRatio"]):
-            errors.append("solver reach ratios must be ordered comfortable <= warning <= hard.")
+    reach_names = ("comfortableReachRatio", "warningReachRatio", "hardReachRatio")
+    if "minimumReachRatio" in solver:
+        reach_names = ("minimumReachRatio", *reach_names)
+    if all(finite_number(solver.get(name)) for name in reach_names):
+        reach_values = tuple(float(solver[name]) for name in reach_names)
+        if any(first > second for first, second in zip(reach_values, reach_values[1:])):
+            errors.append("solver reach ratios must be ordered minimum <= comfortable <= warning <= hard.")
     if recipe.get("solver", {}).get("arm") not in {"RIGHT", "LEFT"}:
         errors.append("solver.arm must be RIGHT or LEFT.")
     errors.extend(_numeric_errors(recipe.get("tolerances", {}), {

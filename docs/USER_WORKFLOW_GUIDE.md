@@ -1,14 +1,14 @@
-# Dreadstone Animation Forge 5.4.1 — User Workflow Guide
+# Dreadstone Animation Forge 5.4.4 — User Workflow Guide
 
-- Release archive: `Dreadstone_Animation_Forge_v5_4_1.zip`
+- Release archive: `Dreadstone_Animation_Forge_v5_4_4.zip`
 - Supported release runtime: Blender 5.1.2
 - Damage authoring model: Damage Keys → child Stamp alternatives → strong macros
 - Reuse model: topology-independent Damage Blueprints
 
-## 1. Install Dreadstone Animation Forge 5.4.1
+## 1. Install Dreadstone Animation Forge 5.4.4
 
 In Blender choose **Edit > Preferences > Add-ons > Install from Disk**, select
-`Dreadstone_Animation_Forge_v5_4_1.zip` without extracting it, and enable
+`Dreadstone_Animation_Forge_v5_4_4.zip` without extracting it, and enable
 **Dreadstone Animation Forge**.
 
 ## 2. Open the Dreadstone panel
@@ -27,16 +27,61 @@ handoff, and registers the standard Head, Body, Left Forearm, and Right Forearm
 regions when they exist. A `NOT READY` result is a stop condition; inspect or
 repair the source rather than bypassing it.
 
-## Character Variant Families (Skin & Bones 2.2.0+)
+## Look Variants — texture to export
 
-The **CHARACTER VARIANTS** card is the compact family control surface. To adopt
+### Multiply a finished character through texture projection
+
+Use this path when the `.blend` already contains the finished
+`DSB_DAMAGE_RIG`, Actions, and Damage work and you now want to run the same body
+through more texture projections. No Skin & Bones family handoff is required.
+
+1. Expand **LOOK VARIANTS · TEXTURE → EXPORT** and click **SET UP FROM THIS FINISHED CHARACTER**.
+   Names are optional: Forge uses the existing Complete
+   Damage export identity and calls the current appearance `Original`.
+2. Name the next skin and click **MAKE EDITABLE TEXTURE COPY**. Forge duplicates
+   only the active materials and referenced images; it does not duplicate the
+   body, Actions, Damage Keys, Progressive Sites, gore, or sockets.
+3. For another four-view projection, use the embedded **PROJECT WITH SKIN &
+   BONES** steps: **LOAD 4-VIEW FOLDER**, **BUILD / REFRESH PREVIEW**, **BAKE
+   FINAL TEXTURE**, then **USE FINAL ON THIS LOOK**. Forge temporarily reveals
+   `SBF_CLEAN_CHARACTER` and hides the derived Damage pieces so the preview is
+   actually visible. Detailed alignment and repair remain in the Skin & Bones
+   tab. Skin & Bones family approval is not required for this Forge-owned route.
+   Alternatively, paint the packed image or choose one already-finished UV Base
+   Color image. A folder of front/back/left/right plates is source art, not a
+   model texture.
+4. Click **RETURN TO / PREVIEW FINISHED LOOK**, then **SAVE CURRENT LOOK** or
+   **SAVE + EXPORT**.
+5. Click any saved look to swap it in the viewport. Use **EXPORT ACTIVE LOOK**
+   for one independent Complete Damage GLB or **EXPORT ALL READY LOOKS** for the
+   batch, then repeat from step 2.
+
+The primary card deliberately contains no family-source decision. A legacy
+finished character such as the Warden automatically uses the Forge-owned look
+route. Exact Skin & Bones 2.2 family adoption and per-look Action/Damage
+copy-on-write controls remain available under collapsed **Advanced** sections.
+
+For an older resized working file, look export automatically checks the hidden
+original source against its finished authoring proof and restores only that
+stored transform when necessary. **REPAIR FINISHED SOURCE PROOF** remains under
+Advanced for manual diagnosis. The transaction reruns full validation and rolls
+back if the asset is not valid; it does not change the runtime rig, authored
+animation, Damage geometry, or socket position/rotation.
+
+Look switching restores each Damage mesh's authored intact visibility. Detached
+heads/limbs, stumps, gore, and other damage-only pieces do not become visible
+merely because the appearance changed.
+
+### Import compatible Skin & Bones family exports
+
+Open **ADVANCED · IMPORT A SKIN & BONES 2.2 LOOK FAMILY**. To adopt
 an existing fully authored approved character, select its Skin & Bones mesh or
-armature and click **ADOPT AS SHARED FAMILY BASE**. Existing approved Actions,
+armature and click **ADOPT SELECTED APPROVED S&B FAMILY BASE**. Existing approved Actions,
 Damage Keys, Stamps, gore, Progressive Damage Sites, and managed sockets remain
 the one shared authoring layer.
 
 To add an appearance, choose its Skin & Bones GLB and click
-**ADD COMPATIBLE SKIN & BONES VARIANT**. Forge reads the shipped appearance-family handoff from
+**ADD VERIFIED LOOK**. Forge reads the shipped appearance-family handoff from
 the GLB, checks its family/body fingerprint and exact canonical rig/coordinate
 contract, and refuses a mismatch. A successful appearance immediately inherits
 all shared Forge authoring and creates no Action or Damage Key copies.
@@ -63,7 +108,7 @@ normal inherited Damage controls remain locked until an override is created or
 the artist deliberately confirms **EDIT SHARED**.
 
 Selected Complete Damage export writes the active appearance plus its resolved
-shared/override content. **EXPORT ALL READY VARIANTS** writes each passing
+shared/override content. **EXPORT ALL READY LOOKS** writes each passing
 variant as a separate GLB and sidecars. Inherited approvals are reused; only
 variant overrides require their own relevant preview, validation, and
 approval. See
@@ -292,62 +337,74 @@ Analyze the rig, draft idle/walk/collapse/hurt or mace head-guard Actions,
 inspect them, and use the explicit Version/Approve controls. Generated Actions
 do not animate bone scale. Approved Actions and NLA-used Actions are protected.
 
-For combat motion, open **ATTACK ANIMATION VIP STUDIO**. This is the primary attack
-workflow. It starts with a target and weapon path instead of guessing arm
-rotations:
+For combat motion, open **ATTACK ANIMATION STUDIO**. Generation is a permissive
+sandbox; approval is the strict production gate:
 
 1. Choose **Attack**, **Weapon**, and **Target**.
-2. Adjust only the macro you need. **Horizontal Aim** and **Vertical Aim** turn
-   the whole authored path around its exact impact point. Windup, Strike Power,
-   Body Motion, Follow Through, and Arm Relaxation drive restrained secondary
-   motion without bypassing reach or contact validation.
-3. Click **REFRESH ATTACK**. Auto Fit measures this character's actual
-   upper and lower arm, adapts target distance, and (for chopping/slashing
-   blades) chooses one usable point on the authored blade strike segment. It
-   keeps the intended target and attack family; it never stretches or
-   translates the deform arm to manufacture contact. Refresh also starts the
-   updated preview.
-4. Click **CONTACT**. The yellow marker is the intended first-impact
-   surface point. Confirm the blade segment, mace head, or thrust tip meets the
-   selected target volume. A HEAD overhead is a chopping arc to the head's top
-   surface, not a top-down thrust through its center.
-5. Click **PREVIEW** and scrub WINDUP / ACTIVE / RECOVERY. Require a compact
-   anticipation, connected torso support, planted feet, visible follow-through,
-   and controlled recovery. Use **RESET TO NATURAL** whenever slider edits make
-   the result hard to diagnose.
-6. Click **VALIDATE**. The status combines baked weapon geometry with pose
-   health: arm extension, elbow bend, bounded shoulder/torso support, unexpected
-   deform-bone translation, wrist/contact solve error, and per-frame angular
-   continuity. A warning is reviewable; an impossible reach, dislocation,
-   solver stretch/error, stale proof, discontinuity, or miss is a hard failure.
-7. Click **APPROVE** only after current preview and validation pass. Geometry
-   PASS proves physical targeting, not artistic quality; your visual review is
-   still authoritative.
-8. Open the single collapsed **ADVANCED - TRAJECTORY, BODY & SOLVER** section
-   only when needed. It contains Target Details, Weapon Geometry, Trajectory /
-   Control Points, Body Style, Solver / Reach, Validation Tolerances, and Legacy
-   drafting. Direct orange-control editing remains
-   available in the viewport. **LEGACY / PROCEDURAL DRAFTING** retains the
-   existing eight body-first generators.
+2. Under **LET ME COOK**, adjust aim, windup, strike power, body motion,
+   follow-through, arm relaxation, target distance, weapon length, and grip-to-
+   contact. Use Manual reach when testing exact meter values or Auto when you
+   want character-adaptive fitting.
+3. Click **GENERATE & PREVIEW**. Forge consumes every live slider and meter,
+   bakes, validates, and always starts playback. A failed experiment is labeled
+   Preview Only instead of being refused. The selected hand-held weapon proxy is
+   replaced on every build; changing from a blade to a mace or dagger cannot
+   leave the old longsword proxy visible.
+4. Read **QUALITY STATUS**. Approval requires both baked-path geometry and pose
+   health to report `PASS`. Auto Fit keeps the whole wrist path inside a safe
+   shoulder-to-wrist annulus: at least 55% extension, below the 92% near-lock
+   threshold for production starters, and never beyond the 98.5% hard limit.
+   Per-frame FK rotation must remain at or below 22 degrees for a clean pass;
+   more than 22 through 25 degrees is `WARN`, and more than 25 degrees fails.
+5. Use **REPLAY / PREVIEW** to replay or scrub WINDUP / ACTIVE / RECOVERY. Require
+   a compact anticipation, connected upper-body support, readable contact,
+   visible follow-through, controlled recovery, and an unchanged authored lower
+   body.
+6. **CONTACT** is optional. It jumps to the impact frame and creates the reduced
+   target, proxy, strike-plane, and baked-trail review helpers on demand. The
+   yellow marker is the intended first-impact surface point. Confirm the blade
+   segment, mace head, or thrust tip meets the selected target volume. A HEAD
+   overhead is a chopping arc to the top surface, not a thrust through center.
+7. Click **APPROVE** only after the current preview and both quality records pass.
+   `WARN` is deliberately non-approvable; it is a request to rebuild or revise,
+   not an artist-overridable success. Geometry PASS proves physical targeting,
+   not beauty, so visual review remains authoritative. If the animation is good
+   for your game despite rejected technical checks, click **BYPASS FAILED CHECKS
+   AND SAVE** beside Preview. This accepts the exact reviewed preview, preserves
+   all rejected checks in the Action audit record, and enables export. Editing
+   the animation afterward invalidates that bypass.
+8. Open **ADVANCED - TRAJECTORY, BODY & SOLVER** only for deliberate expert
+   editing. Expert Motion Overrides, Target Details, Weapon Geometry,
+   Trajectory / Control Points, Body Style, Solver / Reach, and Validation
+   Tolerances remain available there. After editing, use **BUILD FROM MOTION
+   MASTER** or **REBUILD EDITED CONTROLS**, then **VALIDATE BAKED PATH**. Orange
+   editable controls are created only by the expert helper/repair path.
 9. After human review, optionally **PROMOTE TO MOTION MASTER**. Promotion is
-   explicit. Existing 5.4.0 promoted masters and approved Actions are never
-   silently rebuilt with 5.4.1 defaults.
+   explicit. Existing approved Actions and saved 5.4.0/5.4.1 promoted masters
+   retain their authored records and are never silently rewritten.
 
-Built-in starters are marked geometry valid, not artist approved. A numeric
-PASS proves target contact, ACTIVE timing, plane tolerance, and direction; it
-does not prove that the body motion is beautiful. Human preview and approval
-remain authoritative. Starter masters are IN_PLACE and do not hide a forward
-root lunge. The target is an authored launch relationship, not runtime homing:
-after commitment the baked path is fixed and a player can dodge.
+Built-in starters are marked geometry valid, not artist approved. A numeric PASS
+proves target contact, ACTIVE timing, plane tolerance, direction, safe reach,
+and clean continuity; it does not prove that the body motion is beautiful.
+Human preview remains authoritative. Starter masters are IN_PLACE and do not
+hide a forward root lunge. The target is an authored launch relationship, not
+runtime homing: after commitment the baked path is fixed and a player can dodge.
+
+The production bake writes one deterministic base-pose rotation key for mapped
+bones, then samples only spine, chest, active shoulder, upper arm, forearm, and
+hand. It emits no deform-arm location curves, leaves pelvis, legs, and feet in
+their authored base pose, preserves the seven named motion poses, and removes
+redundant samples only after pose checks pass.
 
 The approved Action stores `dreadstone.offensive_motion_recipe.v1`, current
 `dreadstone.offensive_motion_validation.v1`,
 `dreadstone.offensive_motion_pose_health.v1`, and a small optional
 `dreadstone.offensive_targeting.v1` sidecar record. The established
 `dreadstone.offensive_action.v1` combat ID, socket, weapon class, commitment,
-and WINDUP/ACTIVE/RECOVERY contract remains unchanged. Helpers live only in
-`DSB_OFFENSIVE_MOTION_STUDIO`, can be repaired after reopen, and never export
-as GLB nodes or bones.
+and WINDUP/ACTIVE/RECOVERY contract remains unchanged. Optional helpers live
+  only in `DSB_OFFENSIVE_MOTION_STUDIO`; ordinary Generate & Preview creates only
+  the selected weapon display. CONTACT creates the reduced review set, expert repair may
+restore editable controls, and no helper exports as a GLB node or bone.
 
 Open **LEGACY / PROCEDURAL DRAFTING** only for backward-compatible rough
 drafting. **Generate / Refresh Offensive Suite** still creates all eight old
@@ -356,13 +413,14 @@ body-first drafts; **Apply Sliders / Refresh Draft**, **Preview Attack**, and
 migrated. Motion Studio does not require old approved Actions to gain target
 proof retroactively.
 
-### Exact 5.4.1 Natural attack acceptance
+### Exact 5.4.4 production attack acceptance
 
-For every case, select the canonical humanoid, open **ATTACK ANIMATION VIP
-STUDIO**, leave the macros centered, click **REFRESH ATTACK**, then use
-**CONTACT**, **PREVIEW**, and **VALIDATE**. Require a
-current geometry PASS and no pose-health failure. A warning still requires
-artist judgment.
+For every case, select the canonical humanoid, open **ATTACK ANIMATION
+STUDIO**, choose inputs, adjust **LET ME COOK** controls, and click **GENERATE &
+PREVIEW**. Preview must play even for deliberately invalid settings; Approval
+must remain blocked until geometry and pose-health both `PASS`. Use
+**CONTACT** only when target, proxy, and trail helpers are useful for review.
+Any `WARN` blocks approval.
 
 1. **Sword Overhead → Head:** choose 1H Overhead / 1H Blade / Head. Confirm a
    compact raised guard, bent elbow, modest body support, a blade-led chopping
@@ -386,16 +444,17 @@ artist judgment.
    moderate side-to-side path and torso response, and exits without an elbow
    flip or violent twist.
 
-At CONTACT, keep target volume, yellow intended surface anchor, proxy
-tip/head/strike segment, and magenta baked closest point visible. Before
-approval verify the Pose Health details: Natural arm extension should remain
-below the 92% warning threshold, deform-arm translation should be effectively
-zero, solve error must stay within tolerance, and no one-frame chain
-discontinuity may be reported. Export through Animation Pack or Complete Damage
-and clean-reimport to confirm no `DSB_MS_*` helper and the unchanged 21-bone
-runtime rig. Record visual defects as failures even when automated geometry
-passes; the decisive standard is restrained, connected, smooth, reachable,
-believable motion that is still physically aimed at the target.
+When CONTACT helpers are visible, inspect the target volume, yellow intended
+surface anchor, proxy tip/head/strike segment, and magenta baked closest point.
+Before approval verify that arm extension never falls below 55% or reaches the
+92% warning band, deform-arm translation is effectively zero, solve error stays
+within tolerance, and maximum one-frame angular change is at most 22 degrees.
+Confirm only the six upper-body support bones carry sampled attack motion and
+that key reduction preserves all named poses. Export through Animation Pack or
+Complete Damage and clean-reimport to confirm no `DSB_MS_*` helper and the
+unchanged 21-bone runtime rig. Record visual defects as failures even when
+automated geometry passes; the decisive standard is restrained, connected,
+smooth, reachable, believable motion that is still physically aimed at target.
 
 Click **Create / Repair Runtime Hand Sockets** after `DSB_DAMAGE_RIG` exists.
 Forge creates managed artist-adjustable Empty helpers on `arm_right_hand` and
@@ -683,9 +742,10 @@ authoring asset.
   **CLEAR BASE**,
   **Generate / Refresh Death Draft**, flank-hurt draft controls,
   **Generate Three Mace Head-Guard Drafts**, **Preview Guard_Active**,
-  **Validate Mace Head-Guard Drafts**, **BUILD FROM MOTION MASTER**,
-  **BUILD / REBUILD BODY SOLVE**, **ANTICIPATION**, **CONTACT**,
-  **FOLLOW THROUGH**, **PREVIEW**, **VALIDATE BAKED PATH**, **APPROVE**,
+  **Validate Mace Head-Guard Drafts**, **GENERATE & PREVIEW**, **CONTACT**,
+  **REPLAY / PREVIEW**, **QUALITY STATUS**, **APPROVE**,
+  **BUILD FROM MOTION MASTER**, **REBUILD EDITED CONTROLS**,
+  **VALIDATE BAKED PATH**,
   **PROMOTE TO MOTION MASTER**, **Repair Helpers**, **Remove Helpers**,
   **Apply Sliders / Refresh Draft**,
   **Preview Attack**, **Save / Approve This Attack**,

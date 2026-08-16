@@ -151,6 +151,18 @@ the three assigned stage keys for a Site override, preserve shared coordinates,
 leave unrelated keys inherited, and restore the shared graph without orphans on
 revert.
 
+Run the finished-character texture multiplier regression:
+
+```text
+blender --background --factory-startup --python tests/blender_finished_texture_variant_acceptance.py
+```
+
+It starts from a generated `DSB_DAMAGE_RIG` with no Skin & Bones family handoff,
+captures a Forge-owned base appearance, duplicates only materials/images for a
+second look, includes dirty in-memory image pixels in approval, switches looks,
+creates zero Action/body object/body mesh copies, stages export without fake
+Skin & Bones metadata, and proves the family survives save/reopen.
+
 Run the M6 offensive Action/socket regression as part of the same release gate:
 
 ```text
@@ -165,20 +177,27 @@ save/reload. It must also prove that none animates scale, preserve the exact
 21-bone rest skeleton, keep socket ensure idempotent, persist an
 artist-adjusted grip, and emit the two canonical hand socket records.
 
-Run the 5.4.1 Natural Motion Studio regression:
+Run the 5.4.4 production Motion Studio regression:
 
 ```text
 blender --background --factory-startup --python tests/blender_offensive_motion_studio_acceptance.py
 ```
 
-It must build Sword Overhead to Head and Upper Torso, Mace Overhead, compact
-Sword Thrust, both horizontal slashes, and Heavy Diagonal. Require exact ACTIVE
-surface contact and direction, Natural extension below 92%, continuous body
-support, bounded torso/shoulder response, no deform-arm location curves, no
-one-frame FK step above 45 degrees, actionable impossible-reach blocking,
-current pose-health/geometry/preview proof, approval, promotion, and helper
-save/reopen recovery. Automated evidence does not replace the manual workflows
-in the User Workflow Guide.
+It must exercise the live-control **Attack / Weapon / Target / Let Me Cook →
+Generate & Preview** path. Deliberately impossible meters must still bake and
+preview while Approval remains blocked, switching weapon class must replace
+the visible proxy instead of retaining the old blade. Build Sword Overhead to Head and Upper Torso,
+Mace Overhead, compact Sword Thrust, both horizontal slashes, and Heavy
+Diagonal. Require exact ACTIVE surface contact and direction, minimum extension
+at least 55%, maximum Natural extension below 92%, thrust wrist-forward ordering,
+and a clean maximum one-frame FK step no greater than 22 degrees. A step above
+25 degrees must fail, every `WARN` must block approval, and deform-arm location
+curves remain forbidden. Assert that only spine, chest, active shoulder, upper
+arm, forearm, and hand carry sampled motion; named phase poses survive sparse
+key reduction; and the authored lower body is unchanged. Generate & Preview must
+create only the selected weapon proxy, CONTACT may create the reduced review
+set, and save/reopen must recover the recorded helper mode. Automated evidence does not
+replace the manual workflows in the User Workflow Guide.
 
 The Blender-free cavity suite exercises all six Gore identities, each macro at
 0/25/50/75/100, and the exact reported head-macro regression. Every generated
@@ -212,7 +231,7 @@ should be performed only when requested.
 ## Release archive
 
 `python scripts/build_release.py` validates first and writes
-`dist/Dreadstone_Animation_Forge_v5_4_1.zip`. Every package Python file is
+`dist/Dreadstone_Animation_Forge_v5_4_4.zip`. Every package Python file is
 discovered recursively, so new service/operator modules must appear in the
 archive automatically. `dist/`, bytecode, caches, Blender backups, and
 temporary extraction directories are generated artifacts and are not

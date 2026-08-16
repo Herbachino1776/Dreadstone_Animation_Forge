@@ -94,6 +94,19 @@ def ensure_standard_sockets(runtime_rig=None):
             helper.parent_type = 'BONE'
             helper.parent_bone = spec["parentRuntimeBone"]
         helper.matrix_world = authored_world
+        # A character-level resize can leave an existing bone-parented Empty
+        # carrying compensating local scale.  Socket scale is not a runtime
+        # contract: preserve the authored local position/orientation and remove
+        # only that unsupported scale so Create / Repair truly repairs export.
+        parent_world = _pose_bone_world(runtime_rig, spec["parentRuntimeBone"])
+        local = parent_world.inverted_safe() @ helper.matrix_world
+        position, quaternion, scale = local.decompose()
+        if any(abs(float(value) - 1.0) > 1.0e-5 for value in scale):
+            normalized_local = (
+                Matrix.Translation(position)
+                @ Quaternion(quaternion).normalized().to_matrix().to_4x4()
+            )
+            helper.matrix_world = parent_world @ normalized_local
         helpers.append(helper)
     if tuple(runtime_rig.data.bones.keys()) != bone_names_before:
         raise RuntimeError("Attachment socket authoring changed the runtime skeleton inventory.")

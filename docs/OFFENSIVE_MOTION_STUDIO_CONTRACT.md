@@ -1,6 +1,6 @@
 # Offensive Motion Studio contract
 
-Forge release: `5.4.1`
+Forge release: `5.4.4`
 
 ## Product law
 
@@ -16,32 +16,39 @@ TARGET
 -> APPROVAL
 ```
 
-Forge 5.4.1 adds an equally strict naturalism law: a valid hit must be achieved
-through the intact character chain, never through IK stretch or local
-dislocation of shoulder, upper arm, lower arm, or hand. The body supports the
-weapon path with restrained continuous motion. The weapon still has to contact
-the authored target during ACTIVE on the intended family, plane, and direction.
+Forge 5.4.4 keeps the 5.4.1 intact-chain law and makes pose quality part of the
+production gate. A valid hit must be achieved without IK stretch or local
+dislocation of shoulder, upper arm, lower arm, or hand; the wrist path must stay
+inside a safe reach annulus, and the baked chain must remain continuous. The
+weapon still has to contact the authored target during ACTIVE on the intended
+family, plane, and direction.
 
 Motion Studio authors in canonical character-local space (`+Y` forward, `+Z`
 up, `+X` anatomical right). It does not implement collision, hit decisions,
 runtime tracking/homing, weapon assets, or damage. After commitment the baked
 path is fixed and a moving target can dodge.
 
-## VIP macro workflow and expert access
+## Production workflow and expert access
 
-The default panel exposes Attack, Weapon, Target, horizontal/vertical aim,
-Windup, Strike Power, Body Motion, Follow Through, Arm Relaxation, one Refresh
-Attack action, Contact, Preview, status, Validate, and Approve. Aim rotates the
-path around the recalculated first-impact surface anchor; it does not move the
-weapon off target. Neutral macro values preserve the built-in Natural recipe.
-Refresh rebuilds from that starter, runs character Auto Fit, validates the FK
-path, and starts preview when validation passes.
+The default panel exposes Attack, Weapon, Target, **LET ME COOK** aim/motion
+sliders, target-distance and weapon meters, **GENERATE & PREVIEW**, optional
+**CONTACT**, **REPLAY / PREVIEW**, **BYPASS FAILED CHECKS AND SAVE**, quality
+status, and **APPROVE**. Generate &
+Preview consumes every live setting, bakes it, validates it, records preview
+proof, and starts playback regardless of quality status. This is intentionally
+permissive: a failed experiment remains visible as Preview Only while Approval
+stays blocked. The bypass button explicitly saves the exact current preview for
+game/export use despite those failures. Promoted masters retain their
+deliberately reviewed stored recipe values.
 
-Target details, weapon geometry, trajectory/control points, body style,
-solver/reach, validation tolerances, and Legacy drafting remain behind one
-collapsed Advanced section. Orange controls remain directly editable in the
-viewport. `SUBTLE`, `NATURAL`, `FORCEFUL`, and raw expert values remain available
-there; existing Actions and promoted masters are never silently rewritten.
+Ordinary generation creates only the lightweight selected-weapon display. It is
+deleted immediately when the Weapon selector changes and replaced from the new
+proxy recipe on generation, preventing a stale longsword. CONTACT creates the
+reduced target/proxy/plane/trail review set on demand. Editable orange controls,
+target details, full weapon geometry, trajectory, body style, solver/reach,
+validation tolerances, promotion/repair tools, and Legacy drafting remain behind
+the collapsed Advanced section. Existing Actions and promoted masters are never
+silently rewritten.
 
 ## Versioned records and compatibility
 
@@ -49,8 +56,8 @@ there; existing Actions and promoted masters are never silently rewritten.
   trajectory, timing, style, solver, reach policy, tolerances, contact frame,
   Feel, and provenance.
 - `dreadstone.offensive_motion_master.v1` stores a reusable target-relative
-  path. The five revised starters carry built-in revision
-  `5.4.1-natural.1` without changing their stable combat Action IDs.
+  path. The five current starters carry built-in revision
+  `5.4.2-simple.1` without changing their stable combat Action IDs.
 - `dreadstone.offensive_motion_master_library.v1` stores promoted masters.
 - `dreadstone.offensive_motion_validation.v1` proves the current baked FK
   socket/proxy path and its trajectory-critical digest.
@@ -61,9 +68,11 @@ there; existing Actions and promoted masters are never silently rewritten.
 The established `dreadstone.offensive_action.v1`, runtime socket calibration,
 phases, weapon class, commitment, root-motion policy, Animation Library, and
 Complete Damage sidecars remain compatible. Existing approved Actions and
-5.4.0 promoted artist masters are not rewritten on load. Copy-on-write
-SHARED / INHERITED / OVERRIDE / REVERT TO SHARED / EDIT SHARED family behavior
-is unchanged; an editable override clears stale validation and pose proof.
+5.4.0/5.4.1 promoted artist masters are not rewritten on load. A saved 5.4.1
+recipe without `minimumReachRatio` remains valid and uses the compatibility
+default only when rebuilt. Copy-on-write SHARED / INHERITED / OVERRIDE / REVERT
+TO SHARED / EDIT SHARED family behavior is unchanged; an editable override
+clears stale validation and pose proof.
 
 ## Target volumes and surface contact
 
@@ -116,38 +125,41 @@ Auto Fit is applied by default to built-in starters. It measures the selected
 canonical upper-arm and lower-arm rest lengths, derives shoulder-to-wrist
 maximum geometric reach, and uses these character-specific thresholds:
 
+- minimum safe reach: `55%` of straight arm-chain reach;
 - comfortable reach: `88%` of straight arm-chain reach;
 - near-lock warning: above `92%`;
 - hard reachable limit: `98.5%`.
 
-Target distance is searched from the actual character, selected target,
-trajectory family, proxy, and socket. Blade contact is also searched inside the
-legal strike segment. The score prefers the Natural arm-extension target,
-avoids both locked and excessively folded elbows, and, for thrusts, avoids a
-wrist chamber pulled behind the torso. Built-in target distance is therefore a
-seed/provenance value, not a fixed humanoid truth.
+Target distance and a bounded CONTACT-relative excursion scale are searched from
+the actual character, selected target, trajectory family, proxy, and socket.
+Blade contact is also searched inside the legal strike segment. A candidate is
+accepted only when every sampled wrist pose stays inside the annulus: no sample
+below 55%, no production sample in the near-lock band, and none beyond the hard
+limit. The score prefers the Natural arm-extension target and, for thrusts,
+requires forward wrist travel without pulling the elbow ahead of the wrist.
+Built-in target distance is therefore a seed/provenance value, not a fixed
+humanoid truth.
 
-For a contract-compatible humanoid whose measured arm is shorter than the
-canonical tuning fixture, Auto Fit proportionally compacts non-CONTACT starter
-excursions around the unchanged target-surface CONTACT point (down to a bounded
-64% scale). This prevents a compact-looking weapon control path from folding
-the wrist through the shoulder on a smaller arm while preserving the authored
-target, surface anchor, family, and direction. The applied scale is recorded in
-recipe provenance.
+The chosen target distance, minimum/maximum/contact extension ratios, and
+excursion scale are recorded in recipe provenance. CONTACT itself remains on
+the authored target surface; compaction changes only the surrounding path.
 
-If no candidate stays inside the hard limit, build fails with actionable text
-such as `TARGET REQUIRES 103% ARM EXTENSION. Move target 0.14 m closer or use
-AUTO FIT.` Forge does not enlarge the target, relax geometry, or translate a
-hand to hide an unreachable relationship.
+If no candidate fits, build fails with actionable folded- or over-reach text.
+Forge does not enlarge the target, loosen geometry, stretch the IK chain, or
+translate a hand to hide an unsafe relationship.
 
 ## Arm, shoulder, and body solve
 
 Temporary arm IK owns the anatomical upper arm and lower arm (`chain length 2`)
-with stretch disabled. Shoulder/clavicle support is applied separately and is
-capped at `4 degrees`; it is never an emergency extension link. Wrist position
-comes from the evaluated arm chain. Hand orientation is applied at that solved
-endpoint, so an imperfect orientation/contact solve is reported instead of
-moving the canonical hand away from its parent endpoint.
+with stretch disabled. Its pole plane is seeded from the character's authored
+base-pose elbow relationship and blended continuously frame to frame; a global
+left/right pole guess cannot flip the branch on an unusually oriented rig.
+Shoulder/clavicle support is applied separately and capped at `4 degrees`; it is
+never an emergency extension link. Wrist position comes from the evaluated arm
+chain. Hand orientation is applied at that solved endpoint, so an imperfect
+orientation/contact solve is reported instead of moving the canonical hand away
+from its parent endpoint. Runtime socket calibration uses the stable authored
+bone-parent local transform and does not depend on the currently evaluated frame.
 
 The canonical shoulder, upper arm, lower arm, and hand are rotation-driven for
 Motion Studio. Their local locations are neither meaningfully changed nor
@@ -155,15 +167,13 @@ keyed. Other Forge systems retain their existing explicit location policies;
 this is not a global ban on location channels. Root remains IN_PLACE for these
 starters. Runtime sockets remain unchanged.
 
-Body support uses a family-specific C1 smoothstep envelope over START,
-ANTICIPATION, PRE_CONTACT, CONTACT, POST_CONTACT, FOLLOW_THROUGH, and END. It
-passes continuously from the small opposite preload into modest strike support
-and declining follow-through; there is no sign/state flip at CONTACT. Natural
-torso, stance, knee compression, and planted-foot response are intentionally
-small. Leg IK may hold ankle position but never owns terminal foot orientation:
-each foot retains its authored IDLE base-pose transform. Position or orientation
-drift is a pose-health failure. Forceful may add support but remains subject to
-the same hard reach, translation, solve, and continuity gates.
+Body support uses the same family-specific C1 smoothstep envelope over START,
+ANTICIPATION, PRE_CONTACT, CONTACT, POST_CONTACT, FOLLOW_THROUGH, and END, but
+production attacks now apply it only to spine, chest, and the active shoulder.
+Pelvis, both legs, knees, feet, and the non-active arm are left in the authored
+base pose. This removes the broad full-body re-solve that produced near-zero
+curves and could contort unusual rest orientations. Expert styles remain subject
+to the same reach, translation, solve, and continuity gates.
 
 ## Natural starter behavior
 
@@ -177,9 +187,9 @@ target-relative controls:
   controlled recovery. HEAD selection does not turn it into a thrust.
 - Heavy diagonal is more committed but keeps a reachable hand, proxy-specific
   anticipation orientation, and restrained follow-through.
-- Thrust uses a roughly 0.30 m maximum contact-point chamber rather than the
-  5.4 giant withdrawal, forward tip contact at the entry surface, modest
-  penetration, and smooth retraction.
+- Thrust uses a compact roughly 0.16 m contact-point chamber, forward tip
+  contact at the entry surface, modest penetration, and smooth retraction. Its
+  ACTIVE wrist must remain in front of the shoulder and ahead of the elbow.
 
 Trajectory interpolation is smoothstep-linear between authored controls. It is
 C1 at controls and segment-bounded, preventing the cubic overshoot that could
@@ -188,23 +198,29 @@ reasonable.
 
 ## FK bake and pose health
 
-Temporary constraints/helpers are removed after every-frame FK bake. The bake
-asserts exact canonical bone inventory/rest matrices, no scale F-Curves, no
-starter root translation, and no deform-arm location curves. Pose health tracks:
+Temporary constraints are removed after the full-resolution quality solve. The
+bake asserts exact canonical bone inventory/rest matrices, no scale F-Curves,
+no starter root translation, and no deform-arm location curves. It writes one
+base-pose rotation key for mapped bones, samples only spine, chest, active
+shoulder, upper arm, lower arm, and hand through the clip, then reduces redundant
+keys while preserving all seven named control poses plus ACTIVE boundaries.
+Pose health tracks:
 
-- maximum arm extension ratio and minimum elbow bend;
+- minimum and maximum arm extension ratio and minimum elbow bend;
+- thrust wrist/forearm forward-order measurements;
 - maximum bounded shoulder support and torso contribution;
 - maximum unexpected deform-chain translation;
 - maximum per-frame wrist/contact solve error;
 - maximum world-space frame-to-frame angular change and responsible bone/frame.
 
-Hard failures include extension beyond 98.5%, deform translation above
-`0.0001 m`, wrist/contact solve error above `0.015 m`, shoulder support beyond
-the cap, an FK angular step above `45 degrees`, target miss, wrong trajectory
-family/direction, or stale proof. Warnings include extension above 92%, a near-
-locked elbow, high shoulder/torso support, and angular steps above 30 degrees.
-Natural built-ins are expected to remain below the warning reach threshold on
-the canonical acceptance humanoid.
+Hard failures include folding below 55%, extension beyond 98.5%, invalid thrust
+arm ordering, deform translation above `0.0001 m`, wrist/contact solve error
+above `0.015 m`, shoulder support beyond the cap, an FK angular step above `25
+degrees`, target miss, wrong trajectory family/direction, or stale proof.
+Warnings include extension above 92%, a near-locked elbow, high shoulder/torso
+support, and angular steps above 22 through 25 degrees. Production built-ins are
+expected to remain inside the 55–92% clean annulus with angular steps no greater
+than 22 degrees.
 
 ## Baked-path validation and approval
 
@@ -216,18 +232,31 @@ windup/recovery checks, and input digest. Existing default geometric tolerances
 remain `0.12 m` plane/line error, `0.60` direction dot, and a two-frame CONTACT
 navigation window; geometry is not loosened to accommodate naturalism.
 
-Approval requires current recipe, pose health without hard failure, PASS baked
-geometry, ACTIVE and intended CONTACT, current preview proof, compatible socket,
-exact skeleton, no forbidden scale/deform location curves, and current bake
-digest. Promotion remains deliberate and target-relative.
+Approval requires current recipe, pose-health `PASS`, baked-geometry `PASS`,
+ACTIVE and intended CONTACT, current preview proof, compatible socket, exact
+skeleton, no forbidden scale/deform location curves, and current bake digest.
+`WARN` is non-approvable. Promotion remains deliberate and target-relative.
+
+**BYPASS FAILED CHECKS AND SAVE** is a separate user-decision path. It requires
+current preview proof but may override pose, reach, targeting, or validation
+failures. The approved Action retains the original failed reports and adds
+`dreadstone.offensive_motion_bypass.v1` with the failure list, timestamp, recipe
+digest, curve/socket/skeleton input digest, and reviewed preview digest. It also
+stamps intended targeting metadata with `technicalChecksBypassed: true` for game
+handoff. Any subsequent curve, recipe, socket, or canonical-rig change makes the
+bypass stale and blocks export until the revised animation is previewed and
+accepted again.
 
 ## Helpers, export, and limits
 
-All `DSB_MS_*` target, proxy, control, trail, plane, and solver objects are
-preview-only members of `DSB_OFFENSIVE_MOTION_STUDIO`; they can be repaired
-after reopen and never export as GLB nodes, bones, skin joints, collision, or
-runtime tracking. Complete Damage continues to use zero-time temporary Action
-clones without mutating source Actions.
+Generate & Preview creates only the current hand-held weapon proxy. CONTACT and
+Replay / Preview may create target, proxy, trail, plane, and marker helpers
+without editable controls; the expert repair path may restore the full control
+set. Every such object is a preview-only member of
+`DSB_OFFENSIVE_MOTION_STUDIO` and never exports as a GLB node, bone, skin joint,
+collision object, or runtime tracker. Session recovery preserves whether the
+required set is weapon-only or full review geometry. Complete Damage continues
+to use zero-time temporary Action clones without mutating source Actions.
 
 This release refines production one-hand starters. `TWO_HAND_GENERIC` remains
 schema/proxy architecture, not a claimed two-hand constrained solve. Numeric

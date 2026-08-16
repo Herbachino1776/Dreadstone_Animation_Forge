@@ -1,6 +1,6 @@
 # Runtime attachment and offensive Action contract
 
-Forge release: `5.4.1`
+Forge release: `5.4.4`
 
 Schemas:
 
@@ -67,8 +67,10 @@ runtime skeleton, reference available socket roles, and have a unique combat
 ID. Forge never infers attack capability from an Action name.
 
 Motion Studio Actions additionally require a current `PASS` report from the
-actual baked FK hand/socket/proxy path, with intended target contact during
-ACTIVE. Their small optional `dreadstone.offensive_targeting.v1` companion
+actual baked FK hand/socket/proxy path and a pose-health `PASS`, with intended
+target contact during ACTIVE. A pose-health `WARN` is reviewable but cannot be
+approved for runtime export. Their small optional
+`dreadstone.offensive_targeting.v1` companion
 records where the attack was authored to connect: target zone and local offset,
 preferred distance/contact height, horizontal/vertical/depth tolerances,
 trajectory family, contact time, and proxy reach. It contains no IK, helper,
@@ -83,7 +85,7 @@ combat/weapon/socket/phase contract, clears preview/trajectory validation,
 targeting and approval, and requires the normal gate again. The effective
 resolver supplies exactly one shared or overridden Action to runtime staging.
 
-### Character-specific slider recipe and preview gate
+### Legacy character-specific slider recipe and preview gate
 
 Each generated offensive draft also carries authoring-only
 `dreadstone.offensive_recipe.v1` JSON. It stores the visible timing sliders and

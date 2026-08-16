@@ -7,12 +7,13 @@ import math
 import re
 import uuid
 from copy import deepcopy
+from datetime import datetime, timezone
 
 import bpy
 from bpy.app.handlers import persistent
 from bpy.props import StringProperty
 from bpy.types import Operator
-from mathutils import Matrix, Quaternion, Vector
+from mathutils import Matrix, Vector
 
 from . import animation_library, attachment_sockets, offensive_actions
 from . import offensive_motion as motion
@@ -23,6 +24,17 @@ from .anatomy import skin_and_bones
 MOTION_STUDIO_COLLECTION = "DSB_OFFENSIVE_MOTION_STUDIO"
 MOTION_STUDIO_STATE_PROPERTY = "dsb_offensive_motion_studio_session_json"
 MOTION_STUDIO_HELPER_ROLE = "offensive_motion_studio_helper"
+MOTION_BYPASS_PROPERTY = "dsb_offensive_motion_bypass_json"
+MOTION_BYPASS_SCHEMA = "dreadstone.offensive_motion_bypass.v1"
+PREVIEW_WEAPON_ROLES = frozenset({
+    "PROXY_GRIP",
+    "WEAPON_PROXY",
+    "PROXY_STRIKE_SEGMENT",
+    "PROXY_CONTACT_POINT",
+    "PROXY_HEAD",
+    "PROXY_TIP",
+    "PROXY_GUARD",
+})
 _SETTINGS_GUARD = False
 
 
@@ -350,8 +362,13 @@ def _socket_context(armature, role):
     hand = armature.pose.bones.get(hand_name)
     if hand is None:
         raise RuntimeError(f"Motion Studio cannot resolve canonical {hand_role}.")
-    parent_world = armature.matrix_world @ hand.matrix
-    socket_local = parent_world.inverted_safe() @ socket.matrix_world
+    # Bone-parented Blender objects carry an additional bone-tail convention in
+    # their object transform.  Computing this from evaluated world matrices made
+    # the calibration depend on whichever Action/frame happened to be active;
+    # on Cinderbound it inverted the socket by roughly 180 degrees.  The helper
+    # transform Blender stores for a bone parent is the stable authored local
+    # relationship we need for every solve and every frame.
+    socket_local = socket.matrix_basis.copy()
     return socket, hand, socket_local
 
 
@@ -421,6 +438,25 @@ def _build_proxy_helpers(armature, action, recipe):
         )
         _parent_local(guard, socket)
     return socket
+
+
+def build_preview_weapon(armature, action, recipe):
+    """Replace the visible hand-held proxy with the recipe's current weapon."""
+
+    remove_helpers(roles=PREVIEW_WEAPON_ROLES)
+    _build_proxy_helpers(armature, action, recipe)
+    _store_session(
+        action,
+        recipe,
+        helpers_required=True,
+        editable_controls_required=False,
+        helper_mode="WEAPON_PREVIEW",
+    )
+    return [
+        obj
+        for obj in _owned_objects()
+        if str(obj.get("dsb_motion_studio_role", "")) in PREVIEW_WEAPON_ROLES
+    ]
 
 
 def _build_trajectory_geometry(armature, action, recipe):
@@ -499,28 +535,69 @@ def _build_trail_helpers(armature, action, samples, validation=None):
         _parent_local(marker, armature, Matrix.Translation(validation["closestWeaponPointLocal"]))
 
 
-def build_helpers(armature, action, recipe, *, samples=None, validation=None):
+def build_helpers(
+    armature,
+    action,
+    recipe,
+    *,
+    samples=None,
+    validation=None,
+    include_controls=True,
+):
+    """Build optional review geometry, keeping the simple workflow uncluttered.
+
+    The seven orange trajectory controls are useful while deliberately editing
+    an expert recipe, but they made every ordinary attack create a small scene
+    graph of its own.  Simple builds therefore create no helpers at all; the
+    CONTACT review action asks for this reduced target/proxy/trail set on
+    demand.  Expert repair continues to request the editable controls.
+    """
+
     remove_helpers()
     _build_target_helpers(armature, action, recipe)
-    _build_control_helpers(armature, action, recipe)
+    if include_controls:
+        _build_control_helpers(armature, action, recipe)
     _build_proxy_helpers(armature, action, recipe)
     _build_trajectory_geometry(armature, action, recipe)
     if samples:
         _build_trail_helpers(armature, action, samples, validation)
-    _store_session(action, recipe)
+    _store_session(
+        action,
+        recipe,
+        helpers_required=True,
+        editable_controls_required=include_controls,
+        helper_mode="REVIEW",
+    )
     settings = getattr(bpy.context.scene, "daf_settings", None)
     if settings is not None:
         motion_display_updated(settings, bpy.context)
     return _owned_objects()
 
 
-def _store_session(action, recipe, scene=None):
+def _store_session(
+    action,
+    recipe,
+    scene=None,
+    *,
+    helpers_required=None,
+    editable_controls_required=None,
+    helper_mode=None,
+):
     scene = scene or bpy.context.scene
+    if helpers_required is None:
+        helpers_required = bool(_owned_objects())
+    if editable_controls_required is None:
+        editable_controls_required = any(
+            str(obj.get("dsb_motion_studio_role", "")).startswith("CONTROL_")
+            for obj in _owned_objects()
+        )
     payload = {
         "schema": "dreadstone.offensive_motion_studio_session.v1",
         "actionName": action.name,
         "motionMasterId": recipe["motionMasterId"],
-        "helpersRequired": True,
+        "helpersRequired": bool(helpers_required),
+        "editableControlsRequired": bool(editable_controls_required),
+        "helperMode": str(helper_mode or "REVIEW"),
     }
     scene[MOTION_STUDIO_STATE_PROPERTY] = motion.stable_json(payload)
     return payload
@@ -735,6 +812,9 @@ def motion_proxy_updated(settings, context):
         _SETTINGS_GUARD = False
     settings.motion_pose_health_status = "POSE HEALTH — STALE; rebuild body solve"
     settings.motion_pose_health_detail = ""
+    # Do not leave the previous proxy visible while the new selection is
+    # waiting to be generated.
+    remove_helpers(roles=PREVIEW_WEAPON_ROLES)
     invalidate_active_session(context, "Weapon proxy class changed")
 
 
@@ -762,8 +842,11 @@ def invalidate_action(action, reason="Motion Studio input changed"):
         motion.MOTION_VALIDATION_PROPERTY,
         motion.MOTION_POSE_HEALTH_PROPERTY,
         motion.TARGETING_PROPERTY,
+        MOTION_BYPASS_PROPERTY,
         "dsb_motion_preview_digest",
         "dsb_offensive_previewed_before_approval",
+        "dsb_motion_bypass_active",
+        "dsb_motion_approval_mode",
     ):
         if name in action:
             del action[name]
@@ -871,6 +954,42 @@ def _recipe_from_master_settings(settings, master):
     recipe["timing"] = _settings_timing(settings)
     recipe["trajectory"]["family"] = str(settings.motion_trajectory_family)
     return motion.apply_vip_macros(recipe, _settings_vip_macros(settings))
+
+
+def _simple_recipe_from_selection(settings, master):
+    """Create the production recipe from only the three visible choices.
+
+    Older builds hid dozens of expert values but still consumed their stale
+    scene state when REFRESH ATTACK was clicked.  A file could therefore look
+    simple while silently inheriting an unsafe pole, tolerance, body style, or
+    timing edit.  The production path is now deterministic: selected attack,
+    weapon class, and target zone are the only inputs.  Built-in masters always
+    start from their reviewed Natural defaults; promoted masters retain their
+    explicitly stored authored values.
+    """
+
+    target = deepcopy(master["target"])
+    target["zone"] = str(settings.motion_target_zone)
+    proxy = motion.proxy_defaults(str(settings.motion_proxy_class))
+    style = deepcopy(master.get("style", motion.DEFAULT_STYLE))
+    solver = deepcopy(motion.DEFAULT_SOLVER)
+    solver.update(deepcopy(master.get("solver", {})))
+    tolerances = deepcopy(motion.DEFAULT_TOLERANCES)
+    tolerances.update(deepcopy(master.get("tolerances", {})))
+    recipe = motion.instantiate_motion_recipe(
+        master,
+        target=target,
+        proxy=proxy,
+        style=style,
+        solver=solver,
+        tolerances=tolerances,
+    )
+    recipe["feel"] = str(master.get("feel", "NATURAL"))
+    recipe.setdefault("provenance", {})["simpleBuild"] = {
+        "mode": "ATTACK_WEAPON_TARGET",
+        "ignoredHiddenExpertState": True,
+    }
+    return recipe
 
 
 def _update_recipe_from_settings(recipe, settings):
@@ -1098,6 +1217,7 @@ def _arm_reach_context(armature, mapping, recipe):
     model = motion.arm_reach_model(
         float(upper.bone.length),
         float(lower.bone.length),
+        minimum_ratio=float(recipe["solver"].get("minimumReachRatio", motion.DEFAULT_MINIMUM_REACH_RATIO)),
         comfortable_ratio=float(recipe["solver"].get("comfortableReachRatio", 0.88)),
         warning_ratio=float(recipe["solver"].get("warningReachRatio", 0.92)),
         hard_ratio=float(recipe["solver"].get("hardReachRatio", 0.985)),
@@ -1200,87 +1320,144 @@ def _desired_reach_samples(recipe, socket_local, shoulder, reach_model, fps):
     return values, schedule
 
 
-def auto_fit_recipe(armature, mapping, recipe, socket_local, fps):
-    """Adapt target distance and blade contact point to this character's arm."""
+def auto_fit_recipe(armature, mapping, recipe, socket_local, fps, *, strict=True):
+    """Fit the complete path inside a comfortable shoulder-to-wrist annulus.
+
+    Maximum reach alone is not a pose-quality guarantee.  The old fitter could
+    keep the farthest frame below 92% while allowing another frame to collapse
+    the wrist into the shoulder, where a two-bone IK chain can change branch.
+    We now search target distance *and* a bounded CONTACT-relative path scale,
+    rejecting both over-extension and excessive inward folding.
+    """
 
     _suffix, upper, _lower, reach_model = _arm_reach_context(armature, mapping, recipe)
     shoulder = Vector(upper.bone.head_local)
-    recipe = deepcopy(recipe)
-    # Starter controls were tuned on the canonical acceptance arm (about
-    # 0.777 m shoulder-to-wrist). Scale only the excursion around CONTACT for
-    # shorter characters; the target surface, attack family, and CONTACT itself
-    # remain exact. This keeps compact windup/recovery arcs from consuming the
-    # entire reach budget on a smaller but contract-compatible humanoid.
+    source_recipe = deepcopy(recipe)
     arm_scale = float(reach_model["maximumGeometricReachMeters"]) / 0.7767385
-    excursion_scale = (
+    initial_excursion_scale = (
         1.0
         if arm_scale >= 0.98
         else motion.clamp(arm_scale * 0.92, 0.64, 0.96)
     )
-    if excursion_scale < 0.999:
-        contact_point = Vector(next(
-            control["contactPointLocal"]
-            for control in recipe["trajectory"]["controls"]
-            if control["id"] == "CONTACT"
-        ))
-        for control in recipe["trajectory"]["controls"]:
+    excursion_scales = []
+    scale = initial_excursion_scale
+    while scale > 0.421:
+        excursion_scales.append(scale)
+        scale *= 0.90
+    if not excursion_scales or excursion_scales[-1] > 0.421:
+        excursion_scales.append(0.42)
+
+    family = str(source_recipe["trajectory"]["family"])
+    minimum_distance, maximum_distance = ((0.68, 1.80) if family == "THRUST" else (0.50, 1.10))
+    minimum_safe_ratio = float(source_recipe["solver"].get("minimumReachRatio", 0.55))
+    target_ratio = motion.clamp(
+        float(source_recipe["style"].get("armExtension", 0.87)),
+        minimum_safe_ratio + 0.08,
+        float(reach_model["warningReachRatio"]) - 0.01,
+    )
+    # Body/shoulder support slightly changes the measured chain after this
+    # geometry-only fit. Keep a 2% margin so the finished pose, not merely the
+    # pre-solve estimate, stays clear of the near-lock warning.
+    warning_target = float(reach_model["warningReachRatio"]) - 0.02
+    hard_ratio = float(reach_model["hardReachRatio"])
+    best = None
+    steps = int(round((maximum_distance - minimum_distance) / 0.01))
+
+    source_contact = Vector(next(
+        control["contactPointLocal"]
+        for control in source_recipe["trajectory"]["controls"]
+        if control["id"] == "CONTACT"
+    ))
+    for excursion_scale in excursion_scales:
+        scaled_recipe = deepcopy(source_recipe)
+        for control in scaled_recipe["trajectory"]["controls"]:
             point = Vector(control["contactPointLocal"])
             control["contactPointLocal"] = [
                 round(float(value), 7)
-                for value in contact_point + (point - contact_point) * excursion_scale
+                for value in source_contact + (point - source_contact) * excursion_scale
             ]
-        recipe.setdefault("provenance", {})["autoFitExcursionScale"] = round(excursion_scale, 6)
-    family = str(recipe["trajectory"]["family"])
-    minimum, maximum = ((0.68, 1.80) if family == "THRUST" else (0.50, 1.10))
-    target_ratio = motion.clamp(
-        float(recipe["style"].get("armExtension", 0.87)),
-        0.76,
-        float(reach_model["warningReachRatio"]) - 0.01,
-    )
-    best = None
-    steps = int(round((maximum - minimum) / 0.01))
-    for index in range(steps + 1):
-        distance = minimum + index * 0.01
-        candidate = _shift_target_distance(recipe, distance)
-        _fit_blade_contact_distances(candidate, shoulder, reach_model)
-        samples, schedule = _desired_reach_samples(candidate, socket_local, shoulder, reach_model, fps)
-        maximum_ratio = max(value["extensionRatio"] for value in samples)
-        minimum_ratio = min(value["extensionRatio"] for value in samples)
-        contact_sample = min(samples, key=lambda value: abs(value["frame"] - schedule["CONTACT"]))
-        contact_ratio = float(contact_sample["extensionRatio"])
-        warning_target = float(reach_model["warningReachRatio"]) - 0.008
-        score = abs(contact_ratio - target_ratio) * 4.0
-        score += max(0.0, maximum_ratio - warning_target) * 160.0
-        score += max(0.0, 0.70 - contact_ratio) * 8.0
-        # A path that folds the wrist into the shoulder is as unnatural as one
-        # that overextends it and can make a two-bone IK branch flip.
-        score += max(0.0, 0.34 - minimum_ratio) * 12.0
-        if family == "THRUST":
-            contact_wrist_y = float(contact_sample["wristPositionLocal"][1])
-            minimum_wrist_y = min(float(value["wristPositionLocal"][1]) for value in samples)
-            score += max(0.0, 0.22 - contact_wrist_y) * 22.0
-            score += max(0.0, 0.04 - minimum_wrist_y) * 10.0
-        if maximum_ratio > float(reach_model["hardReachRatio"]):
-            score += 1000.0 + (maximum_ratio - float(reach_model["hardReachRatio"])) * 1000.0
-        score -= distance * 0.002
-        record = (score, candidate, maximum_ratio, contact_ratio, samples)
-        if best is None or record[0] < best[0]:
-            best = record
-    _score, fitted, maximum_ratio, contact_ratio, samples = best
+        for index in range(steps + 1):
+            distance = minimum_distance + index * 0.01
+            candidate = _shift_target_distance(scaled_recipe, distance)
+            _fit_blade_contact_distances(candidate, shoulder, reach_model)
+            samples, schedule = _desired_reach_samples(candidate, socket_local, shoulder, reach_model, fps)
+            candidate["contactFrame"] = int(schedule["CONTACT"])
+            ideal_report = motion.validate_baked_trajectory(
+                candidate,
+                motion.ideal_trajectory_samples(candidate, fps, 0.5),
+            )
+            maximum_ratio = max(value["extensionRatio"] for value in samples)
+            minimum_ratio = min(value["extensionRatio"] for value in samples)
+            contact_sample = min(samples, key=lambda value: abs(value["frame"] - schedule["CONTACT"]))
+            contact_ratio = float(contact_sample["extensionRatio"])
+            score = abs(contact_ratio - target_ratio) * 4.0
+            score += max(0.0, maximum_ratio - warning_target) * 180.0
+            score += max(0.0, minimum_safe_ratio - minimum_ratio) * 240.0
+            score += max(0.0, minimum_safe_ratio + 0.06 - minimum_ratio) * 10.0
+            score += max(0.0, minimum_safe_ratio + 0.08 - contact_ratio) * 12.0
+            if maximum_ratio > hard_ratio:
+                score += 1000.0 + (maximum_ratio - hard_ratio) * 1000.0
+            # Reach fitting must not shrink a slash until its blade sits in the
+            # target throughout windup/recovery. Contact timing and family
+            # geometry are invariants of the fit, not a later surprise.
+            if ideal_report["status"] != "PASS":
+                score += 5000.0 + 250.0 * len(ideal_report.get("errors", []))
+            # Preserve as much readable arc as the safe annulus permits.
+            score += (1.0 - excursion_scale) * 0.08
+            record = (
+                score,
+                candidate,
+                maximum_ratio,
+                minimum_ratio,
+                contact_ratio,
+                samples,
+                excursion_scale,
+                ideal_report,
+            )
+            if best is None or record[0] < best[0]:
+                best = record
+
+    _score, fitted, maximum_ratio, minimum_ratio, contact_ratio, samples, excursion_scale, ideal_report = best
     worst = max(samples, key=lambda value: value["extensionRatio"])
+    fit_warnings = []
     if maximum_ratio > float(reach_model["hardReachRatio"]) + 1.0e-6:
         over = max(0.0, float(worst["distanceMeters"]) - float(reach_model["hardReachMeters"]))
-        raise RuntimeError(
+        message = (
             f"TARGET REQUIRES {maximum_ratio * 100.0:.0f}% ARM EXTENSION. "
             f"Move target {over:.2f} m closer or use AUTO FIT with a more compact trajectory "
             f"(worst frame {float(worst['frame']):.1f})."
         )
+        if strict:
+            raise RuntimeError(message)
+        fit_warnings.append(message)
+    if minimum_ratio < minimum_safe_ratio - 1.0e-6:
+        folded = min(samples, key=lambda value: value["extensionRatio"])
+        message = (
+            f"WRIST FOLDS TO {minimum_ratio * 100.0:.0f}% ARM EXTENSION; "
+            f"safe minimum is {minimum_safe_ratio * 100.0:.0f}% "
+            f"(frame {float(folded['frame']):.1f}). Choose a shorter weapon or a more compact attack."
+        )
+        if strict:
+            raise RuntimeError(message)
+        fit_warnings.append(message)
+    if ideal_report["status"] != "PASS":
+        message = (
+            "AUTO FIT COULD NOT PRESERVE ATTACK TIMING AND TARGET CLEARANCE: "
+            + " ".join(str(value) for value in ideal_report.get("errors", []))
+        )
+        if strict:
+            raise RuntimeError(message)
+        fit_warnings.append(message)
+    fitted.setdefault("provenance", {})["autoFitExcursionScale"] = round(float(excursion_scale), 6)
     fitted.setdefault("provenance", {})["autoFit"] = {
-        "mode": "CHARACTER_ARM_REACH",
+        "mode": "CHARACTER_SAFE_REACH_ANNULUS",
         "targetDistanceMeters": round(float(fitted["target"]["distanceMeters"]), 6),
         "maximumDesiredExtensionRatio": round(float(maximum_ratio), 6),
+        "minimumDesiredExtensionRatio": round(float(minimum_ratio), 6),
         "contactExtensionRatio": round(float(contact_ratio), 6),
     }
+    if fit_warnings:
+        fitted["provenance"]["exploratoryFitWarnings"] = fit_warnings
     return fitted, reach_model
 
 
@@ -1289,41 +1466,47 @@ def _apply_body_support(armature, mapping, settings, recipe, frame, schedule):
 
     style = recipe["style"]
     torso = float(style["torsoPower"]) * float(recipe["solver"]["torsoSupport"])
-    stance = float(style["stanceCompression"])
     power = motion.body_support_envelope(recipe, frame, schedule)
     family = recipe["trajectory"]["family"]
-    fwd, side, up = (Vector((0.0, 1.0, 0.0)), Vector((-1.0, 0.0, 0.0)), Vector((0.0, 0.0, 1.0)))
+    side, up = (Vector((-1.0, 0.0, 0.0)), Vector((0.0, 0.0, 1.0)))
+    # Production attacks no longer re-solve the pelvis, both legs, both knees,
+    # and both feet for a one-hand strike.  That system produced dozens of
+    # near-zero curves and could contort unusual rest orientations.  Spine and
+    # chest give the weapon readable support while the authored lower body is
+    # left exactly as-is.
     if family == "OVERHEAD_VERTICAL":
         lift = max(0.0, -power)
         descend = max(0.0, power)
-        rotate(armature, mapping, "hips", side, (3.0 * lift - 4.0 * descend) * torso)
-        rotate(armature, mapping, "spine", side, (5.0 * lift - 6.5 * descend) * torso)
-        rotate(armature, mapping, "chest", side, (7.5 * lift - 9.5 * descend) * torso)
+        rotate(armature, mapping, "spine", side, (12.0 * lift - 16.0 * descend) * torso)
+        rotate(armature, mapping, "chest", side, (18.0 * lift - 24.0 * descend) * torso)
     elif family in {"HORIZONTAL", "DIAGONAL_DOWN"}:
         direction = -1.0 if recipe["trajectory"]["expectedDirectionLocal"][0] < 0 else 1.0
-        rotate(armature, mapping, "hips", up, direction * power * 3.5 * torso)
-        rotate(armature, mapping, "spine", up, direction * power * 6.0 * torso)
-        rotate(armature, mapping, "chest", up, direction * power * 9.0 * torso)
+        rotate(armature, mapping, "spine", up, direction * power * 14.0 * torso)
+        rotate(armature, mapping, "chest", up, direction * power * 22.0 * torso)
         if family == "DIAGONAL_DOWN":
-            rotate(armature, mapping, "chest", side, -abs(power) * 4.5 * torso)
+            rotate(armature, mapping, "chest", side, -abs(power) * 10.0 * torso)
     elif family == "THRUST":
-        rotate(armature, mapping, "hips", side, -power * 2.0 * torso)
-        rotate(armature, mapping, "spine", side, -power * 3.5 * torso)
-        rotate(armature, mapping, "chest", side, -power * 5.5 * torso)
+        rotate(armature, mapping, "spine", side, -power * 14.0 * torso)
+        rotate(armature, mapping, "chest", side, -power * 22.0 * torso)
     shoulder_role = "shoulder_r" if recipe["solver"]["arm"] == "RIGHT" else "shoulder_l"
     shoulder_limit = float(recipe["solver"].get("maxShoulderSupportDegrees", 4.0))
-    shoulder_support = motion.clamp(power * 7.0 * torso, -shoulder_limit, shoulder_limit)
+    shoulder_support = motion.clamp(power * 24.0 * torso, -shoulder_limit, shoulder_limit)
     rotate(armature, mapping, shoulder_role, side if family in {"OVERHEAD_VERTICAL", "THRUST"} else up, shoulder_support)
-    knee = abs(power) * 3.0 * stance
-    rotate(armature, mapping, "thigh_l", side, -knee)
-    rotate(armature, mapping, "thigh_r", side, -knee)
-    rotate(armature, mapping, "shin_l", side, knee * 1.5)
-    rotate(armature, mapping, "shin_r", side, knee * 1.5)
     wrist = (float(style["wristStyle"]) - 1.0) * 7.0
     rotate_local(armature, mapping, "hand_r" if recipe["solver"]["arm"] == "RIGHT" else "hand_l", (0.0, 1.0, 0.0), wrist)
 
 
-def _solve_hand_ik(context, armature, mapping, recipe, pose, socket_local, solver_target, pole_target):
+def _solve_hand_ik(
+    context,
+    armature,
+    mapping,
+    recipe,
+    pose,
+    socket_local,
+    solver_target,
+    pole_target,
+    pole_state=None,
+):
     arm_suffix = "r" if recipe["solver"]["arm"] == "RIGHT" else "l"
     upper = armature.pose.bones[mapping["upper_arm_" + arm_suffix]]
     lower = armature.pose.bones[mapping["lower_arm_" + arm_suffix]]
@@ -1332,13 +1515,37 @@ def _solve_hand_ik(context, armature, mapping, recipe, pose, socket_local, solve
     desired_hand = _desired_hand_matrix(recipe, pose, socket_local)
     solver_target.matrix_world = armature.matrix_world @ Matrix.Translation(desired_hand.translation)
     shoulder = upper.head.copy()
-    elbow_side = 1.0 if arm_suffix == "r" else -1.0
+    base_elbow = lower.head.copy()
+    reach = desired_hand.translation - shoulder
+    reach_axis = reach.normalized() if reach.length > 1.0e-8 else Vector((0.0, 1.0, 0.0))
+    # Seed the elbow plane from this rig's authored/base pose instead of a
+    # global left/right formula.  The latter chose the wrong side on rotated
+    # production bones and could change IK branch near a folded shoulder.
+    pole_direction = base_elbow - shoulder
+    pole_direction -= reach_axis * pole_direction.dot(reach_axis)
+    previous_direction = (pole_state or {}).get("direction")
+    if pole_direction.length <= 1.0e-6 and previous_direction is not None:
+        pole_direction = previous_direction.copy()
+    if pole_direction.length <= 1.0e-6:
+        elbow_side = 1.0 if arm_suffix == "r" else -1.0
+        fallback = Vector((elbow_side, -0.20, 0.18))
+        pole_direction = fallback - reach_axis * fallback.dot(reach_axis)
+    pole_direction.normalize()
+    if previous_direction is not None:
+        if pole_direction.dot(previous_direction) < 0.0:
+            pole_direction.negate()
+        blended = previous_direction * 0.82 + pole_direction * 0.18
+        if blended.length > 1.0e-6:
+            pole_direction = blended.normalized()
+    if pole_state is not None:
+        pole_state["direction"] = pole_direction.copy()
     midpoint = (shoulder + desired_hand.translation) * 0.5
-    pole_position = midpoint + Vector((
-        elbow_side * float(recipe["solver"]["poleSideMeters"]) * max(0.35, float(recipe["style"]["elbowStyle"])),
-        -float(recipe["solver"]["poleBackMeters"]) + (float(recipe["style"]["armExtension"]) - 1.0) * 0.08,
-        0.08,
-    ))
+    arm_length = float(upper.bone.length + lower.bone.length)
+    pole_distance = max(
+        arm_length * 0.72,
+        float(recipe["solver"]["poleSideMeters"]) * max(0.50, float(recipe["style"]["elbowStyle"])),
+    )
+    pole_position = midpoint + pole_direction * pole_distance
     pole_target.matrix_world = armature.matrix_world @ Matrix.Translation(pole_position)
     constraint = lower.constraints.new("IK")
     constraint.name = "DSB_MS_TEMP_IK"
@@ -1368,59 +1575,40 @@ def _solve_hand_ik(context, armature, mapping, recipe, pose, socket_local, solve
     return error
 
 
-def _solve_planted_feet(context, armature, mapping, targets, planted_matrices):
-    """Keep canonical feet at their authored base-pose transforms."""
-
-    maximum_error = 0.0
-    maximum_rotation_error = 0.0
-    for suffix in ("l", "r"):
-        thigh = armature.pose.bones[mapping["thigh_" + suffix]]
-        shin = armature.pose.bones[mapping["shin_" + suffix]]
-        foot = armature.pose.bones[mapping["foot_" + suffix]]
-        target, pole = targets[suffix]
-        planted_matrix = planted_matrices[suffix]
-        planted_anchor = planted_matrix.translation.copy()
-        target.matrix_world = armature.matrix_world @ Matrix.Translation(planted_anchor)
-        knee_anchor = Vector(thigh.bone.head_local)
-        pole.matrix_world = armature.matrix_world @ Matrix.Translation(
-            knee_anchor + Vector((0.0, 0.55, -0.25))
-        )
-        constraint = shin.constraints.new("IK")
-        constraint.name = "DSB_MS_TEMP_FOOT_IK_" + suffix.upper()
-        constraint.target = target
-        constraint.pole_target = pole
-        constraint.chain_count = 2
-        constraint.use_stretch = False
-        context.view_layer.update()
-        thigh_matrix = thigh.matrix.copy()
-        shin_matrix = shin.matrix.copy()
-        shin.constraints.remove(constraint)
-        thigh.matrix = thigh_matrix
-        context.view_layer.update()
-        shin.matrix = shin_matrix
-        context.view_layer.update()
-        # The leg IK owns ankle position, not foot orientation. Without this
-        # counter-rotation the terminal foot inherits the IK chain's roll and
-        # can visibly yaw 90 degrees while its head still passes drift checks.
-        solved_head = Vector(foot.head)
-        oriented_foot = planted_matrix.copy()
-        oriented_foot.translation = solved_head
-        foot.matrix = oriented_foot
-        context.view_layer.update()
-        maximum_error = max(maximum_error, (Vector(foot.head) - planted_anchor).length)
-        rotation_error = planted_matrix.to_quaternion().rotation_difference(
-            foot.matrix.to_quaternion()
-        ).angle
-        maximum_rotation_error = max(maximum_rotation_error, math.degrees(abs(float(rotation_error))))
-    return maximum_error, maximum_rotation_error
-
-
 def _set_baked_interpolation(action):
     from . import iter_action_fcurves
 
     for curve in iter_action_fcurves(action):
         for point in curve.keyframe_points:
             point.interpolation = "LINEAR"
+
+
+def _maximum_baked_angular_step(context, armature, action, bone_names, schedule):
+    """Measure actual Action evaluation after any curve post-processing."""
+
+    armature.animation_data.action = action
+    previous = {}
+    maximum = {"degrees": 0.0, "bone": "", "frame": 0}
+    original = int(context.scene.frame_current)
+    try:
+        for frame in range(schedule["START"], schedule["END"] + 1):
+            context.scene.frame_set(frame)
+            context.view_layer.update()
+            for bone_name in bone_names:
+                pose_bone = armature.pose.bones.get(bone_name)
+                if pose_bone is None:
+                    continue
+                current = pose_bone.matrix.to_quaternion().normalized()
+                prior = previous.get(bone_name)
+                if prior is not None:
+                    current.make_compatible(prior)
+                    degrees = math.degrees(abs(float(prior.rotation_difference(current).angle)))
+                    if degrees > maximum["degrees"]:
+                        maximum = {"degrees": degrees, "bone": bone_name, "frame": int(frame)}
+                previous[bone_name] = current.copy()
+    finally:
+        context.scene.frame_set(original)
+    return maximum
 
 
 def _set_markers(action, schedule):
@@ -1438,7 +1626,82 @@ def _set_markers(action, schedule):
         _set_action_marker(action, name, int(schedule[key]))
 
 
-def _bake_body(context, armature, action, recipe):
+def _reduce_baked_keys(action, schedule):
+    """Remove redundant every-frame samples without changing named poses.
+
+    Rotation-only IK still samples every frame so quality checks see the real
+    solve.  Once it passes, a small Ramer-Douglas-Peucker reduction keeps all
+    seven authored phase poses and bounds component error between them.  This
+    leaves ordinary FK curves instead of thousands of no-op keys.
+    """
+
+    from . import iter_action_fcurves
+
+    required_frames = {
+        float(schedule[key])
+        for key in (*motion.CONTROL_IDS, "activeStart", "activeEnd")
+        if key in schedule
+    }
+
+    def keep_segment(points, first, last, tolerance, keep):
+        if last <= first + 1:
+            return
+        start_frame, start_value = points[first]
+        end_frame, end_value = points[last]
+        duration = max(end_frame - start_frame, 1.0e-8)
+        worst_index = None
+        worst_error = -1.0
+        for index in range(first + 1, last):
+            frame, value = points[index]
+            factor = (frame - start_frame) / duration
+            expected = start_value + (end_value - start_value) * factor
+            error = abs(value - expected)
+            if error > worst_error:
+                worst_error = error
+                worst_index = index
+        if worst_index is not None and worst_error > tolerance:
+            keep.add(worst_index)
+            keep_segment(points, first, worst_index, tolerance, keep)
+            keep_segment(points, worst_index, last, tolerance, keep)
+
+    before = 0
+    after = 0
+    for curve in iter_action_fcurves(action):
+        keyframes = list(curve.keyframe_points)
+        before += len(keyframes)
+        if len(keyframes) <= 1:
+            after += len(keyframes)
+            continue
+        points = [(float(point.co[0]), float(point.co[1])) for point in keyframes]
+        tolerance = 0.00045 if str(curve.data_path).endswith("rotation_quaternion") else 0.00001
+        if max(value for _frame, value in points) - min(value for _frame, value in points) <= tolerance:
+            keep = {0}
+        else:
+            anchors = {0, len(points) - 1}
+            anchors.update(
+                index
+                for index, (frame, _value) in enumerate(points)
+                if any(abs(frame - required) <= 1.0e-5 for required in required_frames)
+            )
+            keep = set(anchors)
+            ordered = sorted(anchors)
+            for first, last in zip(ordered, ordered[1:]):
+                keep_segment(points, first, last, tolerance, keep)
+        for index in range(len(keyframes) - 1, -1, -1):
+            if index not in keep:
+                curve.keyframe_points.remove(keyframes[index], fast=True)
+        try:
+            curve.update()
+        except (AttributeError, RuntimeError):
+            pass
+        after += len(curve.keyframe_points)
+    action["dsb_motion_bake_key_count_before_reduction"] = int(before)
+    action["dsb_motion_bake_key_count"] = int(after)
+    action["dsb_motion_bake_key_reduction_ratio"] = float(0.0 if before <= 0 else 1.0 - after / before)
+    return {"before": before, "after": after}
+
+
+def _bake_body(context, armature, action, recipe, *, allow_unsafe_preview=False):
     from . import apply_animation_base_pose, map_bones, reset_pose
 
     anatomy_blender.require_generator_capability(armature, "offensive_humanoid", "Offensive Motion Studio")
@@ -1447,8 +1710,7 @@ def _bake_body(context, armature, action, recipe):
     suffix = "r" if recipe["solver"]["arm"] == "RIGHT" else "l"
     required = [
         "root", "hips", "spine", "chest", "shoulder_" + suffix, "upper_arm_" + suffix,
-        "lower_arm_" + suffix, "hand_" + suffix, "thigh_l", "shin_l", "foot_l",
-        "thigh_r", "shin_r", "foot_r",
+        "lower_arm_" + suffix, "hand_" + suffix,
     ]
     missing = [role for role in required if role not in mapping]
     if missing:
@@ -1467,11 +1729,24 @@ def _bake_body(context, armature, action, recipe):
         fps,
     )
     desired_worst = max(desired_samples, key=lambda value: value["extensionRatio"])
-    if float(desired_worst["extensionRatio"]) > float(reach_model["hardReachRatio"]) + 1.0e-6:
+    desired_folded = min(desired_samples, key=lambda value: value["extensionRatio"])
+    if (
+        not allow_unsafe_preview
+        and float(desired_worst["extensionRatio"]) > float(reach_model["hardReachRatio"]) + 1.0e-6
+    ):
         over = max(0.0, float(desired_worst["distanceMeters"]) - float(reach_model["hardReachMeters"]))
         raise RuntimeError(
             f"TARGET REQUIRES {float(desired_worst['extensionRatio']) * 100.0:.0f}% ARM EXTENSION. "
             f"Move target {over:.2f} m closer or use AUTO FIT."
+        )
+    if (
+        not allow_unsafe_preview
+        and float(desired_folded["extensionRatio"]) < float(reach_model["minimumReachRatio"]) - 1.0e-6
+    ):
+        raise RuntimeError(
+            f"WRIST FOLDS TO {float(desired_folded['extensionRatio']) * 100.0:.0f}% ARM EXTENSION. "
+            f"The safe minimum is {float(reach_model['minimumReachRatio']) * 100.0:.0f}%; "
+            "use AUTO FIT or a shorter weapon."
         )
     recipe["contactFrame"] = int(schedule["CONTACT"])
     context.scene.frame_start = schedule["START"]
@@ -1481,18 +1756,18 @@ def _bake_body(context, armature, action, recipe):
     pole_target = _empty("DSB_MS_ELBOW_POLE", "SOLVER_TEMP", action=action, display="PLAIN_AXES", size=0.10)
     _parent_local(solver_target, armature)
     _parent_local(pole_target, armature)
-    foot_targets = {}
-    for foot_suffix, label in (("l", "L"), ("r", "R")):
-        target = _empty("DSB_MS_FOOT_TARGET_" + label, "SOLVER_TEMP", action=action, display="PLAIN_AXES", size=0.07)
-        pole = _empty("DSB_MS_KNEE_POLE_" + label, "SOLVER_TEMP", action=action, display="PLAIN_AXES", size=0.07)
-        _parent_local(target, armature)
-        _parent_local(pole, armature)
-        foot_targets[foot_suffix] = (target, pole)
     maximum_error = 0.0
     maximum_foot_error = 0.0
     maximum_foot_rotation_error = 0.0
     maximum_extension_ratio = 0.0
+    minimum_extension_ratio = math.inf
     minimum_elbow_bend = 180.0
+    maximum_thrust_elbow_ahead = 0.0
+    maximum_thrust_elbow_ahead_frame = 0
+    minimum_thrust_wrist_advance = math.inf
+    minimum_thrust_wrist_advance_frame = 0
+    minimum_thrust_forearm_advance = math.inf
+    minimum_thrust_forearm_advance_frame = 0
     maximum_shoulder_support = 0.0
     maximum_torso_contribution = 0.0
     maximum_deform_translation = 0.0
@@ -1503,6 +1778,7 @@ def _bake_body(context, armature, action, recipe):
     maximum_angular_step_points = {}
     previous_quaternions = {}
     previous_world_quaternions = {}
+    pole_state = {}
     # Neither deform arm receives local translation curves. The active chain is
     # solved by rotation; the support arm has no reason to carry zero-valued
     # location channels either.
@@ -1517,33 +1793,65 @@ def _bake_body(context, armature, action, recipe):
         )
         if role_name in mapping
     }
+    deform_bone_names = {mapping[role] for role in deform_roles}
+    dynamic_roles = {
+        "spine",
+        "chest",
+        "shoulder_" + suffix,
+        "upper_arm_" + suffix,
+        "lower_arm_" + suffix,
+        "hand_" + suffix,
+    }
+    dynamic_bone_names = {mapping[role] for role in dynamic_roles if role in mapping}
+    mapped_bone_names = set(mapping.values())
     try:
         for frame in range(schedule["START"], schedule["END"] + 1):
             context.scene.frame_set(frame)
             reset_pose(armature, mapping)
             apply_animation_base_pose(armature, mapping, "IDLE")
             context.view_layer.update()
-            planted_foot_matrices = {
-                foot_suffix: armature.pose.bones[mapping["foot_" + foot_suffix]].matrix.copy()
-                for foot_suffix in ("l", "r")
-            }
             _apply_body_support(armature, mapping, context.scene.daf_settings, recipe, frame, schedule)
             context.view_layer.update()
-            foot_error, foot_rotation_error = _solve_planted_feet(
-                context, armature, mapping, foot_targets, planted_foot_matrices
-            )
-            maximum_foot_error = max(maximum_foot_error, foot_error)
-            maximum_foot_rotation_error = max(maximum_foot_rotation_error, foot_rotation_error)
             pose = motion.interpolate_trajectory(recipe, frame, schedule)
             maximum_error = max(
                 maximum_error,
-                _solve_hand_ik(context, armature, mapping, recipe, pose, socket_local, solver_target, pole_target),
+                _solve_hand_ik(
+                    context,
+                    armature,
+                    mapping,
+                    recipe,
+                    pose,
+                    socket_local,
+                    solver_target,
+                    pole_target,
+                    pole_state,
+                ),
             )
             shoulder_point = Vector(armature.pose.bones[mapping["upper_arm_" + suffix]].head)
             elbow_point = Vector(armature.pose.bones[mapping["lower_arm_" + suffix]].head)
             wrist_point = Vector(armature.pose.bones[mapping["hand_" + suffix]].head)
             requirement = motion.reach_requirement(shoulder_point, wrist_point, reach_model)
             maximum_extension_ratio = max(maximum_extension_ratio, float(requirement["extensionRatio"]))
+            minimum_extension_ratio = min(minimum_extension_ratio, float(requirement["extensionRatio"]))
+            if (
+                str(recipe["trajectory"]["family"]) == "THRUST"
+                and schedule["activeStart"] <= frame <= schedule["activeEnd"]
+            ):
+                thrust_axis = Vector(recipe["trajectory"]["expectedDirectionLocal"])
+                if thrust_axis.length > 1.0e-8:
+                    thrust_axis.normalize()
+                    wrist_advance = float((wrist_point - shoulder_point).dot(thrust_axis))
+                    forearm_advance = float((wrist_point - elbow_point).dot(thrust_axis))
+                    elbow_ahead = -forearm_advance
+                    if wrist_advance < minimum_thrust_wrist_advance:
+                        minimum_thrust_wrist_advance = wrist_advance
+                        minimum_thrust_wrist_advance_frame = int(frame)
+                    if forearm_advance < minimum_thrust_forearm_advance:
+                        minimum_thrust_forearm_advance = forearm_advance
+                        minimum_thrust_forearm_advance_frame = int(frame)
+                    if elbow_ahead > maximum_thrust_elbow_ahead:
+                        maximum_thrust_elbow_ahead = elbow_ahead
+                        maximum_thrust_elbow_ahead_frame = int(frame)
             minimum_elbow_bend = min(
                 minimum_elbow_bend,
                 motion.elbow_bend_degrees(shoulder_point, elbow_point, wrist_point),
@@ -1571,7 +1879,7 @@ def _bake_body(context, armature, action, recipe):
             # equivalent rotations.  Make every baked pose continuous before
             # key insertion so subframe playback cannot take a 360-degree arc
             # that was never present in the weapon control trajectory.
-            for bone_name in set(mapping.values()):
+            for bone_name in mapped_bone_names:
                 pose_bone = armature.pose.bones.get(bone_name)
                 if pose_bone is None:
                     continue
@@ -1595,26 +1903,35 @@ def _bake_body(context, armature, action, recipe):
                         }
                 previous_quaternions[bone_name] = pose_bone.rotation_quaternion.copy()
                 previous_world_quaternions[bone_name] = world_quaternion.copy()
-            keyed = set()
-            for mapped_role, bone_name in mapping.items():
-                if bone_name in keyed:
+            # One base-pose key keeps untouched bones deterministic when users
+            # switch Actions. Only the six production-support bones are then
+            # sampled through the clip; no local-location curves are emitted.
+            for bone_name in mapped_bone_names:
+                if frame != schedule["START"] and bone_name not in dynamic_bone_names:
                     continue
-                keyed.add(bone_name)
                 pose_bone = armature.pose.bones.get(bone_name)
                 if pose_bone is None:
                     continue
                 pose_bone.keyframe_insert("rotation_quaternion", frame=frame, group=bone_name)
-                if mapped_role not in deform_roles:
-                    pose_bone.keyframe_insert("location", frame=frame, group=bone_name)
     finally:
         for bone in armature.pose.bones:
             for constraint in list(bone.constraints):
                 if str(constraint.name).startswith("DSB_MS_TEMP_"):
                     bone.constraints.remove(constraint)
-        for helper in (solver_target, pole_target, *[value for pair in foot_targets.values() for value in pair]):
+        for helper in (solver_target, pole_target):
             if helper is not None and helper.name in bpy.data.objects:
                 _remove_object(helper)
     _set_baked_interpolation(action)
+    measured_step = _maximum_baked_angular_step(
+        context,
+        armature,
+        action,
+        dynamic_bone_names,
+        schedule,
+    )
+    maximum_angular_step = float(measured_step["degrees"])
+    maximum_angular_step_bone = str(measured_step["bone"])
+    maximum_angular_step_frame = int(measured_step["frame"])
     _set_markers(action, schedule)
     if _skeleton_digest(armature) != before:
         raise RuntimeError("Motion Studio changed canonical bone inventory or rest matrices.")
@@ -1622,7 +1939,6 @@ def _bake_body(context, armature, action, recipe):
 
     if any(str(curve.data_path).endswith(".scale") for curve in iter_action_fcurves(action)):
         raise RuntimeError("Motion Studio FK bake created forbidden scale animation.")
-    deform_bone_names = {mapping[role] for role in deform_roles}
     deform_location_curves = [
         curve
         for curve in iter_action_fcurves(action)
@@ -1657,6 +1973,23 @@ def _bake_body(context, armature, action, recipe):
         pose_errors.append(f"ARM REQUIRES {maximum_extension_ratio * 100.0:.0f}% EXTENSION; hard limit is {float(reach_model['hardReachRatio']) * 100.0:.1f}%.")
     elif maximum_extension_ratio > float(reach_model["warningReachRatio"]):
         pose_warnings.append(f"ARM EXTENSION {maximum_extension_ratio * 100.0:.0f}% — near lock.")
+    minimum_reach_ratio = float(reach_model["minimumReachRatio"])
+    if minimum_extension_ratio < minimum_reach_ratio - 1.0e-6:
+        pose_errors.append(
+            f"ARM FOLDS TO {minimum_extension_ratio * 100.0:.0f}% EXTENSION; "
+            f"safe minimum is {minimum_reach_ratio * 100.0:.0f}%."
+        )
+    if str(recipe["trajectory"]["family"]) == "THRUST":
+        if minimum_thrust_wrist_advance <= 0.05:
+            pose_errors.append(
+                f"THRUST WRIST DOES NOT ADVANCE IN FRONT OF SHOULDER "
+                f"({minimum_thrust_wrist_advance:.3f} m, frame {minimum_thrust_wrist_advance_frame})."
+            )
+        if minimum_thrust_forearm_advance <= 0.01:
+            pose_errors.append(
+                f"THRUST WRIST DOES NOT STAY AHEAD OF ELBOW "
+                f"({minimum_thrust_forearm_advance:.3f} m, frame {minimum_thrust_forearm_advance_frame})."
+            )
     if minimum_elbow_bend < 8.0:
         pose_warnings.append(f"ELBOW BEND {minimum_elbow_bend:.1f}° — near locked arm.")
     if maximum_deform_translation > translation_tolerance:
@@ -1678,20 +2011,33 @@ def _bake_body(context, armature, action, recipe):
         pose_warnings.append(f"SHOULDER SUPPORT HIGH — {maximum_shoulder_support:.1f}°.")
     if maximum_torso_contribution > 18.0:
         pose_warnings.append(f"TORSO ROTATION HIGH — {maximum_torso_contribution:.1f}°.")
-    if maximum_angular_step > 45.0:
+    if maximum_angular_step > 25.0:
         pose_errors.append(
             f"FK CHAIN DISCONTINUITY {maximum_angular_step:.1f}° in one frame "
             f"({maximum_angular_step_bone}, frame {maximum_angular_step_frame}, "
             f"arm extension {maximum_angular_step_extension * 100.0:.1f}%)."
         )
-    elif maximum_angular_step > 30.0:
+    elif maximum_angular_step > 22.0:
         pose_warnings.append(f"FRAME ANGULAR CHANGE HIGH — {maximum_angular_step:.1f}°.")
     pose_health = {
         "schema": motion.MOTION_POSE_HEALTH_SCHEMA,
         "status": "FAIL" if pose_errors else "WARN" if pose_warnings else "PASS",
         "reachModel": {key: round(float(value), 7) for key, value in reach_model.items()},
         "maximumArmExtensionRatio": round(maximum_extension_ratio, 7),
+        "minimumArmExtensionRatio": round(minimum_extension_ratio, 7),
         "minimumElbowBendDegrees": round(minimum_elbow_bend, 5),
+        "maximumThrustElbowAheadOfWristMeters": round(maximum_thrust_elbow_ahead, 7),
+        "maximumThrustElbowAheadOfWristFrame": maximum_thrust_elbow_ahead_frame,
+        "minimumActiveThrustWristAdvanceMeters": round(
+            0.0 if math.isinf(minimum_thrust_wrist_advance) else minimum_thrust_wrist_advance,
+            7,
+        ),
+        "minimumActiveThrustWristAdvanceFrame": minimum_thrust_wrist_advance_frame,
+        "minimumActiveThrustForearmAdvanceMeters": round(
+            0.0 if math.isinf(minimum_thrust_forearm_advance) else minimum_thrust_forearm_advance,
+            7,
+        ),
+        "minimumActiveThrustForearmAdvanceFrame": minimum_thrust_forearm_advance_frame,
         "maximumShoulderSupportDegrees": round(maximum_shoulder_support, 5),
         "maximumTorsoContributionDegrees": round(maximum_torso_contribution, 5),
         "maximumDeformTranslationMeters": round(maximum_deform_translation, 8),
@@ -1708,8 +2054,10 @@ def _bake_body(context, armature, action, recipe):
     }
     motion.stamp_json(action, motion.MOTION_POSE_HEALTH_PROPERTY, pose_health)
     action["dsb_motion_pose_health_status"] = pose_health["status"]
-    if pose_errors:
+    action["dsb_motion_exploratory_preview"] = bool(allow_unsafe_preview)
+    if pose_errors and not allow_unsafe_preview:
         raise RuntimeError("Motion Studio pose safety failed: " + " ".join(pose_errors))
+    _reduce_baked_keys(action, schedule)
     return schedule
 
 
@@ -1855,7 +2203,8 @@ def _cache_pose_health(settings, report):
         return
     status = str(report.get("status", "UNKNOWN"))
     settings.motion_pose_health_status = (
-        f"POSE {status} · arm {float(report.get('maximumArmExtensionRatio', 0.0)) * 100.0:.1f}% · "
+        f"POSE {status} · reach {float(report.get('minimumArmExtensionRatio', 0.0)) * 100.0:.1f}–"
+        f"{float(report.get('maximumArmExtensionRatio', 0.0)) * 100.0:.1f}% · "
         f"elbow {float(report.get('minimumElbowBendDegrees', 0.0)):.1f}° · "
         f"shoulder {float(report.get('maximumShoulderSupportDegrees', 0.0)):.1f}°"
     )
@@ -1923,7 +2272,13 @@ def reset_to_natural(context):
     return motion.STYLE_PRESETS["NATURAL"]
 
 
-def build_from_master(context):
+def build_from_master(
+    context,
+    *,
+    simple=False,
+    exploratory=False,
+    preview_weapon=False,
+):
     from . import find_armature, map_bones
 
     settings = context.scene.daf_settings
@@ -1931,19 +2286,36 @@ def build_from_master(context):
     if master is None:
         raise RuntimeError("Choose an available Motion Master.")
     armature = find_armature(context)
-    recipe = _recipe_from_master_settings(settings, master)
+    recipe = (
+        _simple_recipe_from_selection(settings, master)
+        if simple
+        else _recipe_from_master_settings(settings, master)
+    )
     fps = context.scene.render.fps / max(context.scene.render.fps_base, 0.001)
-    if str(settings.motion_target_distance_mode) == "AUTO":
+    if simple or str(settings.motion_target_distance_mode) == "AUTO":
         mapping = map_bones(armature, settings)
         role = "MAIN_HAND_R" if recipe["solver"]["arm"] == "RIGHT" else "MAIN_HAND_L"
         _socket, _hand, socket_local = _socket_context(armature, role)
-        recipe, _reach_model = auto_fit_recipe(armature, mapping, recipe, socket_local, fps)
+        recipe, _reach_model = auto_fit_recipe(
+            armature,
+            mapping,
+            recipe,
+            socket_local,
+            fps,
+            strict=not exploratory,
+        )
         _apply_fit_to_settings(settings, recipe)
     schedule = motion.control_frame_schedule(recipe, fps)
     recipe["contactFrame"] = int(schedule["CONTACT"])
     action = _new_or_replace_draft(context, armature, recipe["actionKind"])
     _stamp_action_contract(action, recipe, fps)
-    _bake_body(context, armature, action, recipe)
+    _bake_body(
+        context,
+        armature,
+        action,
+        recipe,
+        allow_unsafe_preview=exploratory,
+    )
     pose_health = motion.read_json(action, motion.MOTION_POSE_HEALTH_PROPERTY, "Motion Studio pose health")
     motion.stamp_motion_recipe(action, recipe)
     action["dsb_motion_bake_recipe_digest"] = motion.stable_digest(recipe)
@@ -1952,23 +2324,39 @@ def build_from_master(context):
     action["dsb_motion_pose_health_status"] = pose_health["status"]
     _cache_pose_health(settings, pose_health)
     settings.offensive_preview_kind = recipe["actionKind"]
-    validation = validate_baked_action(context, action, sync_inputs=False, rebuild_visuals=True)
-    _store_session(action, recipe)
+    if simple or preview_weapon:
+        remove_helpers()
+    validation = validate_baked_action(
+        context,
+        action,
+        sync_inputs=False,
+        rebuild_visuals=not simple and not preview_weapon,
+    )
+    if preview_weapon:
+        build_preview_weapon(armature, action, recipe)
+    else:
+        _store_session(action, recipe, helpers_required=not simple)
     context.scene.frame_set(recipe["contactFrame"])
     return {"action": action, "recipe": recipe, "validation": validation}
 
 
 def refresh_vip_attack(context, *, start_playback=True):
-    """Rebuild from the selected starter and immediately show the result."""
+    """Bake the live controls and always show the exploratory result."""
 
-    result = build_from_master(context)
-    result["preview"] = None
-    if result["validation"]["status"] == "PASS":
-        result["preview"] = preview_motion(context, start_playback=start_playback)
+    result = build_from_master(
+        context,
+        exploratory=True,
+        preview_weapon=True,
+    )
+    result["preview"] = preview_motion(
+        context,
+        start_playback=start_playback,
+        build_review_helpers=False,
+    )
     return result
 
 
-def rebuild_body_solve(context):
+def rebuild_body_solve(context, *, exploratory=False):
     from . import find_armature
 
     settings = context.scene.daf_settings
@@ -1990,7 +2378,13 @@ def rebuild_body_solve(context):
     schedule = motion.control_frame_schedule(recipe, fps)
     recipe["contactFrame"] = int(schedule["CONTACT"])
     _stamp_action_contract(action, recipe, fps)
-    _bake_body(context, armature, action, recipe)
+    _bake_body(
+        context,
+        armature,
+        action,
+        recipe,
+        allow_unsafe_preview=exploratory,
+    )
     pose_health = motion.read_json(action, motion.MOTION_POSE_HEALTH_PROPERTY, "Motion Studio pose health")
     motion.stamp_motion_recipe(action, recipe)
     action["dsb_motion_bake_recipe_digest"] = motion.stable_digest(recipe)
@@ -2004,7 +2398,7 @@ def rebuild_body_solve(context):
     return {"action": action, "recipe": recipe, "validation": validation}
 
 
-def preview_motion(context, *, start_playback=True):
+def preview_motion(context, *, start_playback=True, build_review_helpers=True):
     from . import find_armature, validate_offensive_action
 
     action = current_action(context)
@@ -2018,13 +2412,65 @@ def preview_motion(context, *, start_playback=True):
     digest = validation_input_digest(armature, action, recipe)
     samples = sample_baked_weapon_path(context, armature, action, recipe)
     validation = motion.read_json(action, motion.MOTION_VALIDATION_PROPERTY, "Motion Studio validation")
-    build_helpers(armature, action, recipe, samples=samples, validation=validation)
+    if build_review_helpers:
+        build_helpers(
+            armature,
+            action,
+            recipe,
+            samples=samples,
+            validation=validation,
+            include_controls=False,
+        )
     result = animation_library.play_action(context, armature, action, start_playback=start_playback)
     action["dsb_offensive_previewed"] = True
     action["dsb_offensive_preview_count"] = int(action.get("dsb_offensive_preview_count", 0)) + 1
     action["dsb_motion_preview_digest"] = digest
-    context.scene.daf_settings.motion_validation_status = "PREVIEWED — validation still controls approval"
-    return {**result, "previewCount": int(action["dsb_offensive_preview_count"])}
+    validation_status = str((validation or {}).get("status", "MISSING"))
+    pose_health = motion.read_json(action, motion.MOTION_POSE_HEALTH_PROPERTY, "Motion Studio pose health")
+    pose_status = str((pose_health or {}).get("status", "MISSING"))
+    approval_ready = validation_status == "PASS" and pose_status == "PASS"
+    context.scene.daf_settings.motion_validation_status = (
+        "PASS · PREVIEWED — ready for approval"
+        if approval_ready
+        else f"PREVIEW ONLY · path {validation_status} · pose {pose_status} — approval blocked"
+    )
+    return {
+        **result,
+        "previewCount": int(action["dsb_offensive_preview_count"]),
+        "approvalReady": approval_ready,
+        "validationStatus": validation_status,
+        "poseStatus": pose_status,
+    }
+
+
+def bypass_record(action):
+    record = motion.read_json(action, MOTION_BYPASS_PROPERTY, "Motion Studio bypass approval")
+    if not isinstance(record, dict) or record.get("schema") != MOTION_BYPASS_SCHEMA:
+        return None
+    return record
+
+
+def bypass_is_current(context, action, *, armature=None):
+    """Return true only while the override still matches the reviewed preview."""
+
+    record = bypass_record(action)
+    recipe = motion.read_motion_recipe(action)
+    if record is None or recipe is None or not bool(record.get("exportAllowed", False)):
+        return False
+    try:
+        from . import find_armature
+
+        armature = armature or find_armature(context)
+        digest = validation_input_digest(armature, action, recipe)
+    except Exception:
+        return False
+    return bool(
+        action.get("dsb_motion_bypass_active", False)
+        and action.get("dsb_offensive_previewed", False)
+        and str(record.get("inputDigest", "")) == digest
+        and str(record.get("previewDigest", "")) == digest
+        and str(action.get("dsb_motion_preview_digest", "")) == digest
+    )
 
 
 def approval_errors(context, action, *, armature=None):
@@ -2038,6 +2484,8 @@ def approval_errors(context, action, *, armature=None):
         armature = armature or find_armature(context)
     except Exception as exc:
         return [str(exc)]
+    if bypass_is_current(context, action, armature=armature):
+        return []
     if str(action.get("dsb_motion_bake_recipe_digest", "")) != motion.stable_digest(recipe):
         errors.append("Motion Studio body solve is stale; rebuild and validate the FK Action.")
     report = motion.read_json(action, motion.MOTION_VALIDATION_PROPERTY, "Motion Studio validation")
@@ -2073,8 +2521,12 @@ def approval_errors(context, action, *, armature=None):
     pose_health = motion.read_json(action, motion.MOTION_POSE_HEALTH_PROPERTY, "Motion Studio pose health")
     if pose_health is None:
         errors.append("APPROVAL BLOCKED: Motion Studio pose-health proof is missing.")
-    elif pose_health.get("status") == "FAIL":
-        errors.append("APPROVAL BLOCKED: " + str((pose_health.get("errors") or ["pose-health validation failed."])[0]))
+    elif pose_health.get("status") != "PASS":
+        detail = (
+            (pose_health.get("errors") or pose_health.get("warnings"))
+            or ["pose-health validation did not pass."]
+        )[0]
+        errors.append("APPROVAL BLOCKED: " + str(detail))
     deform_names = {
         mapping_name
         for arm_side in ("l", "r")
@@ -2099,6 +2551,87 @@ def require_approval_ready(context, action, *, armature=None):
     return motion.read_json(action, motion.MOTION_VALIDATION_PROPERTY, "Motion Studio validation")
 
 
+def _intended_targeting_for_bypass(context, action, recipe, digest):
+    fps = context.scene.render.fps / max(context.scene.render.fps_base, 0.001)
+    schedule = motion.control_frame_schedule(recipe, fps)
+    accepted_validation = {
+        "status": "PASS",
+        "activeContact": True,
+        "contactTimeSeconds": max(
+            0.0,
+            (float(schedule["CONTACT"]) - float(schedule["START"])) / max(fps, 0.001),
+        ),
+    }
+    targeting = motion.targeting_metadata(recipe, accepted_validation)
+    targeting["technicalChecksBypassed"] = True
+    targeting["bypassInputDigest"] = digest
+    motion.stamp_json(action, motion.TARGETING_PROPERTY, targeting)
+    return targeting
+
+
+def bypass_failed_checks_and_save(context):
+    """Explicitly approve the exact current preview while preserving failures."""
+
+    from . import approve_draft_action, find_armature
+
+    action = current_action(context)
+    if not bool(action.get("dsb_draft", False)):
+        raise RuntimeError("BYPASS saves the current Motion Studio draft only.")
+    recipe = motion.read_motion_recipe(action)
+    if recipe is None:
+        raise RuntimeError("The current draft has no Motion Studio recipe.")
+    armature = find_armature(context)
+    digest = validation_input_digest(armature, action, recipe)
+    if not bool(action.get("dsb_offensive_previewed", False)):
+        raise RuntimeError("Preview this exact animation before bypassing its failed checks.")
+    if str(action.get("dsb_motion_preview_digest", "")) != digest:
+        raise RuntimeError("The preview is stale. Replay this exact animation before bypassing its failed checks.")
+    errors = approval_errors(context, action, armature=armature)
+    if not errors:
+        raise RuntimeError("This animation passes the normal checks; use APPROVE instead of BYPASS.")
+
+    validation = motion.read_json(action, motion.MOTION_VALIDATION_PROPERTY, "Motion Studio validation") or {}
+    pose_health = motion.read_json(action, motion.MOTION_POSE_HEALTH_PROPERTY, "Motion Studio pose health") or {}
+    record = {
+        "schema": MOTION_BYPASS_SCHEMA,
+        "acceptedAtUtc": datetime.now(timezone.utc).isoformat(),
+        "decision": "USER_EXPLICIT_BYPASS",
+        "exportAllowed": True,
+        "inputDigest": digest,
+        "previewDigest": digest,
+        "recipeDigest": motion.stable_digest(recipe),
+        "validationStatus": str(validation.get("status", "MISSING")),
+        "poseHealthStatus": str(pose_health.get("status", "MISSING")),
+        "bypassedErrors": [str(value) for value in errors],
+        "validationErrors": [str(value) for value in validation.get("errors", [])],
+        "validationWarnings": [str(value) for value in validation.get("warnings", [])],
+        "poseErrors": [str(value) for value in pose_health.get("errors", [])],
+        "poseWarnings": [str(value) for value in pose_health.get("warnings", [])],
+    }
+    motion.stamp_json(action, MOTION_BYPASS_PROPERTY, record)
+    action["dsb_motion_bypass_active"] = True
+    action["dsb_motion_approval_mode"] = "USER_EXPLICIT_BYPASS"
+
+    # A failed path does not normally produce runtime targeting metadata. The
+    # user's override accepts the authored target/contact timing, so stamp that
+    # intended launch relationship explicitly for game export.
+    targeting = motion.read_json(action, motion.TARGETING_PROPERTY, "Offensive targeting metadata")
+    if targeting is None or motion.validate_targeting_metadata(targeting):
+        targeting = _intended_targeting_for_bypass(context, action, recipe, digest)
+
+    approved = approve_draft_action(
+        context,
+        recipe["actionKind"],
+        bypass_motion_checks=True,
+    )
+    record["approvedAction"] = approved.name
+    motion.stamp_json(approved, MOTION_BYPASS_PROPERTY, record)
+    approved["dsb_motion_bypass_active"] = True
+    approved["dsb_motion_approval_mode"] = "USER_EXPLICIT_BYPASS"
+    on_action_approved(approved)
+    return approved, record
+
+
 def validated_targeting_record(context, action, *, require_current=True, armature=None):
     recipe = motion.read_motion_recipe(action)
     if recipe is None:
@@ -2107,6 +2640,13 @@ def validated_targeting_record(context, action, *, require_current=True, armatur
         require_approval_ready(context, action, armature=armature)
     record = motion.read_json(action, motion.TARGETING_PROPERTY, "Offensive targeting metadata")
     errors = motion.validate_targeting_metadata(record or {})
+    if errors and bypass_is_current(context, action, armature=armature):
+        from . import find_armature
+
+        armature = armature or find_armature(context)
+        digest = validation_input_digest(armature, action, recipe)
+        record = _intended_targeting_for_bypass(context, action, recipe, digest)
+        errors = motion.validate_targeting_metadata(record)
     if errors:
         raise ValueError("Invalid offensive targeting metadata: " + " ".join(errors))
     return deepcopy(record)
@@ -2119,8 +2659,10 @@ def on_action_approved(action):
     _store_session(action, recipe)
     for helper in _owned_objects():
         helper["dsb_motion_studio_action"] = action.name
-    action["dsb_motion_geometry_valid"] = True
+    validation = motion.read_json(action, motion.MOTION_VALIDATION_PROPERTY, "Motion Studio validation") or {}
+    action["dsb_motion_geometry_valid"] = str(validation.get("status", "")) == "PASS"
     action["dsb_motion_artist_approved"] = True
+    action["dsb_motion_checks_bypassed"] = bool(bypass_record(action))
     return action
 
 
@@ -2152,6 +2694,8 @@ def promote_current_master(context, label=""):
 
 
 def jump_key_pose(context, pose):
+    from . import find_armature
+
     action = current_action(context)
     recipe = motion.read_motion_recipe(action)
     schedule = motion.control_frame_schedule(
@@ -2166,6 +2710,27 @@ def jump_key_pose(context, pose):
         settings.motion_show_target = True
         settings.motion_show_trail = True
         settings.motion_show_plane = True
+        review_roles = {
+            "TARGET_ROOT",
+            "STRIKE_GEOMETRY",
+            "TRAIL_ACTIVE",
+            "TRAIL_MARKER_CONTACT",
+        }
+        if not any(
+            str(obj.get("dsb_motion_studio_role", "")) in review_roles
+            for obj in _owned_objects()
+        ):
+            armature = find_armature(context)
+            samples = sample_baked_weapon_path(context, armature, action, recipe)
+            validation = motion.read_json(action, motion.MOTION_VALIDATION_PROPERTY, "Motion Studio validation")
+            build_helpers(
+                armature,
+                action,
+                recipe,
+                samples=samples,
+                validation=validation,
+                include_controls=False,
+            )
         motion_display_updated(settings, context)
     context.scene.frame_set(int(schedule[key]))
     return int(schedule[key])
@@ -2185,9 +2750,19 @@ def recover_sessions():
     if armature is None:
         return None
     if not _owned_objects():
-        samples = sample_baked_weapon_path(bpy.context, armature, action, recipe)
-        validation = motion.read_json(action, motion.MOTION_VALIDATION_PROPERTY, "Motion Studio validation")
-        build_helpers(armature, action, recipe, samples=samples, validation=validation)
+        if str(state.get("helperMode", "REVIEW")) == "WEAPON_PREVIEW":
+            build_preview_weapon(armature, action, recipe)
+        else:
+            samples = sample_baked_weapon_path(bpy.context, armature, action, recipe)
+            validation = motion.read_json(action, motion.MOTION_VALIDATION_PROPERTY, "Motion Studio validation")
+            build_helpers(
+                armature,
+                action,
+                recipe,
+                samples=samples,
+                validation=validation,
+                include_controls=bool(state.get("editableControlsRequired", True)),
+            )
     settings = getattr(bpy.context.scene, "daf_settings", None)
     if settings is not None:
         _cache_pose_health(
@@ -2272,9 +2847,12 @@ class DAF_OT_motion_studio_build_from_master(_MotionOperator):
 
     def execute(self, context):
         try:
-            result = build_from_master(context)
+            result = build_from_master(context, exploratory=True)
             report = result["validation"]
-            self.report({"INFO" if report["status"] == "PASS" else "WARNING"}, f"Built {result['action'].name}; baked-path {report['status']}.")
+            self.report(
+                {"INFO" if report["status"] == "PASS" else "WARNING"},
+                f"Built {result['action'].name}; baked-path {report['status']}. Preview remains available.",
+            )
             return {"FINISHED"}
         except Exception as exc:
             return self.failed(exc)
@@ -2282,8 +2860,8 @@ class DAF_OT_motion_studio_build_from_master(_MotionOperator):
 
 class DAF_OT_motion_studio_refresh_vip(_MotionOperator):
     bl_idname = "daf.motion_studio_refresh_vip"
-    bl_label = "Refresh VIP Attack"
-    bl_description = "Apply the simple aim and motion macros, rebuild safely, and preview the updated attack"
+    bl_label = "Generate and Preview Attack"
+    bl_description = "Bake every live slider and meter, replace the visible weapon proxy, and preview even when approval checks fail"
     bl_options = {"REGISTER", "UNDO"}
 
     def execute(self, context):
@@ -2291,7 +2869,12 @@ class DAF_OT_motion_studio_refresh_vip(_MotionOperator):
             result = refresh_vip_attack(context, start_playback=True)
             report = result["validation"]
             level = "INFO" if report["status"] == "PASS" else "WARNING"
-            self.report({level}, f"Refreshed {result['action'].name}; baked-path {report['status']}.")
+            self.report(
+                {level},
+                f"Previewing {result['action'].name}; path {report['status']}, "
+                f"pose {result['preview']['poseStatus']}"
+                + (" — ready to approve." if result["preview"]["approvalReady"] else " — preview only; approval blocked."),
+            )
             return {"FINISHED"}
         except Exception as exc:
             return self.failed(exc)
@@ -2305,7 +2888,7 @@ class DAF_OT_motion_studio_rebuild_body_solve(_MotionOperator):
 
     def execute(self, context):
         try:
-            result = rebuild_body_solve(context)
+            result = rebuild_body_solve(context, exploratory=True)
             self.report({"INFO" if result["validation"]["status"] == "PASS" else "WARNING"}, f"Rebuilt {result['action'].name}; baked-path {result['validation']['status']}.")
             return {"FINISHED"}
         except Exception as exc:
@@ -2349,13 +2932,17 @@ class DAF_OT_motion_studio_validate_baked_path(_MotionOperator):
 class DAF_OT_motion_studio_preview(_MotionOperator):
     bl_idname = "daf.motion_studio_preview"
     bl_label = "Preview Motion Studio Attack"
-    bl_description = "Play the baked FK attack with target, weapon proxy, strike geometry, and phase trail visible"
+    bl_description = "Play the baked FK attack; CONTACT can reveal optional target and trail review geometry"
     bl_options = {"REGISTER"}
 
     def execute(self, context):
         try:
-            result = preview_motion(context, start_playback=True)
-            self.report({"INFO"}, f"Previewing {result['action']} with authored target and weapon trail.")
+            result = preview_motion(
+                context,
+                start_playback=True,
+                build_review_helpers=False,
+            )
+            self.report({"INFO"}, f"Previewing {result['action']}.")
             return {"FINISHED"}
         except Exception as exc:
             return self.failed(exc)
@@ -2377,6 +2964,28 @@ class DAF_OT_motion_studio_approve(_MotionOperator):
             approved = approve_draft_action(context, recipe["actionKind"])
             on_action_approved(approved)
             self.report({"INFO"}, f"Approved {approved.name}; target path remains authored and non-homing.")
+            return {"FINISHED"}
+        except Exception as exc:
+            return self.failed(exc)
+
+
+class DAF_OT_motion_studio_bypass_and_save(_MotionOperator):
+    bl_idname = "daf.motion_studio_bypass_and_save"
+    bl_label = "Bypass Failed Checks and Save"
+    bl_description = (
+        "Explicitly accept the exact current preview despite failed Motion Studio checks, "
+        "record the bypassed failures, and allow game export"
+    )
+    bl_options = {"REGISTER", "UNDO"}
+
+    def execute(self, context):
+        try:
+            approved, record = bypass_failed_checks_and_save(context)
+            self.report(
+                {"WARNING"},
+                f"Saved {approved.name} with explicit bypass of "
+                f"{len(record['bypassedErrors'])} failed check(s).",
+            )
             return {"FINISHED"}
         except Exception as exc:
             return self.failed(exc)
@@ -2441,6 +3050,7 @@ CLASSES = (
     DAF_OT_motion_studio_validate_baked_path,
     DAF_OT_motion_studio_preview,
     DAF_OT_motion_studio_approve,
+    DAF_OT_motion_studio_bypass_and_save,
     DAF_OT_motion_studio_promote_master,
     DAF_OT_motion_studio_repair_helpers,
     DAF_OT_motion_studio_remove_helpers,
@@ -2452,6 +3062,9 @@ __all__ = (
     "MOTION_STUDIO_COLLECTION",
     "MOTION_STUDIO_HELPER_ROLE",
     "approval_errors",
+    "bypass_failed_checks_and_save",
+    "bypass_is_current",
+    "bypass_record",
     "auto_fit_recipe",
     "available_masters",
     "build_from_master",

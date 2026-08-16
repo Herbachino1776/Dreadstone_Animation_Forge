@@ -9,7 +9,44 @@ from bpy.types import Operator
 def _armature(context):
     from ... import find_armature
 
+    runtime = context.scene.objects.get("DSB_DAMAGE_RIG")
+    if runtime is not None and runtime.type == 'ARMATURE':
+        return runtime
     return find_armature(context)
+
+
+def _authored_attack_module():
+    from ... import authored_attack_library
+
+    return authored_attack_library
+
+
+def _is_authored_attack(action, module=None):
+    if action is None:
+        return False
+    module = module or _authored_attack_module()
+    property_name = str(
+        getattr(
+            module,
+            "AUTHORED_ATTACK_PROPERTY",
+            "dsb_authored_attack_json",
+        )
+    )
+    return bool(action.get(property_name, ""))
+
+
+def _require_authored_attack_valid(context, armature, action, module=None):
+    module = module or _authored_attack_module()
+    report = module.validate_action(context, armature, action)
+    if report is False:
+        raise RuntimeError("The authored attack is not exportable.")
+    if isinstance(report, dict) and str(report.get("status", "PASS")) == "FAIL":
+        errors = [str(value) for value in report.get("errors", ()) if str(value)]
+        raise RuntimeError(
+            "Authored attack validation failed: "
+            + ("; ".join(errors[:4]) if errors else "the Action is not exportable.")
+        )
+    return report
 
 
 class _AnimationLibraryOperator(Operator):
@@ -19,6 +56,10 @@ class _AnimationLibraryOperator(Operator):
         settings = getattr(scene, "daf_settings", None)
         if settings is not None:
             settings.animation_library_status = f"ERROR — {exc}"
+            if str(getattr(self, "bl_idname", "")).startswith(
+                "daf.authored_attack_"
+            ):
+                settings.authored_attack_status = f"ERROR — {exc}"
         self.report({"ERROR"}, str(exc))
         return {"CANCELLED"}
 
@@ -172,7 +213,21 @@ class DAF_OT_animation_library_finalize_draft(
             ):
                 raise RuntimeError("Select a current animation draft first.")
             kind = animation_library.infer_action_kind(draft)
-            action = approve_draft_action(context, kind)
+            authored = _authored_attack_module()
+            if _is_authored_attack(draft, authored):
+                _require_authored_attack_valid(
+                    context,
+                    armature,
+                    draft,
+                    authored,
+                )
+                action = authored.finalize_draft(
+                    context,
+                    armature,
+                    draft,
+                )
+            else:
+                action = approve_draft_action(context, kind)
             animation_library.select_action(settings, action)
             settings.animation_library_status = (
                 f"SAVED NEW — {action.name}"
@@ -200,9 +255,20 @@ class DAF_OT_animation_library_save(_AnimationLibraryOperator):
 
         self._context = context
         try:
+            armature = _armature(context)
+            settings = context.scene.daf_settings
+            draft = context.blend_data.actions.get(
+                str(settings.animation_library_edit_draft)
+            )
+            if draft is not None and _is_authored_attack(draft):
+                _require_authored_attack_valid(
+                    context,
+                    armature,
+                    draft,
+                )
             result = animation_library.save_edit(
                 context,
-                _armature(context),
+                armature,
             )
             self.report(
                 {"INFO"},
@@ -299,6 +365,12 @@ class DAF_OT_animation_library_export(_AnimationLibraryOperator):
             )
             if action is None:
                 raise RuntimeError("Select a saved animation first.")
+            if _is_authored_attack(action):
+                _require_authored_attack_valid(
+                    context,
+                    armature,
+                    action,
+                )
             result = animation_library.export_action_clip(
                 context,
                 armature,
@@ -352,6 +424,121 @@ class DAF_OT_animation_library_import(_AnimationLibraryOperator):
             return self.failed(exc)
 
 
+class DAF_OT_authored_attack_select(_AnimationLibraryOperator):
+    bl_idname = "daf.authored_attack_select"
+    bl_label = "Select Authored Attack"
+    bl_description = "Select an authored body-animation base without changing the character"
+    bl_options = {"REGISTER"}
+
+    clip_id: StringProperty()
+
+    def execute(self, context):
+        self._context = context
+        try:
+            if not str(self.clip_id):
+                raise RuntimeError("The authored attack has no stable clip ID.")
+            settings = context.scene.daf_settings
+            settings.authored_attack_active_clip_id = str(self.clip_id)
+            settings.authored_attack_status = f"SELECTED — {self.clip_id}"
+            return {"FINISHED"}
+        except Exception as exc:
+            return self.failed(exc)
+
+
+class DAF_OT_authored_attack_refresh(_AnimationLibraryOperator):
+    bl_idname = "daf.authored_attack_refresh"
+    bl_label = "Refresh Authored Attack Library"
+    bl_description = "Rescan the configured library root while retaining the built-in authored bases"
+    bl_options = {"REGISTER"}
+
+    def execute(self, context):
+        self._context = context
+        try:
+            _authored_attack_module().refresh_library(context)
+            context.scene.daf_settings.authored_attack_status = (
+                "LIBRARY REFRESHED — SELECT A BASE"
+            )
+            self.report({"INFO"}, "Refreshed the authored attack library.")
+            return {"FINISHED"}
+        except Exception as exc:
+            return self.failed(exc)
+
+
+class DAF_OT_authored_attack_preview(_AnimationLibraryOperator):
+    bl_idname = "daf.authored_attack_preview"
+    bl_label = "Preview Authored Attack"
+    bl_description = "Bake the selected authored base to ordinary FK curves and preview it on this character"
+    bl_options = {"REGISTER", "UNDO"}
+
+    def execute(self, context):
+        self._context = context
+        try:
+            settings = context.scene.daf_settings
+            if not str(settings.authored_attack_active_clip_id):
+                raise RuntimeError("Select an authored attack base first.")
+            action = _authored_attack_module().preview_selected(context)
+            root_scale = float(action.get("dsb_authored_root_motion_scale", 1.0))
+            root_note = (
+                f" · ROOT TRAVEL {root_scale * 100.0:.0f}% (PLANT-FIT)"
+                if root_scale < 0.999
+                else ""
+            )
+            plant_drop = float(action.get("dsb_authored_foot_plant_drop_max", 0.0))
+            plant_note = (
+                f" · PLANT FIT {plant_drop * 1000.0:.0f} mm"
+                if plant_drop > 0.0005
+                else ""
+            )
+            settings.authored_attack_status = (
+                "PREVIEWING — " + str(settings.authored_attack_active_clip_id)
+                + root_note + plant_note
+            )
+            self.report({"INFO"}, "Previewing the authored attack on the character.")
+            return {"FINISHED"}
+        except Exception as exc:
+            return self.failed(exc)
+
+
+class DAF_OT_authored_attack_accept_draft(_AnimationLibraryOperator):
+    bl_idname = "daf.authored_attack_accept_draft"
+    bl_label = "Accept Authored Attack as Draft"
+    bl_description = "Keep the reviewed FK animation as a normal editable Forge draft"
+    bl_options = {"REGISTER", "UNDO"}
+
+    def execute(self, context):
+        from ... import animation_library
+
+        self._context = context
+        try:
+            action = _authored_attack_module().accept_preview_as_draft(context)
+            if action is None:
+                raise RuntimeError("The authored preview did not produce a draft Action.")
+            animation_library.select_action(context.scene.daf_settings, action)
+            context.scene.daf_settings.authored_attack_status = (
+                f"ACCEPTED AS DRAFT — {action.name}"
+            )
+            self.report({"INFO"}, f"Accepted authored draft: {action.name}.")
+            return {"FINISHED"}
+        except Exception as exc:
+            return self.failed(exc)
+
+
+class DAF_OT_authored_attack_clear_preview(_AnimationLibraryOperator):
+    bl_idname = "daf.authored_attack_clear_preview"
+    bl_label = "Clear Authored Attack Preview"
+    bl_description = "Remove only transient authored preview Actions, helpers, and weapon proxies"
+    bl_options = {"REGISTER", "UNDO"}
+
+    def execute(self, context):
+        self._context = context
+        try:
+            _authored_attack_module().clear_preview(context)
+            self.report({"INFO"}, "Cleared the transient authored-attack preview.")
+            return {"FINISHED"}
+        except Exception as exc:
+            return self.failed(exc)
+
+
 CLASSES = (
     DAF_OT_animation_library_select,
     DAF_OT_animation_library_play,
@@ -362,4 +549,9 @@ CLASSES = (
     DAF_OT_animation_library_delete,
     DAF_OT_animation_library_export,
     DAF_OT_animation_library_import,
+    DAF_OT_authored_attack_select,
+    DAF_OT_authored_attack_refresh,
+    DAF_OT_authored_attack_preview,
+    DAF_OT_authored_attack_accept_draft,
+    DAF_OT_authored_attack_clear_preview,
 )
