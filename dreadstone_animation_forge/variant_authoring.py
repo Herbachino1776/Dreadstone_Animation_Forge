@@ -385,6 +385,39 @@ def _finished_damage_rig():
     return rig
 
 
+def _validated_finished_damage_body(context):
+    """Normalize and validate the finished body before comparing its family proof."""
+
+    from . import damage_authoring
+
+    try:
+        authoring_state = damage_authoring._load_state()
+    except RuntimeError as exc:
+        if "No v3.8 damage authoring asset exists" not in str(exc):
+            raise
+        # Preserve the pre-6.0 synthetic/legacy finished-rig path. Ordinary
+        # production files have authoring state and receive full normalization.
+        rig = _finished_damage_rig()
+        return (
+            rig,
+            finished_damage_body_fingerprint(rig),
+            {"status": "UNAVAILABLE", "errors": []},
+            None,
+        )
+    damage_authoring.restore_finished_source_transform_proof(context)
+    validation = damage_authoring._validate_authoring(
+        authoring_state,
+        context.scene.daf_settings.damage_authoring_gap_tolerance,
+    )
+    if validation.get("status") != "PASS":
+        raise RuntimeError(
+            "Complete Damage validation failed before the look-family technical check: "
+            + "; ".join(validation.get("errors", [])[:4])
+        )
+    rig = _finished_damage_rig()
+    return rig, finished_damage_body_fingerprint(rig), validation, authoring_state
+
+
 def _rounded_matrix(matrix):
     return [round(float(value), 7) for row in matrix for value in row]
 
@@ -854,21 +887,12 @@ def adopt_finished_damage_as_texture_family(context):
 
     if load_state(context.scene) is not None:
         raise RuntimeError("This Blend file already owns a Character Variant Family.")
-    # Older resized authoring files can retain the correct stored proof while
-    # their hidden original source was later reset. Repair that exact proof
-    # before locking the finished-body fingerprint so setup and export observe
-    # the same validated technical state.
-    from . import damage_authoring
-
-    try:
-        finished_authoring_state = damage_authoring._load_state()
-    except RuntimeError:
-        finished_authoring_state = None
-    if finished_authoring_state is not None:
-        damage_authoring.restore_finished_source_transform_proof(context)
-    rig = _finished_damage_rig()
+    # Normalize every resized generated piece through the same Complete Damage
+    # validation used by export before locking the family fingerprint.
+    rig, fingerprint, _validation, _authoring_state = (
+        _validated_finished_damage_body(context)
+    )
     contract = _rig_contract(rig)
-    fingerprint = finished_damage_body_fingerprint(rig)
     settings = context.scene.daf_settings
     family_display, display, export_identity, variant_id = _texture_names(
         settings, base=True
@@ -909,9 +933,10 @@ def create_forge_texture_variant(context):
         raise RuntimeError(
             "This family is Skin & Bones-owned. Add an approved compatible Skin & Bones GLB instead."
         )
-    rig = _finished_damage_rig()
+    rig, fingerprint, _validation, _authoring_state = (
+        _validated_finished_damage_body(context)
+    )
     contract = _rig_contract(rig)
-    fingerprint = finished_damage_body_fingerprint(rig)
     settings = context.scene.daf_settings
     _family_display, display, export_identity, variant_id = _texture_names(settings)
     active = model.variant_by_id(state)
@@ -949,8 +974,9 @@ def approve_forge_texture_variant(context):
     state = load_state(context.scene, required=True)
     if state["familySource"] != model.FAMILY_SOURCE_FORGE_TEXTURE:
         raise RuntimeError("Skin & Bones appearances must be approved in Skin & Bones.")
-    rig = _finished_damage_rig()
-    current_technical = finished_damage_body_fingerprint(rig)
+    rig, current_technical, _validation, _authoring_state = (
+        _validated_finished_damage_body(context)
+    )
     if current_technical != state["technicalBodyFingerprint"]:
         raise RuntimeError(
             "The finished Damage Rig/body changed after this texture family was started; "
@@ -980,6 +1006,73 @@ def approve_forge_texture_variant(context):
         f"APPROVED LOOK — {active['displayName']}"
     )
     return model.variant_by_id(state)
+
+
+def _texture_family_binding_errors(state):
+    current = {
+        obj.name: len(obj.data.materials) for obj in _appearance_body_objects()
+    }
+    errors = []
+    for variant in state.get("variants", []):
+        appearance = variant.get("appearance", {})
+        bindings = appearance.get("runtimeMaterialSlots", [])
+        recorded = {
+            str(binding.get("object", "")): len(binding.get("materials", []))
+            for binding in bindings
+        }
+        if recorded != current:
+            errors.append(
+                f"Look {variant.get('displayName', variant.get('variantId', ''))!r} no longer matches the finished body's object/material-slot layout."
+            )
+    return errors
+
+
+def rebaseline_finished_texture_family(context):
+    """Explicitly accept a validated technical-body change for native looks."""
+
+    state = load_state(context.scene, required=True)
+    if state["familySource"] != model.FAMILY_SOURCE_FORGE_TEXTURE:
+        raise RuntimeError(
+            "Imported Skin & Bones families cannot be rebaselined inside Animation Forge."
+        )
+    if str(context.scene.get(SBF_PROJECTION_VISIBILITY_PROPERTY, "")):
+        raise RuntimeError(
+            "Return to the finished look before accepting a changed technical body."
+        )
+    from . import attachment_sockets
+
+    rig, fingerprint, _validation, authoring_state = (
+        _validated_finished_damage_body(context)
+    )
+    if authoring_state is None:
+        raise RuntimeError(
+            "A stored Complete Damage authoring asset is required before accepting a changed body."
+        )
+    attachment_sockets.runtime_socket_contract(
+        authoring_state,
+        runtime_rig=rig,
+    )
+    binding_errors = _texture_family_binding_errors(state)
+    if binding_errors:
+        raise RuntimeError(" ".join(binding_errors[:4]))
+    try:
+        state = model.rebaseline_forge_texture_family(
+            state,
+            fingerprint,
+            _rig_contract(rig),
+            datetime.now(timezone.utc).isoformat(),
+        )
+    except ValueError as exc:
+        raise RuntimeError(str(exc)) from exc
+    _stamp_variant_objects(state)
+    store_state(state, context.scene)
+    switch_variant(state["activeVariantId"], context.scene)
+    active = model.variant_by_id(state)
+    context.scene.daf_settings.variant_family_status = (
+        f"BODY BASELINE UPDATED — inspect and save {active['displayName']}; "
+        "other looks also require review"
+    )
+    return state
 
 
 def edit_forge_texture_variant(context):
@@ -1494,20 +1587,147 @@ def enter_skin_and_bones_projection(context):
     return target
 
 
-def _call_skin_and_bones_operator(context, name, label):
-    enter_skin_and_bones_projection(context)
-    try:
-        operation = getattr(bpy.ops.sbf, name)
-        result = operation()
-    except (AttributeError, RuntimeError) as exc:
+def _call_skin_and_bones_operator(context, name, label, *, preparation=None):
+    target = enter_skin_and_bones_projection(context)
+    settings = getattr(context.scene, "sbf_settings", None)
+
+    def execute():
+        try:
+            operation = getattr(bpy.ops.sbf, name)
+            result = operation()
+        except (AttributeError, RuntimeError) as exc:
+            raise RuntimeError(
+                f"Skin & Bones cannot run {label}. Enable the current Skin & Bones add-on and try again."
+            ) from exc
+        if "FINISHED" not in result:
+            detail = str(getattr(settings, "status_message", "")).strip()
+            raise RuntimeError(detail or f"Skin & Bones did not finish {label}.")
+
+    if preparation is None:
+        execute()
+    else:
+        with preparation(settings, target):
+            execute()
+    return settings
+
+
+@contextmanager
+def _stable_skin_and_bones_bake_uv(settings, target):
+    """Make S&B bake into the immutable UV atlas already used by Damage meshes."""
+
+    if settings is None or target is None or target.type != "MESH":
+        raise RuntimeError("Skin & Bones projection settings/target are unavailable.")
+    locked_uv = str(target.get("sbf_repair_uv", "")).strip() or "SBF_BaseColorUV"
+    layer = target.data.uv_layers.get(locked_uv)
+    if layer is None:
         raise RuntimeError(
-            f"Skin & Bones cannot run {label}. Enable the current Skin & Bones add-on and try again."
-        ) from exc
-    if "FINISHED" not in result:
-        settings = getattr(context.scene, "sbf_settings", None)
-        detail = str(getattr(settings, "status_message", "")).strip()
-        raise RuntimeError(detail or f"Skin & Bones did not finish {label}.")
-    return getattr(context.scene, "sbf_settings", None)
+            f"Projection target {target.name} has no stable {locked_uv} UV; rebuild the finished character before making looks."
+        )
+    missing = [
+        obj.name
+        for obj in _appearance_body_objects()
+        if obj.data.uv_layers.get(locked_uv) is None
+    ]
+    if missing:
+        raise RuntimeError(
+            f"Finished Damage body is missing stable {locked_uv} UV on: "
+            + ", ".join(missing[:6])
+        )
+    previous_target_uv = str(getattr(settings, "target_uv", ""))
+    previous_generate = bool(getattr(settings, "generate_bake_uv", False))
+    previous_active_index = int(target.data.uv_layers.active_index)
+    uv_snapshot = [
+        {
+            "name": value.name,
+            "activeRender": bool(value.active_render),
+            "coordinates": [tuple(map(float, item.uv)) for item in value.data],
+        }
+        for value in target.data.uv_layers
+    ]
+    previous_render = {
+        record["name"]: bool(record["activeRender"]) for record in uv_snapshot
+    }
+    material = getattr(settings, "production_material", None)
+    if isinstance(material, str):
+        material = bpy.data.materials.get(material)
+    uv_nodes = []
+    tree = getattr(material, "node_tree", None)
+    if tree is not None:
+        uv_nodes = [
+            (node, str(node.uv_map))
+            for node in tree.nodes
+            if getattr(node, "type", "") == "UVMAP"
+        ]
+    operation_error = None
+    uv_changed = False
+    recovery_error = None
+    try:
+        settings.target_uv = locked_uv
+        settings.generate_bake_uv = False
+        try:
+            yield locked_uv
+        except Exception as exc:
+            operation_error = exc
+        current = [
+            {
+                "name": value.name,
+                "coordinates": [tuple(map(float, item.uv)) for item in value.data],
+            }
+            for value in target.data.uv_layers
+        ]
+        expected = [
+            {
+                "name": record["name"],
+                "coordinates": record["coordinates"],
+            }
+            for record in uv_snapshot
+        ]
+        uv_changed = current != expected
+        if uv_changed:
+            try:
+                layers = target.data.uv_layers
+                while layers:
+                    layers.remove(layers[-1])
+                for record in uv_snapshot:
+                    restored = layers.new(name=record["name"])
+                    if len(restored.data) != len(record["coordinates"]):
+                        raise RuntimeError(
+                            f"restored layer {record['name']} has an unexpected loop count"
+                        )
+                    for item, uv in zip(restored.data, record["coordinates"]):
+                        item.uv = uv
+                    restored.active_render = bool(record["activeRender"])
+            except Exception as exc:
+                recovery_error = exc
+    finally:
+        try:
+            settings.target_uv = previous_target_uv
+            settings.generate_bake_uv = previous_generate
+        except (AttributeError, TypeError):
+            pass
+        if target.data.uv_layers:
+            target.data.uv_layers.active_index = min(
+                previous_active_index,
+                len(target.data.uv_layers) - 1,
+            )
+            for value in target.data.uv_layers:
+                if value.name in previous_render:
+                    value.active_render = previous_render[value.name]
+        for node, uv_map in uv_nodes:
+            try:
+                node.uv_map = uv_map
+            except ReferenceError:
+                pass
+    if recovery_error is not None:
+        raise RuntimeError(
+            f"Skin & Bones changed the locked {locked_uv} UV during bake and automatic restoration failed: {recovery_error}"
+        ) from (operation_error or recovery_error)
+    if uv_changed:
+        raise RuntimeError(
+            f"Skin & Bones changed the locked {locked_uv} UV during bake; all UV layers were restored and the look was not applied."
+        ) from operation_error
+    if operation_error is not None:
+        raise operation_error
 
 
 def build_skin_and_bones_projection_preview(context):
@@ -1519,7 +1739,12 @@ def build_skin_and_bones_projection_preview(context):
 
 
 def bake_skin_and_bones_projection(context):
-    settings = _call_skin_and_bones_operator(context, "bake_final", "final texture bake")
+    settings = _call_skin_and_bones_operator(
+        context,
+        "bake_final",
+        "final texture bake",
+        preparation=_stable_skin_and_bones_bake_uv,
+    )
     context.scene.daf_settings.variant_family_status = (
         "SKIN & BONES BAKE READY — repair there if needed, then apply the final texture to this look"
     )
@@ -2614,8 +2839,10 @@ def export_context(context, settings, state):
                     "The active appearance canonical rig/coordinate contract changed after family ingest."
                 )
     else:
-        rig = _finished_damage_rig()
-        if finished_damage_body_fingerprint(rig) != family["technicalBodyFingerprint"]:
+        rig, current_technical, _validation, _authoring_state = (
+            _validated_finished_damage_body(context)
+        )
+        if current_technical != family["technicalBodyFingerprint"]:
             raise RuntimeError(
                 "The finished Damage Rig/body changed after the texture family was started."
             )
@@ -2880,6 +3107,30 @@ class DAF_OT_approve_forge_texture_variant(_VariantOperator):
         try:
             variant = approve_forge_texture_variant(context)
             self.report({"INFO"}, f"Approved texture look {variant['displayName']}.")
+            return {"FINISHED"}
+        except Exception as exc:
+            return self.failed(context, exc)
+
+
+class DAF_OT_rebaseline_finished_texture_family(_VariantOperator):
+    bl_idname = "daf.rebaseline_finished_texture_family"
+    bl_label = "Validate and Accept Current Body"
+    bl_description = (
+        "Validate and adopt an intentional finished-body change while preserving looks, "
+        "shared authoring, overrides, and sockets; every look must then be reviewed and saved"
+    )
+    bl_options = {"REGISTER", "UNDO"}
+
+    def invoke(self, context, event):
+        return context.window_manager.invoke_confirm(self, event)
+
+    def execute(self, context):
+        try:
+            state = rebaseline_finished_texture_family(context)
+            self.report(
+                {"WARNING"},
+                f"Accepted the current finished body for {state['displayName']}; save each look again after inspection.",
+            )
             return {"FINISHED"}
         except Exception as exc:
             return self.failed(context, exc)
@@ -3263,6 +3514,7 @@ CLASSES = (
     DAF_OT_start_finished_texture_family,
     DAF_OT_create_forge_texture_variant,
     DAF_OT_approve_forge_texture_variant,
+    DAF_OT_rebaseline_finished_texture_family,
     DAF_OT_edit_forge_texture_variant,
     DAF_OT_replace_forge_texture_image,
     DAF_OT_load_sbf_projection_folder,
@@ -3312,6 +3564,7 @@ __all__ = (
     "mark_action_for_family",
     "merge_progressive_collection",
     "recover_state",
+    "rebaseline_finished_texture_family",
     "replace_active_base_color_texture",
     "require_regular_action_edit_allowed",
     "store_state",

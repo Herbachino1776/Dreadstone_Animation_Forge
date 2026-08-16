@@ -1,5 +1,24 @@
 # Changelog
 
+## 6.0.1
+
+- Fixed native look Save/Export falsely reporting a changed technical body in
+  resized finished projects. Forge now restores the finished-source proof and
+  runs Complete Damage normalization before every setup, copy, approval, and
+  export fingerprint comparison, matching the body state that actually ships.
+- Fixed finished-look projection baking against a newly regenerated Skin &
+  Bones UV atlas. Forge now locks final baking to the existing
+  `SBF_BaseColorUV` used by every Damage body piece, refuses a missing atlas,
+  and verifies that S&B did not change its coordinates.
+- Added a confirmed **VALIDATE + ACCEPT CURRENT BODY** recovery when an artist
+  intentionally changes a finished native Damage body after starting a look
+  set. Full Damage, canonical-rig, socket, and appearance-binding validation
+  runs first; appearances and copy-on-write overrides are preserved, while all
+  looks return to Draft for deliberate visual review and resaving.
+- Added regression coverage for S&B One-Click Preview re-enabling UV generation,
+  stable-atlas final baking, rebaseline refusal, approval invalidation, and
+  preservation of shared/override records.
+
 ## 6.0.0
 
 - Published the finished-character look workflow at the requested 6.0 major

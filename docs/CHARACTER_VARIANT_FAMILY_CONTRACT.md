@@ -1,6 +1,6 @@
 # Character Variant Family contract
 
-Forge release: `6.0.0`
+Forge release: `6.0.1`
 
 Forge schema: `dreadstone.character_variant_family.v1`
 
@@ -108,7 +108,11 @@ visibility-only state; corrupt, mismatched, or unresolvable recovery data blocks
 before either rig is changed and is retained for safe recovery. Forge never
 clears the source rig's stored pose/Action, changes the scene frame, requires S&B
 family approval for this native finished-character route, or touches socket
-transforms. The manual alternative
+transforms. Final baking is locked to the existing `sbf_repair_uv` or
+`SBF_BaseColorUV` atlas present on both the S&B target and every finished Damage
+piece. Forge disables S&B bake-UV generation, preserves PBR UV-node bindings,
+and refuses or rolls back a bake that changes the locked coordinates. The
+manual alternative
 accepts exactly one final UV image and explicitly rejects a four-view source
 folder. Camera projection and calibration remain Skin & Bones work; Forge owns
 the saved finished look and resolved shipping character.
@@ -123,6 +127,19 @@ This route is intentionally for texture/material iteration on the same finished
 body. A Skin & Bones GLB cannot be joined to a native Forge texture family, and
 a native snapshot cannot be joined to an imported Skin & Bones family. Use the
 Skin & Bones route whenever the technical body itself must change.
+
+An intentional change to an already-finished native body requires the confirmed
+**VALIDATE + ACCEPT CURRENT BODY** recovery. It is unavailable to imported S&B
+families and refuses a changed canonical rig, invalid Complete Damage state,
+invalid sockets, an active projection transaction, or changed/missing runtime
+material-slot bindings. Success replaces the native family's technical
+fingerprint and preserves look images/materials plus every Action/Damage
+override. Because a technical change can affect texture mapping, every look's
+appearance approval is cleared and each look must be reviewed and saved again.
+Before setup, copy, approval, and export comparisons, Forge restores the stored
+finished-source transform proof and runs Complete Damage validation. This makes
+resized generated-piece transforms deterministic and prevents a save/reopen
+evaluation difference from masquerading as a technical-body change.
 
 ## Persisted Forge family state
 

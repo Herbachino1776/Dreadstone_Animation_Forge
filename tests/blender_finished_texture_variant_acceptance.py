@@ -8,7 +8,7 @@ import tempfile
 from pathlib import Path
 
 import bpy
-from bpy.props import PointerProperty
+from bpy.props import BoolProperty, PointerProperty, StringProperty
 from bpy.types import Operator, PropertyGroup
 
 
@@ -41,6 +41,7 @@ def make_runtime_body(rig, material):
         [(0, 1, 2, 3)],
     )
     mesh.uv_layers.new(name="UVMap")
+    mesh.uv_layers.new(name="SBF_BaseColorUV")
     body = bpy.data.objects.new("DSB_BODY_CORE", mesh)
     bpy.context.collection.objects.link(body)
     body["dsb_damage_role"] = "body_core"
@@ -57,6 +58,8 @@ def make_runtime_body(rig, material):
 class BridgeTestSBFSettings(PropertyGroup):
     target_object: PointerProperty(type=bpy.types.Object)
     repair_final_image: PointerProperty(type=bpy.types.Image)
+    generate_bake_uv: BoolProperty(default=False)
+    target_uv: StringProperty(default="SBF_BaseColorUV")
 
 
 class BridgeTestBestPreview(Operator):
@@ -64,6 +67,8 @@ class BridgeTestBestPreview(Operator):
     bl_label = "Bridge Test Best Preview"
 
     def execute(self, context):
+        context.scene.sbf_settings.generate_bake_uv = True
+        context.scene.sbf_settings.target_uv = "UVMap"
         target = context.scene.sbf_settings.target_object
         rig = variant_authoring._skin_and_bones_projection_armature(target)
         context.scene["bridge_test_preview_pose_position"] = (
@@ -77,11 +82,20 @@ class BridgeTestBakeFinal(Operator):
     bl_label = "Bridge Test Bake Final"
 
     def execute(self, context):
+        settings = context.scene.sbf_settings
+        context.scene["bridge_test_bake_generate_bake_uv"] = bool(
+            settings.generate_bake_uv
+        )
+        context.scene["bridge_test_bake_target_uv"] = str(settings.target_uv)
         target = context.scene.sbf_settings.target_object
         rig = variant_authoring._skin_and_bones_projection_armature(target)
         context.scene["bridge_test_bake_pose_position"] = (
             rig.data.pose_position if rig is not None else "UNRIGGED"
         )
+        if bool(context.scene.get("bridge_test_delete_locked_uv", False)):
+            layer = target.data.uv_layers.get("SBF_BaseColorUV")
+            if layer is not None:
+                target.data.uv_layers.remove(layer)
         return {"FINISHED"}
 
 
@@ -459,6 +473,10 @@ def main():
         == "POSE",
         "Projection re-entry overwrote the original pose snapshot.",
     )
+    require(
+        bpy.context.scene.sbf_settings.generate_bake_uv,
+        "The bridge fixture did not reproduce Skin & Bones re-enabling bake-UV generation.",
+    )
     projection_rig.data.pose_position = "POSE"
     variant_authoring.bake_skin_and_bones_projection(bpy.context)
     require(
@@ -471,6 +489,53 @@ def main():
         ]
         == "POSE",
         "Final bake overwrote the original pose snapshot.",
+    )
+    require(
+        not bpy.context.scene["bridge_test_bake_generate_bake_uv"],
+        "Forge let Skin & Bones regenerate the established Base Color bake UV.",
+    )
+    require(
+        bpy.context.scene["bridge_test_bake_target_uv"] == "SBF_BaseColorUV",
+        "Forge did not force the final bake onto the established SBF_BaseColorUV layer.",
+    )
+    require(
+        bpy.context.scene.sbf_settings.generate_bake_uv
+        and bpy.context.scene.sbf_settings.target_uv == "UVMap",
+        "Forge did not restore the caller's Skin & Bones bake-UV settings.",
+    )
+    uv_before_destructive_bake = [
+        (
+            layer.name,
+            tuple(tuple(float(value) for value in item.uv) for item in layer.data),
+        )
+        for layer in projection_target.data.uv_layers
+    ]
+    bpy.context.scene["bridge_test_delete_locked_uv"] = True
+    try:
+        variant_authoring.bake_skin_and_bones_projection(bpy.context)
+        raise RuntimeError("Destructive Skin & Bones UV mutation was not rejected.")
+    except RuntimeError as exc:
+        require(
+            "all UV layers were restored" in str(exc),
+            f"Destructive bake reported the wrong recovery result: {exc}",
+        )
+    finally:
+        del bpy.context.scene["bridge_test_delete_locked_uv"]
+    require(
+        uv_before_destructive_bake
+        == [
+            (
+                layer.name,
+                tuple(tuple(float(value) for value in item.uv) for item in layer.data),
+            )
+            for layer in projection_target.data.uv_layers
+        ],
+        "Forge did not exactly restore every projection UV layer after destructive bake mutation.",
+    )
+    require(
+        bpy.context.scene.sbf_settings.generate_bake_uv
+        and bpy.context.scene.sbf_settings.target_uv == "UVMap",
+        "Failed UV recovery did not restore the caller's Skin & Bones settings.",
     )
     recovery_output = Path(tempfile.mkdtemp(prefix="daf_projection_recovery_"))
     recovery_blend = recovery_output / "active_projection_recovery.blend"

@@ -1,6 +1,6 @@
 # Offensive Motion Studio contract
 
-Forge release: `6.0.0`
+Forge release: `6.0.1`
 
 ## Product law
 

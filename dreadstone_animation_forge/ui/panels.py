@@ -2238,6 +2238,22 @@ def _draw_character_variants(layout, context, settings):
             icon='EXPORT',
         )
 
+    family_status = str(settings.variant_family_status).lower()
+    body_changed = (
+        "technical-body change" in family_status
+        or "damage rig/body changed" in family_status
+    )
+    if native and body_changed:
+        changed = active_box.box()
+        changed.alert = True
+        changed.label(text="THE FINISHED BODY CHANGED", icon='ERROR')
+        changed.label(text="If intentional, accept it; every look will require review/save.")
+        changed.operator(
+            "daf.rebaseline_finished_texture_family",
+            text="VALIDATE + ACCEPT CURRENT BODY",
+            icon='CHECKMARK',
+        )
+
     add = box.box()
     if native:
         if appearance_state == "APPROVED":

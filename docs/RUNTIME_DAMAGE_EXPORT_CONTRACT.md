@@ -79,6 +79,13 @@ policy, and sparse shared-to-override mappings. Export is fully resolved; the
 runtime does not implement authoring inheritance. Batch export writes one
 independent GLB and sidecars per ready appearance.
 
+For a native finished-look family, Forge restores the stored finished-source
+proof and runs Complete Damage normalization before comparing the technical
+body fingerprint. A genuine mismatch still blocks export; resized detached
+pieces evaluating differently immediately after file reopen do not create a
+false mismatch. A deliberate accepted rebaseline makes all looks Draft, so no
+look exports until it has been visually reviewed and saved again.
+
 ## Completed-GLB validation
 
 Forge parses the emitted GLB JSON chunk. `runtimeSkeleton` fails when a source

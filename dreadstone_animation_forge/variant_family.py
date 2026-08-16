@@ -640,6 +640,52 @@ def begin_forge_texture_variant_edit(state, variant_id=None):
     return state
 
 
+def rebaseline_forge_texture_family(
+    state,
+    technical_body_fingerprint,
+    rig_contract,
+    rebased_at_utc,
+):
+    """Adopt an intentional finished-body change without losing look data."""
+
+    state = normalize_family(state)
+    if state["familySource"] != FAMILY_SOURCE_FORGE_TEXTURE:
+        raise ValueError(
+            "Only a Forge-owned finished texture family can adopt a changed finished body."
+        )
+    fingerprint = str(technical_body_fingerprint).strip()
+    if not _HEX_64.fullmatch(fingerprint):
+        raise ValueError(
+            "Finished Damage Rig technical-body fingerprint must be a SHA-256 hex value."
+        )
+    current_rig = canonical_rig_signature(rig_contract)
+    errors = rig_signature_errors(current_rig)
+    if errors:
+        raise ValueError(" ".join(errors))
+    if current_rig != canonical_rig_signature(state.get("canonicalRig", {})):
+        raise ValueError(
+            "Canonical Damage Rig/coordinate contract changed; start a new look family instead."
+        )
+    previous = str(state.get("technicalBodyFingerprint", ""))
+    if fingerprint == previous:
+        return state
+    state["technicalBodyFingerprint"] = fingerprint
+    state["revision"] = int(state.get("revision", 1)) + 1
+    state["lastTechnicalRebaseline"] = {
+        "previousTechnicalBodyFingerprint": previous,
+        "technicalBodyFingerprint": fingerprint,
+        "rebasedAtUtc": str(rebased_at_utc),
+    }
+    for variant in state["variants"]:
+        variant["appearanceApprovalState"] = "DRAFT"
+        variant["appearanceFingerprint"] = ""
+        variant["appearanceApprovedAtUtc"] = ""
+        variant["appearanceQuickFingerprint"] = ""
+        variant["appearanceRevision"] = int(variant.get("appearanceRevision", 0)) + 1
+        variant["forgeRevision"] = int(variant.get("forgeRevision", 1)) + 1
+    return state
+
+
 def variant_appearance_approved(state, variant_id=None, current_fingerprint=None):
     variant = variant_by_id(state, variant_id)
     approved = (
@@ -1039,6 +1085,7 @@ __all__ = tuple(
         "normalize_family",
         "progressive_clone_plan",
         "register_shared_actions",
+        "rebaseline_forge_texture_family",
         "remove_action_override",
         "remove_damage_key_override",
         "remove_progressive_site_override",

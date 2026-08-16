@@ -236,6 +236,118 @@ class FinishedRigTextureFamilyTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "cannot be joined"):
             VARIANTS.add_variant(self.state, handoff("sooted"), rig())
 
+    def test_explicit_rebaseline_rejects_wrong_source_fingerprint_and_rig(self):
+        with self.assertRaises(ValueError):
+            VARIANTS.rebaseline_forge_texture_family(
+                VARIANTS.new_family(handoff(), rig()),
+                "a" * 64,
+                rig(),
+                "2026-08-16T20:00:00+00:00",
+            )
+        with self.assertRaisesRegex(ValueError, "SHA-256"):
+            VARIANTS.rebaseline_forge_texture_family(
+                self.state,
+                "not-a-fingerprint",
+                rig(),
+                "2026-08-16T20:00:00+00:00",
+            )
+        incompatible_rig = rig()
+        incompatible_rig["forwardAxis"] = "-Y"
+        with self.assertRaisesRegex(ValueError, "forwardAxis"):
+            VARIANTS.rebaseline_forge_texture_family(
+                self.state,
+                "a" * 64,
+                incompatible_rig,
+                "2026-08-16T20:00:00+00:00",
+            )
+
+    def test_explicit_rebaseline_invalidates_only_appearance_approval(self):
+        state = VARIANTS.register_shared_actions(self.state, ["idle", "walk"])
+        state = VARIANTS.add_forge_texture_variant(
+            state,
+            "ash",
+            "Ash",
+            "cinderbound_warden_ash",
+            "d" * 64,
+            rig(),
+            appearance={"runtimeMaterialSlots": [{"object": "DSB_BODY_CORE"}]},
+        )
+        state = VARIANTS.approve_forge_texture_variant(
+            state,
+            "f" * 64,
+            "2026-08-15T13:00:00+00:00",
+            variant_id="ash",
+        )
+        state = VARIANTS.set_action_override(
+            state,
+            "walk",
+            "ash_walk",
+            "ash",
+        )
+        state = VARIANTS.set_damage_key_override(
+            state,
+            {
+                "sharedDamageKeyId": "head_light",
+                "overrideDamageKeyId": "head_light_ash",
+                "overrideName": "Head_Light__ash",
+            },
+            "ash",
+        )
+        state = VARIANTS.set_progressive_site_override(
+            state,
+            {
+                "sharedSiteGuid": "site_head",
+                "overrideSiteGuid": "site_head_ash",
+                "ownedDamageKeys": [],
+            },
+            "ash",
+        )
+        for variant in state["variants"]:
+            variant["appearanceQuickFingerprint"] = "1" * 64
+
+        before = copy.deepcopy(state)
+        rebased = VARIANTS.rebaseline_forge_texture_family(
+            state,
+            "a" * 64,
+            rig(),
+            "2026-08-16T20:00:00+00:00",
+        )
+
+        self.assertEqual("d" * 64, state["technicalBodyFingerprint"])
+        self.assertEqual("a" * 64, rebased["technicalBodyFingerprint"])
+        self.assertEqual(before["revision"] + 1, rebased["revision"])
+        self.assertEqual(before["canonicalRig"], rebased["canonicalRig"])
+        self.assertEqual(before["shared"], rebased["shared"])
+        self.assertEqual(
+            [variant["variantId"] for variant in before["variants"]],
+            [variant["variantId"] for variant in rebased["variants"]],
+        )
+        for old, new in zip(before["variants"], rebased["variants"]):
+            self.assertEqual(old["appearance"], new["appearance"])
+            self.assertEqual(old["actionOverrides"], new["actionOverrides"])
+            self.assertEqual(old["damageKeyOverrides"], new["damageKeyOverrides"])
+            self.assertEqual(
+                old["progressiveSiteOverrides"],
+                new["progressiveSiteOverrides"],
+            )
+            self.assertEqual(old["appearanceRevision"] + 1, new["appearanceRevision"])
+            self.assertEqual(old["forgeRevision"] + 1, new["forgeRevision"])
+            self.assertEqual("DRAFT", new["appearanceApprovalState"])
+            self.assertEqual("", str(new.get("appearanceFingerprint", "")))
+            self.assertEqual("", str(new.get("appearanceApprovedAtUtc", "")))
+            self.assertEqual("", str(new.get("appearanceQuickFingerprint", "")))
+
+    def test_rebaseline_to_existing_fingerprint_is_a_no_op(self):
+        before = copy.deepcopy(self.state)
+        result = VARIANTS.rebaseline_forge_texture_family(
+            self.state,
+            "d" * 64,
+            rig(),
+            "2026-08-16T20:00:00+00:00",
+        )
+        self.assertEqual(before, result)
+        self.assertEqual(before, self.state)
+
     def test_texture_provenance_names_its_real_authority(self):
         record = VARIANTS.export_provenance(self.state, "base")
         self.assertEqual(
@@ -584,9 +696,12 @@ class StaticIntegrationTests(unittest.TestCase):
             "def effective_progressive_collection(",
             "def export_context(",
             "def finished_damage_body_fingerprint(",
+            "def _validated_finished_damage_body(",
+            "def _stable_skin_and_bones_bake_uv(",
             'bl_idname = "daf.start_finished_texture_family"',
             'bl_idname = "daf.create_forge_texture_variant"',
             'bl_idname = "daf.approve_forge_texture_variant"',
+            'bl_idname = "daf.rebaseline_finished_texture_family"',
             'bl_idname = "daf.edit_forge_texture_variant"',
             'bl_idname = "daf.replace_forge_texture_image"',
             'bl_idname = "daf.load_sbf_projection_folder"',
@@ -616,6 +731,7 @@ class StaticIntegrationTests(unittest.TestCase):
             "CHOOSE ONE FINISHED BASE COLOR IMAGE",
             "SAVE CURRENT LOOK",
             "SAVE + EXPORT",
+            "VALIDATE + ACCEPT CURRENT BODY",
             "ADVANCED · IMPORT A SKIN & BONES 2.2 LOOK FAMILY",
             "ADVANCED · TECHNICAL PROOF + AUTHORING OVERRIDES",
         ):

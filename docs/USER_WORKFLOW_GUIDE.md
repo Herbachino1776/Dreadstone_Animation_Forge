@@ -1,14 +1,14 @@
-# Dreadstone Animation Forge 6.0.0 — User Workflow Guide
+# Dreadstone Animation Forge 6.0.1 — User Workflow Guide
 
-- Release archive: `Dreadstone_Animation_Forge_v6_0_0.zip`
+- Release archive: `Dreadstone_Animation_Forge_v6_0_1.zip`
 - Supported release runtime: Blender 5.1.2
 - Damage authoring model: Damage Keys → child Stamp alternatives → strong macros
 - Reuse model: topology-independent Damage Blueprints
 
-## 1. Install Dreadstone Animation Forge 6.0.0
+## 1. Install Dreadstone Animation Forge 6.0.1
 
 In Blender choose **Edit > Preferences > Add-ons > Install from Disk**, select
-`Dreadstone_Animation_Forge_v6_0_0.zip` without extracting it, and enable
+`Dreadstone_Animation_Forge_v6_0_1.zip` without extracting it, and enable
 **Dreadstone Animation Forge**.
 
 ## 2. Open the Dreadstone panel
@@ -52,7 +52,9 @@ through more texture projections. No Skin & Bones family handoff is required.
    socket. Inactive look materials/images are kept inside the `.blend`, so they
    remain available after save/reopen. Detailed alignment and repair remain in
    the Skin & Bones tab. Skin & Bones family approval is not required for this
-   Forge-owned route.
+   Forge-owned route. Final baking always reuses the existing
+   `SBF_BaseColorUV` atlas already carried by the finished Damage pieces. Forge
+   disables S&B UV regeneration and refuses the bake if that atlas is missing.
    Alternatively, paint the packed image or choose one already-finished UV Base
    Color image. A folder of front/back/left/right plates is source art, not a
    model texture.
@@ -74,13 +76,26 @@ Advanced for manual diagnosis. The transaction reruns full validation and rolls
 back if the asset is not valid; it does not change the runtime rig, authored
 animation, Damage geometry, or socket position/rotation.
 
+If Save reports that the finished Damage body changed, first decide whether
+the current body is intentional. After the error, click **VALIDATE + ACCEPT
+CURRENT BODY** beside the Save controls. Forge validates the canonical rig,
+Complete Damage asset, sockets, and every look's material-slot binding before
+updating the technical baseline. Existing looks and overrides remain, but each
+look becomes Draft and must be inspected and saved again. Do not use this to
+excuse an accidental topology, UV, or rig change.
+
+Forge normalizes resized generated pieces through Complete Damage validation
+before each technical comparison. A normal save/reopen or an authored hand
+socket adjustment therefore does not trigger this recovery; the warning means
+a mismatch remains after validation.
+
 Look switching restores each Damage mesh's authored intact visibility. Detached
 heads/limbs, stumps, gore, and other damage-only pieces do not become visible
 merely because the appearance changed.
 
 If a projection preview shows the new skin only on the face or chest while the
-old skin remains on bent limbs, rebuild it through step 2B. Forge now reasserts
-the neutral S&B source rig immediately before both preview and bake.
+old skin remains on bent limbs, rebuild through steps 2B and 2C. Forge reasserts
+the neutral S&B source rig and locks the established bake atlas before baking.
 
 ### Import compatible Skin & Bones family exports
 
@@ -423,7 +438,7 @@ body-first drafts; **Apply Sliders / Refresh Draft**, **Preview Attack**, and
 migrated. Motion Studio does not require old approved Actions to gain target
 proof retroactively.
 
-### Exact 6.0.0 production attack acceptance
+### Exact 6.0.1 production attack acceptance
 
 For every case, select the canonical humanoid, open **ATTACK ANIMATION
 STUDIO**, choose inputs, adjust **LET ME COOK** controls, and click **GENERATE &
