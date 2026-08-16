@@ -177,7 +177,7 @@ save/reload. It must also prove that none animates scale, preserve the exact
 21-bone rest skeleton, keep socket ensure idempotent, persist an
 artist-adjusted grip, and emit the two canonical hand socket records.
 
-Run the 5.4.4 production Motion Studio regression:
+Run the 5.4.5 production Motion Studio regression:
 
 ```text
 blender --background --factory-startup --python tests/blender_offensive_motion_studio_acceptance.py
@@ -231,7 +231,7 @@ should be performed only when requested.
 ## Release archive
 
 `python scripts/build_release.py` validates first and writes
-`dist/Dreadstone_Animation_Forge_v5_4_4.zip`. Every package Python file is
+`dist/Dreadstone_Animation_Forge_v5_4_5.zip`. Every package Python file is
 discovered recursively, so new service/operator modules must appear in the
 archive automatically. `dist/`, bytecode, caches, Blender backups, and
 temporary extraction directories are generated artifacts and are not

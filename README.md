@@ -1,6 +1,6 @@
 # Dreadstone Animation Forge
 
-Dreadstone Animation Forge `5.4.4` is a proprietary Blender add-on for
+Dreadstone Animation Forge `5.4.5` is a proprietary Blender add-on for
 animation drafting and compatibility-preserving damage authoring. The supported
 release runtime is Blender `5.1.2`.
 
@@ -87,7 +87,7 @@ appearance and deliberate copy-on-write overrides; adding a texture-only
 variant creates no duplicate Actions or Damage Keys. See the
 [Character Variant Family contract](docs/CHARACTER_VARIANT_FAMILY_CONTRACT.md).
 
-Forge 5.4.4 also supports the inverse production order: start from a finished
+Forge 5.4.5 also supports the inverse production order: start from a finished
 Forge Damage character, turn it into a texture family, then capture additional
 looks. Its optional Skin & Bones bridge reveals the hidden full-body projection
 target, runs folder/preview/bake in order, and copies only the final UV texture
@@ -104,7 +104,7 @@ deliberately for reuse on another compatible humanoid. The existing eight
 body-first generators remain under LEGACY / PROCEDURAL DRAFTING. See the
 [Offensive Motion Studio contract](docs/OFFENSIVE_MOTION_STUDIO_CONTRACT.md).
 
-Forge 5.4.4 uses an animation sandbox. In **ATTACK ANIMATION
+Forge 5.4.5 uses an animation sandbox. In **ATTACK ANIMATION
 STUDIO**, choose **Attack**, **Weapon**, and **Target**, adjust the visible aim,
 motion, distance, and weapon meters, then click **GENERATE & PREVIEW**. Every live
 control is baked and playback starts even when the experiment fails pose or
@@ -129,7 +129,7 @@ promoted masters are not silently rewritten.
 
 ## Install and open
 
-1. Download `Dreadstone_Animation_Forge_v5_4_4.zip`.
+1. Download `Dreadstone_Animation_Forge_v5_4_5.zip`.
 2. In Blender choose **Edit > Preferences > Add-ons > Install from Disk**.
 3. Select the ZIP without extracting it and enable the add-on.
 4. In the 3D Viewport press `N`, open **Dreadstone**, then choose

@@ -1,6 +1,6 @@
 # Changelog
 
-## 5.4.4
+## 5.4.5
 
 - Replaced the competing top-level family choices with one ordered **LOOK
   VARIANTS · TEXTURE → EXPORT** surface. Finished characters get one obvious
@@ -16,6 +16,9 @@
   pieces. Forge now restores each mesh's authored intact/default visibility and
   preserves hand-socket position and rotation throughout projection and look
   switching.
+
+## 5.4.4
+
 - Zero-configuration setup now derives the look-set and shipping identity from
   the existing Complete Damage export name, calls the base look `Original`, and
   never asks a finished legacy character for nonexistent S&B family metadata.

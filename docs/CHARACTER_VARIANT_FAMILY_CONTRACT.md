@@ -1,6 +1,6 @@
 # Character Variant Family contract
 
-Forge release: `5.4.4`
+Forge release: `5.4.5`
 
 Forge schema: `dreadstone.character_variant_family.v1`
 

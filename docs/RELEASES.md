@@ -9,7 +9,7 @@
    mode-aware vertex/face selection and rollback, Stamp alternatives, hybrid
    1.0 + 1.0 components, cohesive Surface Gore macros, distributed nucleus
    geometry, VIP animation edit/overwrite/delete, portable clip compatibility,
-   adaptive Blueprint reuse, validation, export, and clean reimport. For 5.4.4,
+   adaptive Blueprint reuse, validation, export, and clean reimport. For 5.4.5,
    also run the live-control Motion Studio sword/mace overhead, opposite-slash,
    thrust, safe-annulus, sparse-bake, strict continuity, warning/approval, and
    helper-mode acceptance. Include impossible-settings preview and blade-to-mace
@@ -25,7 +25,7 @@
 
 ## Documentation definition of done
 
-- [x] Version and `Dreadstone_Animation_Forge_v5_4_4.zip` match everywhere.
+- [x] Version and `Dreadstone_Animation_Forge_v5_4_5.zip` match everywhere.
 - [x] Creature Anatomy Profile schema/detection/orientation/persistence tests,
       the exact humanoid mapping comparison, malformed quadruped cases, and
       extracted-ZIP Blender registration pass.
@@ -58,7 +58,7 @@
       direction, overhead descent, thrust direction, FK bake, ACTIVE contact,
       plane tolerance, validation invalidation, approval, master promotion,
       helper exclusion, save/reopen, and targeting metadata regressions pass.
-- [x] Blender acceptance proves the 5.4.4 sandbox consumes live sliders/meters,
+- [x] Blender acceptance proves the 5.4.5 sandbox consumes live sliders/meters,
       previews failed experiments while blocking Approval, replaces stale weapon
       proxies, keeps production starters'
       sampled wrist pose at or above 55% extension and below the 92% warning

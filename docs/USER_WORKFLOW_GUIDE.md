@@ -1,14 +1,14 @@
-# Dreadstone Animation Forge 5.4.4 — User Workflow Guide
+# Dreadstone Animation Forge 5.4.5 — User Workflow Guide
 
-- Release archive: `Dreadstone_Animation_Forge_v5_4_4.zip`
+- Release archive: `Dreadstone_Animation_Forge_v5_4_5.zip`
 - Supported release runtime: Blender 5.1.2
 - Damage authoring model: Damage Keys → child Stamp alternatives → strong macros
 - Reuse model: topology-independent Damage Blueprints
 
-## 1. Install Dreadstone Animation Forge 5.4.4
+## 1. Install Dreadstone Animation Forge 5.4.5
 
 In Blender choose **Edit > Preferences > Add-ons > Install from Disk**, select
-`Dreadstone_Animation_Forge_v5_4_4.zip` without extracting it, and enable
+`Dreadstone_Animation_Forge_v5_4_5.zip` without extracting it, and enable
 **Dreadstone Animation Forge**.
 
 ## 2. Open the Dreadstone panel
@@ -413,7 +413,7 @@ body-first drafts; **Apply Sliders / Refresh Draft**, **Preview Attack**, and
 migrated. Motion Studio does not require old approved Actions to gain target
 proof retroactively.
 
-### Exact 5.4.4 production attack acceptance
+### Exact 5.4.5 production attack acceptance
 
 For every case, select the canonical humanoid, open **ATTACK ANIMATION
 STUDIO**, choose inputs, adjust **LET ME COOK** controls, and click **GENERATE &
