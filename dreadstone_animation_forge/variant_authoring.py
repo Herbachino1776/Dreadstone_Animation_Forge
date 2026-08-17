@@ -1812,15 +1812,49 @@ def _skin_and_bones_final_image(settings):
     return None
 
 
-def apply_skin_and_bones_final_texture(context):
-    """Copy S&B's latest final pixels into only the active finished Forge look."""
+def _commit_skin_and_bones_paint(settings):
+    """Commit native Blender paint before Forge reads S&B's final pointer."""
 
-    settings, _target = _skin_and_bones_projection_target(context)
+    try:
+        result = bpy.ops.sbf.texture_commit_final()
+    except (AttributeError, RuntimeError) as exc:
+        raise RuntimeError(
+            "Skin & Bones could not commit the artist-painted final texture. "
+            "Keep its projection target available and try USE FINAL ON THIS LOOK again."
+        ) from exc
+    if "FINISHED" not in result:
+        detail = str(getattr(settings, "status_message", "")).strip()
+        raise RuntimeError(
+            detail or "Skin & Bones did not finish committing the artist-painted texture."
+        )
     source = _skin_and_bones_final_image(settings)
     if source is None:
+        raise RuntimeError("Skin & Bones committed no final Base Color image.")
+    return source
+
+
+def _copy_committed_pixels(source, destination):
+    """Copy the live committed buffer; Blender Image.copy can reuse stale backing pixels."""
+
+    if tuple(source.size) != tuple(destination.size):
+        raise RuntimeError("Committed Skin & Bones image size changed during capture.")
+    count = len(source.pixels)
+    chunk = 1024 * 1024
+    for start in range(0, count, chunk):
+        end = min(start + chunk, count)
+        destination.pixels[start:end] = source.pixels[start:end]
+    destination.update()
+
+
+def apply_skin_and_bones_final_texture(context):
+    """Commit and copy S&B's artist-painted final into the active Forge look."""
+
+    settings, _target = _skin_and_bones_projection_target(context)
+    if _skin_and_bones_final_image(settings) is None:
         raise RuntimeError(
             "Skin & Bones has no final Base Color yet. Build the preview and click BAKE FINAL TEXTURE first."
         )
+    source = _commit_skin_and_bones_paint(settings)
     state, active, bindings = _active_base_color_bindings(context)
     image = None
     try:
@@ -1830,6 +1864,7 @@ def apply_skin_and_bones_final_texture(context):
             active["variantId"],
             {},
         )
+        _copy_committed_pixels(source, image)
         image[TEXTURE_SOURCE_PROPERTY] = f"Skin & Bones final: {source.name}"
         try:
             if image.packed_file is None:

@@ -1,6 +1,6 @@
 # Character Variant Family contract
 
-Forge release: `6.0.2`
+Forge release: `6.0.3`
 
 Native look capture may transactionally recover a missing variant-owned
 material palette from the intact runtime slots and may restore texture-only

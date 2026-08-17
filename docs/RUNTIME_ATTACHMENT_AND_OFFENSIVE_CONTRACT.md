@@ -1,6 +1,6 @@
 # Runtime attachment and offensive Action contract
 
-Forge release: `6.0.2`
+Forge release: `6.0.3`
 
 Schemas:
 

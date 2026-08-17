@@ -99,6 +99,20 @@ class BridgeTestBakeFinal(Operator):
         return {"FINISHED"}
 
 
+class BridgeTestTextureCommitFinal(Operator):
+    bl_idname = "sbf.texture_commit_final"
+    bl_label = "Bridge Test Texture Commit Final"
+
+    def execute(self, context):
+        image = context.scene.sbf_settings.repair_final_image
+        values = list(image.pixels[0:4])
+        values[0] = 0.314159
+        image.pixels[0:4] = values
+        image.update()
+        context.scene["bridge_test_artist_paint_committed"] = True
+        return {"FINISHED"}
+
+
 def matrix_snapshot(values):
     return {
         name: tuple(tuple(float(value) for value in row) for row in matrix)
@@ -155,6 +169,7 @@ def main():
     bpy.utils.register_class(BridgeTestSBFSettings)
     bpy.utils.register_class(BridgeTestBestPreview)
     bpy.utils.register_class(BridgeTestBakeFinal)
+    bpy.utils.register_class(BridgeTestTextureCommitFinal)
     bpy.types.Scene.sbf_settings = PointerProperty(type=BridgeTestSBFSettings)
     rig = make_canonical_armature("DSB_DAMAGE_RIG")
     rig["dsb_damage_generated"] = True
@@ -608,6 +623,24 @@ def main():
     bpy.data.materials.remove(missing_draft_material)
     bridged_variant, bridged_image = variant_authoring.apply_skin_and_bones_final_texture(
         bpy.context
+    )
+    require(
+        bool(bpy.context.scene.get("bridge_test_artist_paint_committed", False))
+        and abs(
+            float(bridged_image.pixels[0])
+            - float(bpy.context.scene.sbf_settings.repair_final_image.pixels[0])
+        )
+        <= 1.0e-6
+        and abs(float(bridged_image.pixels[0]) - 0.314159) <= 0.01,
+        {
+            "commitCalled": bool(
+                bpy.context.scene.get("bridge_test_artist_paint_committed", False)
+            ),
+            "sourcePixel": float(
+                bpy.context.scene.sbf_settings.repair_final_image.pixels[0]
+            ),
+            "capturedPixel": float(bridged_image.pixels[0]),
+        },
     )
     rebuilt_material = bpy.data.materials.get(
         bridged_variant["appearance"]["ownedMaterials"][0]

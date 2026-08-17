@@ -1,6 +1,6 @@
 [project]
 name = "dreadstone-animation-forge-repository-tools"
-version = "6.0.2"
+version = "6.0.3"
 description = "Repository tooling metadata for the Dreadstone Animation Forge Blender add-on"
 readme = "README.md"
 requires-python = ">=3.10"

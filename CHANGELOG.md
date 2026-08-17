@@ -1,5 +1,14 @@
 # Changelog
 
+## 6.0.3
+
+- Made **USE FINAL ON THIS LOOK** atomically run Skin & Bones' **Save Blender
+  Paint + Commit** before reading its final image, then copy that exact committed
+  artist-painted pixel buffer into the active Forge look. This prevents a stale
+  baked/fallback image from replacing custom Texture Paint work.
+- Added Blender acceptance proving a paint change made during the commit is the
+  image Forge captures, saves, and carries with the look.
+
 ## 6.0.2
 
 - Fixed **USE FINAL ON THIS LOOK** when a legacy look retained a missing owned

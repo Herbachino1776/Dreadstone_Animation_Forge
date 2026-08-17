@@ -1,20 +1,20 @@
-# Dreadstone Animation Forge 6.0.2 — User Workflow Guide
+# Dreadstone Animation Forge 6.0.3 — User Workflow Guide
 
-Forge 6.0.2 automatically repairs two legacy projection residues during the
+Forge 6.0.3 automatically repairs two legacy projection residues during the
 ordered look flow: a missing active-look material palette is reconstructed from
 the intact finished character, and texture-only coordinate drift on the hidden
 S&B source is restored from Complete Damage's protected proof. Technical-body
 changes still require the explicit validation/rebaseline workflow.
 
-- Release archive: `Dreadstone_Animation_Forge_v6_0_2.zip`
+- Release archive: `Dreadstone_Animation_Forge_v6_0_3.zip`
 - Supported release runtime: Blender 5.1.2
 - Damage authoring model: Damage Keys → child Stamp alternatives → strong macros
 - Reuse model: topology-independent Damage Blueprints
 
-## 1. Install Dreadstone Animation Forge 6.0.2
+## 1. Install Dreadstone Animation Forge 6.0.3
 
 In Blender choose **Edit > Preferences > Add-ons > Install from Disk**, select
-`Dreadstone_Animation_Forge_v6_0_2.zip` without extracting it, and enable
+`Dreadstone_Animation_Forge_v6_0_3.zip` without extracting it, and enable
 **Dreadstone Animation Forge**.
 
 ## 2. Open the Dreadstone panel
@@ -444,7 +444,7 @@ body-first drafts; **Apply Sliders / Refresh Draft**, **Preview Attack**, and
 migrated. Motion Studio does not require old approved Actions to gain target
 proof retroactively.
 
-### Exact 6.0.2 production attack acceptance
+### Exact 6.0.3 production attack acceptance
 
 For every case, select the canonical humanoid, open **ATTACK ANIMATION
 STUDIO**, choose inputs, adjust **LET ME COOK** controls, and click **GENERATE &
